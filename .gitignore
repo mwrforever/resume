@@ -57,8 +57,12 @@ frontend/.next/
 
 # Logs
 logs/
-*.log
 
 # OS
 Thumbs.db
-.DS_Store
+
+md
+
+# Worktrees
+.worktrees/
+worktrees/
