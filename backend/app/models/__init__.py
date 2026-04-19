@@ -30,5 +30,8 @@ Base = declarative_base()
 from .sys_user import SysUser
 from .sys_employee import SysEmployee
 from .resume import Resume
+from .job_position import JobPosition
+from .job_eval_dimension import JobEvalDimension
+from .job_skill import JobSkill
 
-__all__ = ["Base", "async_session", "SysUser", "SysEmployee", "Resume"]
+__all__ = ["Base", "async_session", "SysUser", "SysEmployee", "Resume", "JobPosition", "JobEvalDimension", "JobSkill"]

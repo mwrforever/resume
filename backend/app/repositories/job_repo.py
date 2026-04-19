@@ -1,0 +1,68 @@
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.models.job_position import JobPosition
+
+
+class JobRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def get_by_id(self, job_id: int) -> JobPosition:
+        result = await self.db.execute(
+            select(JobPosition).where(JobPosition.id == job_id, JobPosition.is_deleted == 0)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_list(self, skip: int = 0, limit: int = 20, status: int = 1) -> list[JobPosition]:
+        """获取岗位列表（用户端：只看招聘中的）"""
+        query = select(JobPosition).where(JobPosition.is_deleted == 0)
+        if status is not None:
+            query = query.where(JobPosition.status == status)
+        query = query.offset(skip).limit(limit).order_by(JobPosition.create_time.desc())
+        result = await self.db.execute(query)
+        return result.scalars().all()
+
+    async def get_count(self, status: int = 1) -> int:
+        """获取岗位总数"""
+        from sqlalchemy import func
+        query = select(func.count(JobPosition.id)).where(
+            JobPosition.is_deleted == 0,
+            JobPosition.status == status
+        )
+        result = await self.db.execute(query)
+        return result.scalar() or 0
+
+    async def get_by_employee(self, employee_id: int) -> list[JobPosition]:
+        """获取员工发布的岗位"""
+        result = await self.db.execute(
+            select(JobPosition)
+            .where(JobPosition.employee_id == employee_id, JobPosition.is_deleted == 0)
+            .order_by(JobPosition.create_time.desc())
+        )
+        return result.scalars().all()
+
+    async def create(self, employee_id: int, dept_id: int, name: str, description: str) -> JobPosition:
+        job = JobPosition(
+            employee_id=employee_id,
+            dept_id=dept_id,
+            name=name,
+            description=description
+        )
+        self.db.add(job)
+        await self.db.commit()
+        await self.db.refresh(job)
+        return job
+
+    async def update(self, job_id: int, **kwargs) -> JobPosition:
+        await self.db.execute(
+            update(JobPosition).where(JobPosition.id == job_id).values(**kwargs)
+        )
+        await self.db.commit()
+        return await self.get_by_id(job_id)
+
+    async def delete(self, job_id: int) -> bool:
+        await self.db.execute(
+            update(JobPosition).where(JobPosition.id == job_id).values(is_deleted=1)
+        )
+        await self.db.commit()
+        return True
