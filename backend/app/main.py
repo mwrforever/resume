@@ -20,10 +20,12 @@ app.add_middleware(
 # Import routers
 from app.api.v1.user.auth import router as user_auth_router
 from app.api.v1.employee.auth import router as employee_auth_router
+from app.api.v1.user.resumes import router as user_resumes_router
 
 # Register routers
 app.include_router(user_auth_router, prefix="/api/v1/user/auth", tags=["user-auth"])
 app.include_router(employee_auth_router, prefix="/api/v1/employee/auth", tags=["employee-auth"])
+app.include_router(user_resumes_router, prefix="/api/v1/user/resumes", tags=["user-resumes"])
 
 
 @app.exception_handler(BizError)

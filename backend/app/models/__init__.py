@@ -29,5 +29,6 @@ Base = declarative_base()
 
 from .sys_user import SysUser
 from .sys_employee import SysEmployee
+from .resume import Resume
 
-__all__ = ["Base", "async_session", "SysUser", "SysEmployee"]
+__all__ = ["Base", "async_session", "SysUser", "SysEmployee", "Resume"]
