@@ -34,5 +34,8 @@ from .job_position import JobPosition
 from .job_eval_dimension import JobEvalDimension
 from .job_skill import JobSkill
 from .job_application import JobApplication
+from .resume_job_match import ResumeJobMatch
+from .resume_eval_detail import ResumeEvalDetail
+from .resume_skill_hit import ResumeSkillHit
 
-__all__ = ["Base", "async_session", "SysUser", "SysEmployee", "Resume", "JobPosition", "JobEvalDimension", "JobSkill", "JobApplication"]
+__all__ = ["Base", "async_session", "SysUser", "SysEmployee", "Resume", "JobPosition", "JobEvalDimension", "JobSkill", "JobApplication", "ResumeJobMatch", "ResumeEvalDetail", "ResumeSkillHit"]
