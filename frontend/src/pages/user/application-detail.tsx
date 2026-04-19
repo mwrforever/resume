@@ -1,8 +1,26 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { userApplicationsApi } from '@/api/user/applications';
+import { useParams } from 'react-router-dom';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { EvaluationRadarChart } from '@/components/common/radar-chart';
+import { SkillTag } from '@/components/common/skill-tag';
+import { MatchBadge } from '@/components/common/match-badge';
+import { EvalPending } from '@/components/common/eval-pending';
+import { userApplicationsApi } from '@/api/user/applications';
+
+interface Evaluation {
+  final_score: number;
+  final_label: '优秀' | '良好' | '一般' | '未达标';
+  advantage_comment: string;
+  disadvantage_comment: string;
+  dimensions: { dimension_name: string; score: number }[];
+  skill_hits: {
+    skill_name: string;
+    skill_type: number;
+    is_hit: boolean;
+    match_label?: string;
+    hit_context?: string;
+  }[];
+}
 
 interface Application {
   id: number;
@@ -11,37 +29,34 @@ interface Application {
   status: number;
   status_name: string;
   create_time: string;
-  evaluation: any;
+  job_name?: string;
+  resume_name?: string;
+  evaluation?: Evaluation;
 }
 
 export default function UserApplicationDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
-
   const [application, setApplication] = useState<Application | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const loadApplication = async () => {
+    try {
+      const res = await userApplicationsApi.get(Number(id));
+      setApplication(res.data);
+    } catch (error) {
+      console.error('Failed to load application:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const loadApplication = async () => {
-      try {
-        const res = await userApplicationsApi.get(Number(id));
-        setApplication(res.data);
-      } catch (error) {
-        console.error('Failed to load application:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
     loadApplication();
   }, [id]);
 
-  if (loading) {
-    return <div className="text-center py-12">加载中...</div>;
-  }
+  if (loading) return <div className="text-center py-12">加载中...</div>;
 
-  if (!application) {
-    return <div className="text-center py-12">投递记录不存在</div>;
-  }
+  const isEvaluated = application?.status === 2 && application?.evaluation;
 
   return (
     <div className="container mx-auto py-8">
@@ -50,38 +65,92 @@ export default function UserApplicationDetail() {
           <CardTitle>投递详情</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            <div>
-              <p className="text-sm text-secondary">岗位ID</p>
-              <p className="font-medium">{application.job_id}</p>
-            </div>
-            <div>
-              <p className="text-sm text-secondary">简历ID</p>
-              <p className="font-medium">{application.resume_id}</p>
-            </div>
-            <div>
-              <p className="text-sm text-secondary">投递时间</p>
-              <p className="font-medium">
-                {application.create_time?.split('T')[0]}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-secondary">状态</p>
-              <p className="font-medium">{application.status_name}</p>
-            </div>
-            {application.evaluation && (
-              <div>
-                <p className="text-sm text-secondary">评估结果</p>
-                <p className="font-medium">{JSON.stringify(application.evaluation)}</p>
-              </div>
-            )}
+          <div className="grid grid-cols-2 gap-4">
+            <p><span className="font-medium">岗位:</span> {application?.job_name || `ID: ${application?.job_id}`}</p>
+            <p><span className="font-medium">投递时间:</span> {application?.create_time?.split('T')[0]}</p>
+            <p><span className="font-medium">简历:</span> {application?.resume_name || `ID: ${application?.resume_id}`}</p>
+            <p><span className="font-medium">状态:</span> {application?.status_name}</p>
           </div>
         </CardContent>
       </Card>
 
-      <Button variant="outline" onClick={() => navigate('/user/my-applications')}>
-        返回列表
-      </Button>
+      {!isEvaluated ? (
+        <Card>
+          <CardContent>
+            <EvalPending onRefresh={loadApplication} />
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>匹配度评估</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-4 mb-4">
+                <span className="text-3xl font-bold">{application!.evaluation!.final_score}</span>
+                <span className="text-lg text-secondary">/100</span>
+                <MatchBadge label={application!.evaluation!.final_label} />
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2 mb-6">
+                <div
+                  className="bg-primary h-2 rounded-full"
+                  style={{ width: `${application!.evaluation!.final_score}%` }}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>多维度得分</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <EvaluationRadarChart data={application!.evaluation!.dimensions} />
+            </CardContent>
+          </Card>
+
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>优缺点评价</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {application!.evaluation!.advantage_comment && (
+                <div className="mb-4">
+                  <p className="font-medium text-success mb-1">优点:</p>
+                  <p className="text-gray-700">{application!.evaluation!.advantage_comment}</p>
+                </div>
+              )}
+              <div>
+                <p className="font-medium text-danger mb-1">缺点:</p>
+                <p className="text-gray-700">
+                  {application!.evaluation!.disadvantage_comment || "这份好像挺符合岗位预期"}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>技能匹配</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-2">
+                {application!.evaluation!.skill_hits?.map((hit, idx) => (
+                  <SkillTag
+                    key={idx}
+                    skill={hit.skill_name}
+                    type={hit.skill_type === 1 ? '必须满足' : hit.skill_type === 2 ? '优先匹配' : '普通技能'}
+                    isHit={hit.is_hit}
+                    matchLabel={hit.match_label}
+                    hitContext={hit.hit_context}
+                  />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
