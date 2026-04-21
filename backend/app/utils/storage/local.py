@@ -13,10 +13,7 @@ class LocalStorage(BaseStorage):
 
     async def upload(self, file: UploadFile, relative_path: str = None) -> str:
         """上传到本地note目录"""
-        # 生成日期路径
         date_str = datetime.now().strftime("%Y-%m-%d")
-
-        # 生成唯一文件名
         ext = os.path.splitext(file.filename)[1] if file.filename else ""
         unique_name = f"{uuid.uuid4().hex}{ext}"
 
@@ -25,15 +22,11 @@ class LocalStorage(BaseStorage):
         else:
             file_path = os.path.join(self.base_path, date_str, unique_name)
 
-        # 确保目录存在
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-        # 写入文件
         content = await file.read()
         with open(file_path, "wb") as f:
             f.write(content)
 
-        # 返回相对路径
         return relative_path or f"{date_str}/{unique_name}"
 
     async def delete(self, path: str) -> bool:
@@ -47,3 +40,7 @@ class LocalStorage(BaseStorage):
     def get_url(self, path: str) -> str:
         """返回文件访问路径"""
         return f"/files/{path}"
+
+    def get_full_path(self, path: str) -> str:
+        """返回文件完整路径"""
+        return os.path.join(self.base_path, path)

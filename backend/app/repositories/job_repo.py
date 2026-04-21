@@ -1,6 +1,7 @@
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.job_position import JobPosition
+from app.models.job_skill import JobSkill
 
 
 class JobRepository:
@@ -59,6 +60,21 @@ class JobRepository:
         )
         await self.db.commit()
         return await self.get_by_id(job_id)
+
+    async def get_skills_by_job_ids(self, job_ids: list[int], limit: int = 5) -> dict[int, list[JobSkill]]:
+        """批量获取岗位技能（按skill_type升序，返回前limit个），返回 {job_id: [skills]}"""
+        if not job_ids:
+            return {}
+        result = await self.db.execute(
+            select(JobSkill)
+            .where(JobSkill.job_id.in_(job_ids))
+            .order_by(JobSkill.skill_type.asc())
+        )
+        skills_map: dict[int, list[JobSkill]] = {job_id: [] for job_id in job_ids}
+        for skill in result.scalars().all():
+            if len(skills_map[skill.job_id]) < limit:
+                skills_map[skill.job_id].append(skill)
+        return skills_map
 
     async def delete(self, job_id: int) -> bool:
         await self.db.execute(

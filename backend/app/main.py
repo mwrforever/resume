@@ -1,5 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from starlette.staticfiles import StaticFiles
+import os
 from app.core.config import get_settings
 from app.core.exceptions import BizError
 from starlette.responses import JSONResponse
@@ -23,7 +26,7 @@ from app.api.v1.employee.auth import router as employee_auth_router
 from app.api.v1.user.resumes import router as user_resumes_router
 from app.api.v1.user.jobs import router as user_jobs_router
 from app.api.v1.user.applications import router as user_applications_router
-from app.api.v1.employee.jobs import router as employee_jobs_router
+from app.api.v1.employee.job_endpoints import router as employee_jobs_router
 from app.api.v1.employee.jobs.skill import router as skill_router
 from app.api.v1.employee.applications import router as employee_applications_router
 from app.api.v1.employee.evaluations import router as evaluations_router
@@ -48,6 +51,24 @@ async def biz_error_handler(request, exc: BizError):
     )
 
 
+# Mount static files for resume preview
+storage_path = os.path.abspath(settings.LOCAL_STORAGE_PATH)
+if os.path.exists(storage_path):
+    app.mount("/files", StaticFiles(directory=storage_path), name="files")
+
+
 @app.get("/")
 async def root():
     return {"message": "Resume Platform API"}
+
+
+@app.get("/preview/{file_path:path}")
+async def preview_resume(file_path: str):
+    """简历预览接口（支持PDF和Word）"""
+    full_path = os.path.join(storage_path, file_path)
+    if not os.path.exists(full_path):
+        return JSONResponse(
+            status_code=404,
+            content={"code": 404, "message": "文件不存在", "data": None}
+        )
+    return FileResponse(full_path)

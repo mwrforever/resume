@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, Query
 from app.services.job_service import JobService
 from app.repositories.job_repo import JobRepository
-from app.api.deps import get_db
+from app.repositories.application_repo import ApplicationRepository
+from app.api.deps import get_db, get_current_user
+from app.schemas.response import ApiResponse, JobItem, JobDetail, PageData
 
 router = APIRouter()
 
@@ -10,7 +12,7 @@ def get_job_service(db=Depends(get_db)) -> JobService:
     return JobService(JobRepository(db))
 
 
-@router.get("")
+@router.get("", response_model=ApiResponse[PageData])
 async def list_jobs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -18,40 +20,42 @@ async def list_jobs(
 ):
     """用户端：浏览岗位列表"""
     skip = (page - 1) * page_size
-    jobs, total = await service.get_jobs(skip=skip, limit=page_size)
-    return {
-        "code": 200,
-        "message": "success",
-        "data": {
-            "total": total,
-            "items": [
-                {
-                    "id": j.id,
-                    "name": j.name,
-                    "description": j.description,
-                    "status": j.status,
-                    "create_time": j.create_time.isoformat() if j.create_time else None
-                } for j in jobs
-            ]
-        }
-    }
+    jobs, total, skills_map = await service.get_jobs_with_skills(skip=skip, limit=page_size)
+
+    job_items = []
+    for job in jobs:
+        item = JobItem.model_validate(job)
+        item.skills = skills_map.get(job.id, [])
+        job_items.append(item)
+
+    return ApiResponse(
+        data=PageData(
+            total=total,
+            items=job_items
+        )
+    )
 
 
-@router.get("/{job_id}")
+@router.get("/{job_id}", response_model=ApiResponse[JobDetail])
 async def get_job(
     job_id: int,
-    service: JobService = Depends(get_job_service)
+    service: JobService = Depends(get_job_service),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """用户端：查看岗位详情"""
+    from app.repositories.application_repo import ApplicationRepository
+
     job = await service.get_job_by_id(job_id)
-    return {
-        "code": 200,
-        "message": "success",
-        "data": {
-            "id": job.id,
-            "name": job.name,
-            "description": job.description,
-            "status": job.status,
-            "create_time": job.create_time.isoformat() if job.create_time else None
-        }
-    }
+    detail = JobDetail.model_validate(job)
+    detail.skills = await service.get_job_skills(job_id, limit=100)
+
+    # 检查当前用户是否已投递该岗位
+    user_id = int(current_user["sub"])
+    app_repo = ApplicationRepository(db)
+    app = await app_repo.get_by_user_and_job(user_id, job_id)
+    detail.applied = app is not None
+    if app:
+        detail.application_id = app.id
+
+    return ApiResponse(data=detail)

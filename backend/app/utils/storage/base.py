@@ -19,3 +19,8 @@ class BaseStorage(ABC):
     def get_url(self, path: str) -> str:
         """获取文件访问URL"""
         pass
+
+    @abstractmethod
+    def get_full_path(self, path: str) -> str:
+        """获取文件完整路径"""
+        pass
