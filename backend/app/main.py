@@ -31,6 +31,7 @@ from app.api.v1.employee.jobs.skill import router as skill_router
 from app.api.v1.employee.applications import router as employee_applications_router
 from app.api.v1.employee.evaluations import router as evaluations_router
 from app.api.v1.employee.resumes import router as employee_resumes_router
+from app.api.v1.employee.analytics import router as analytics_router
 
 # Register routers
 app.include_router(user_auth_router, prefix="/api/v1/user/auth", tags=["user-auth"])
@@ -43,6 +44,7 @@ app.include_router(skill_router, prefix="/api/v1/employee/jobs/skill", tags=["em
 app.include_router(employee_applications_router, prefix="/api/v1/employee/applications", tags=["employee-applications"])
 app.include_router(evaluations_router, prefix="/api/v1/employee/evaluations", tags=["employee-evaluations"])
 app.include_router(employee_resumes_router, prefix="/api/v1/employee/resumes", tags=["employee-resumes"])
+app.include_router(analytics_router, prefix="/api/v1/employee/analytics", tags=["employee-analytics"])
 
 
 @app.exception_handler(BizError)

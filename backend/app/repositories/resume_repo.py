@@ -52,3 +52,11 @@ class ResumeRepository:
         )
         await self.db.commit()
         return True
+
+    async def count_all(self) -> int:
+        """获取简历总数"""
+        from sqlalchemy import func
+        result = await self.db.execute(
+            select(func.count(Resume.id)).where(Resume.is_deleted == 0)
+        )
+        return result.scalar() or 0

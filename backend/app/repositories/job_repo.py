@@ -25,6 +25,10 @@ class JobRepository:
         result = await self.db.execute(query)
         return result.scalars().all()
 
+    async def count_active(self) -> int:
+        """获取在招岗位数"""
+        return await self.get_count(status=1)
+
     async def get_count(self, status: int = 1) -> int:
         """获取岗位总数"""
         from sqlalchemy import func

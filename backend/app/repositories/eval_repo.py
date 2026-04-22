@@ -199,3 +199,32 @@ class EvalRepository:
         total = count_result.scalar() or 0
 
         return items, total
+
+    async def count_pending_evaluations(self) -> int:
+        """获取待评估数（评估完成但无匹配记录的简历）"""
+        from app.models.resume import Resume
+        from sqlalchemy import not_, exists
+
+        # 子查询：已有匹配记录的简历ID
+        matched_subq = (
+            select(ResumeJobMatch.resume_id)
+            .distinct()
+        )
+
+        result = await self.db.execute(
+            select(func.count(Resume.id))
+            .where(
+                Resume.is_deleted == 0,
+                Resume.status == 2,  # 评估完成
+                ~exists(matched_subq.where(ResumeJobMatch.resume_id == Resume.id))
+            )
+        )
+        return result.scalar() or 0
+
+    async def get_avg_match_score(self) -> float:
+        """获取平均匹配分数"""
+        result = await self.db.execute(
+            select(func.avg(ResumeJobMatch.final_score))
+            .where(ResumeJobMatch.final_score.isnot(None))
+        )
+        return result.scalar() or 0.0
