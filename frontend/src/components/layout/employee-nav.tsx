@@ -7,6 +7,7 @@ const navItems = [
   { href: '/employee/jobs', label: '岗位管理' },
   { href: '/employee/resumes', label: '简历库' },
   { href: '/employee/evaluations', label: '评估' },
+  { href: '/employee/applications', label: '投递管理' },
 ];
 
 export function EmployeeNav() {
