@@ -1,35 +1,67 @@
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { PageLayout } from '@/components/layout/page-layout';
 import { EmployeeNav } from '@/components/layout/employee-nav';
 import { Card, CardContent } from '@/components/ui/card';
-import { Link } from 'react-router-dom';
-
-const stats = [
-  { label: '在招岗位', value: '12', change: '+2 本月' },
-  { label: '简历总数', value: '156', change: '+23 本周' },
-  { label: '待评估', value: '8', change: '-3 已完成' },
-  { label: '匹配率', value: '76%', change: '+5%' },
-];
-
-const recentActivities = [
-  { id: 1, text: '张三投递了 前端工程师 岗位', time: '10分钟前' },
-  { id: 2, text: '李四完成了 AI评估', time: '30分钟前' },
-  { id: 3, text: '王五上传了新简历', time: '1小时前' },
-  { id: 4, text: '系统完成了 5 份简历评估', time: '2小时前' },
-];
+import { employeeAnalyticsApi } from '@/api/employee/analytics';
+import { DashboardStats } from '@/types/employee';
 
 export default function EmployeeDashboard() {
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadStats = async () => {
+      try {
+        const res = await employeeAnalyticsApi.getDashboard();
+        setStats(res.data);
+      } catch (error) {
+        console.error('Failed to load dashboard:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadStats();
+  }, []);
+
+  if (loading) {
+    return (
+      <PageLayout title="工作台" action={<EmployeeNav />}>
+        <div className="animate-pulse space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-24 bg-muted rounded-xl" />
+            ))}
+          </div>
+        </div>
+      </PageLayout>
+    );
+  }
+
+  if (!stats) {
+    return (
+      <PageLayout title="工作台" action={<EmployeeNav />}>
+        <div className="text-center py-12">加载失败</div>
+      </PageLayout>
+    );
+  }
+
+  const statCards = [
+    { label: '在招岗位', value: stats.job_count },
+    { label: '简历总数', value: stats.resume_count },
+    { label: '待评估', value: stats.pending_eval_count },
+    { label: '平均匹配率', value: `${stats.avg_match_score}%` },
+  ];
+
   return (
     <PageLayout title="工作台" subtitle="欢迎回来" action={<EmployeeNav />}>
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {stats.map((stat, index) => (
+        {statCards.map((stat, index) => (
           <Card key={index}>
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground mb-1">{stat.label}</p>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold">{stat.value}</span>
-                <span className="text-xs text-muted-foreground">{stat.change}</span>
-              </div>
+              <span className="text-3xl font-bold">{stat.value}</span>
             </CardContent>
           </Card>
         ))}
@@ -41,7 +73,7 @@ export default function EmployeeDashboard() {
           <CardContent className="pt-6">
             <h2 className="text-lg font-semibold mb-4">最近动态</h2>
             <div className="space-y-4">
-              {recentActivities.map((activity) => (
+              {stats.recent_activities.map((activity) => (
                 <div key={activity.id} className="flex items-start gap-3">
                   <div className="w-2 h-2 rounded-full bg-accent mt-2" />
                   <div className="flex-1">
