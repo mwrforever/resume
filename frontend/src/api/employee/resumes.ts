@@ -1,7 +1,13 @@
 import client from '@/api/client';
 
 export const employeeResumesApi = {
-  list: () => client.get('/user/resumes'),
+  list: (params?: { page?: number; page_size?: number; status?: number }) =>
+    client.get('/employee/resumes', { params }),
 
-  get: (id: number) => client.get(`/user/resumes/${id}`),
+  get: (id: number) => client.get(`/employee/resumes/${id}`),
+
+  getFile: (id: number) =>
+    client.get(`/employee/resumes/${id}/file`, { responseType: 'blob' }),
+
+  listPending: () => client.get('/employee/resumes/pending'),
 };
