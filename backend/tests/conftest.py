@@ -12,7 +12,7 @@ from app.core.config import get_settings
 
 
 settings = get_settings()
-TEST_DATABASE_URL = "mysql+aiomysql://root:1010520mao@43.142.103.248:3306/resume_test"
+TEST_DATABASE_URL = f"mysql+aiomysql://{settings.DB_USER}:{settings.DB_PASSWORD}@{settings.DB_HOST}:{settings.DB_PORT}/resume_test"
 
 
 @pytest_asyncio.fixture(scope="function")
