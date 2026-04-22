@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { EvaluationRadarChart } from '@/components/common/radar-chart';
-import { SkillTag } from '@/components/common/skill-tag';
 import { MatchBadge } from '@/components/common/match-badge';
 import { employeeEvaluationsApi } from '@/api/employee/evaluations';
 
@@ -64,7 +63,7 @@ export default function EmployeeEvalDetail() {
           <CardTitle>多维度得分</CardTitle>
         </CardHeader>
         <CardContent>
-          <EvaluationRadarChart data={evaluation.dimensions} />
+          <EvaluationRadarChart data={evaluation.dimensions.map(d => ({ dimension: d.dimension_name, score: d.score }))} />
         </CardContent>
       </Card>
 

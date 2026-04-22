@@ -8,4 +8,6 @@ export const userApplicationsApi = {
     client.get('/user/applications', { params }),
 
   get: (id: number) => client.get(`/user/applications/${id}`),
+
+  withdraw: (id: number) => client.delete(`/user/applications/${id}`),
 };

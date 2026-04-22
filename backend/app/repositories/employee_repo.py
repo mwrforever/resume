@@ -31,3 +31,16 @@ class EmployeeRepository:
         if not employee:
             employee = await self.get_by_email(identifier)
         return employee
+
+    async def create(self, emp_no: str, email: str, password_hash: str, real_name: str) -> SysEmployee:
+        employee = SysEmployee(
+            emp_no=emp_no,
+            email=email,
+            password_hash=password_hash,
+            real_name=real_name,
+            status=1
+        )
+        self.db.add(employee)
+        await self.db.commit()
+        await self.db.refresh(employee)
+        return employee

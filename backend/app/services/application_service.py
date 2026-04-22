@@ -41,6 +41,14 @@ class ApplicationService:
         total = await self.app_repo.get_by_user_count(user_id)
         return apps, total
 
+    async def get_user_application_for_job(self, user_id: int, job_id: int) -> JobApplication:
+        """获取用户对某岗位的投递记录"""
+        return await self.app_repo.get_by_user_and_job(user_id, job_id)
+
+    async def get_resume_by_id(self, resume_id: int):
+        """获取简历详情"""
+        return await self.resume_repo.get_by_id(resume_id)
+
     async def get_application_by_id(self, app_id: int, user_id: int = None) -> JobApplication:
         """获取投递详情"""
         app = await self.app_repo.get_by_id(app_id)
@@ -59,6 +67,17 @@ class ApplicationService:
     async def update_status(self, app_id: int, status: int) -> bool:
         """更新投递状态"""
         return await self.app_repo.update_status(app_id, status)
+
+    async def withdraw_application(self, app_id: int, user_id: int) -> bool:
+        """撤回投递（仅限待处理的投递）"""
+        app = await self.app_repo.get_by_id(app_id)
+        if not app or app.is_deleted == 1:
+            raise NotFoundError("投递记录不存在")
+        if app.user_id != user_id:
+            raise NotFoundError("投递记录不存在")
+        if app.status != 0:
+            raise ValidationError("只能撤回待处理的投递")
+        return await self.app_repo.soft_delete(app_id)
 
     def get_status_name(self, status: int) -> str:
         return self.STATUS_MAP.get(status, "未知")

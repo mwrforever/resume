@@ -25,10 +25,11 @@ client.interceptors.response.use(
     const originalRequest = error.config;
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
-      const refreshToken = useAuthStore.getState().refreshToken;
-      if (refreshToken) {
+      const { refreshToken, userType } = useAuthStore.getState();
+      if (refreshToken && userType) {
         try {
-          const res = await axios.post('/api/v1/auth/refresh', { refresh_token: refreshToken });
+          const refreshUrl = userType === 'employee' ? '/employee/auth/refresh' : '/user/auth/refresh';
+          const res = await axios.post(`/api/v1${refreshUrl}`, { refresh_token: refreshToken });
           useAuthStore.getState().setTokens(res.data.access_token, res.data.refresh_token);
           originalRequest.headers.Authorization = `Bearer ${res.data.access_token}`;
           return client(originalRequest);

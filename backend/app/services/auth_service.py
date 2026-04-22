@@ -30,8 +30,8 @@ class AuthService:
         return employee
 
     def create_tokens(self, user_id: int, user_type: str):
-        access_token = create_access_token({"sub": str(user_id), "type": user_type})
-        refresh_token = create_refresh_token({"sub": str(user_id), "type": user_type})
+        access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": user_type})
+        refresh_token = create_refresh_token({"sub": str(user_id), "type": "refresh", "user_type": user_type})
         return access_token, refresh_token
 
     async def get_user_by_id(self, user_id: int):

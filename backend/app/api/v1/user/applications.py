@@ -5,6 +5,7 @@ from app.repositories.resume_repo import ResumeRepository
 from app.repositories.job_repo import JobRepository
 from app.schemas.application import ApplyRequest
 from app.api.deps import get_db, get_current_user
+from app.schemas.response import ApiResponse, ApplicationItem, ApplicationDetail, PageData
 
 router = APIRouter()
 
@@ -21,7 +22,7 @@ def get_user_id(current_user: dict = Depends(get_current_user)) -> int:
     return int(current_user["sub"])
 
 
-@router.post("")
+@router.post("", response_model=ApiResponse)
 async def apply_job(
     req: ApplyRequest,
     service: ApplicationService = Depends(get_service),
@@ -29,10 +30,10 @@ async def apply_job(
 ):
     """投递岗位（必须关联附件简历）"""
     app = await service.create_application(user_id, req.job_id, req.resume_id)
-    return {"code": 200, "message": "投递成功", "data": {"id": app.id}}
+    return ApiResponse(code=200, message="投递成功", data={"id": app.id})
 
 
-@router.get("")
+@router.get("", response_model=ApiResponse[PageData])
 async def list_my_applications(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -42,24 +43,38 @@ async def list_my_applications(
     """获取我的投递列表"""
     skip = (page - 1) * page_size
     apps, total = await service.get_user_applications(user_id, skip, page_size)
+    items = []
+    for a in apps:
+        job = await service.job_repo.get_by_id(a.job_id)
+        items.append({
+            "id": a.id,
+            "job_id": a.job_id,
+            "job_name": job.name if job else None,
+            "resume_id": a.resume_id,
+            "status": a.status,
+            "status_name": service.get_status_name(a.status),
+            "create_time": a.create_time
+        })
+    return ApiResponse(
+        data=PageData(
+            total=total,
+            items=items
+        )
+    )
 
-    # TODO: 补充岗位名称、简历名称等信息
-    return {"code": 200, "message": "success", "data": {
-        "total": total,
-        "items": [
-            {
-                "id": a.id,
-                "job_id": a.job_id,
-                "resume_id": a.resume_id,
-                "status": a.status,
-                "status_name": service.get_status_name(a.status),
-                "create_time": a.create_time.isoformat() if a.create_time else None
-            } for a in apps
-        ]
-    }}
+
+@router.delete("/{app_id}", response_model=ApiResponse)
+async def withdraw_application(
+    app_id: int,
+    service: ApplicationService = Depends(get_service),
+    user_id: int = Depends(get_user_id)
+):
+    """撤回投递"""
+    await service.withdraw_application(app_id, user_id)
+    return ApiResponse(code=200, message="撤回成功")
 
 
-@router.get("/{app_id}")
+@router.get("/{app_id}", response_model=ApiResponse[ApplicationDetail])
 async def get_my_application(
     app_id: int,
     service: ApplicationService = Depends(get_service),
@@ -67,14 +82,16 @@ async def get_my_application(
 ):
     """获取我的投递详情"""
     app = await service.get_application_by_id(app_id, user_id)
-
-    # TODO: 补充岗位信息、简历信息、评估信息
-    return {"code": 200, "message": "success", "data": {
+    # 获取简历信息
+    resume = await service.get_resume_by_id(app.resume_id)
+    detail = {
         "id": app.id,
         "job_id": app.job_id,
         "resume_id": app.resume_id,
         "status": app.status,
         "status_name": service.get_status_name(app.status),
-        "create_time": app.create_time.isoformat() if app.create_time else None,
-        "evaluation": None  # TODO: 如果已评估，补充评估结果
-    }}
+        "create_time": app.create_time,
+        "resume_name": resume.file_name if resume else None,
+        "resume_file_path": resume.file_path if resume else None
+    }
+    return ApiResponse(data=detail)

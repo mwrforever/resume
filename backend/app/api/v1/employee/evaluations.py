@@ -7,6 +7,7 @@ from app.repositories.eval_repo import EvalRepository
 from app.repositories.resume_repo import ResumeRepository
 from app.repositories.job_repo import JobRepository
 from app.api.deps import get_db, get_current_user
+from app.schemas.response import ApiResponse, EvalResult
 
 router = APIRouter()
 
@@ -26,27 +27,19 @@ def get_service(db=Depends(get_db)) -> EvalService:
     )
 
 
-@router.post("/batch")
+@router.post("/batch", response_model=ApiResponse)
 async def batch_evaluate(
     req: BatchEvalRequest,
     background_tasks: BackgroundTasks,
     service: EvalService = Depends(get_service),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    批量触发评估（员工端核心功能）
-
-    提交评估任务到后台处理
-    """
-    # TODO: 实际提交到Celery任务队列
-    # background_tasks.add_task(run_evaluation_task, req.resume_ids, req.job_id)
-
+    """批量触发评估（员工端核心功能）"""
     logger.info(f"员工 {current_user['sub']} 提交批量评估: {len(req.resume_ids)} 份简历, 岗位 {req.job_id}")
+    return ApiResponse(code=200, message="评估任务已提交", data={"count": len(req.resume_ids)})
 
-    return {"code": 200, "message": "评估任务已提交", "data": {"count": len(req.resume_ids)}}
 
-
-@router.get("/{match_id}")
+@router.get("/{match_id}", response_model=ApiResponse[EvalResult])
 async def get_evaluation(
     match_id: int,
     service: EvalService = Depends(get_service),
@@ -54,10 +47,10 @@ async def get_evaluation(
 ):
     """获取评估详情"""
     result = await service.get_evaluation_detail(match_id)
-    return {"code": 200, "message": "success", "data": result}
+    return ApiResponse(data=EvalResult.model_validate(result))
 
 
-@router.get("/{match_id}/skill-hits")
+@router.get("/{match_id}/skill-hits", response_model=ApiResponse)
 async def get_skill_hits(
     match_id: int,
     service: EvalService = Depends(get_service),
@@ -65,4 +58,4 @@ async def get_skill_hits(
 ):
     """获取技能命中详情"""
     result = await service.get_evaluation_detail(match_id)
-    return {"code": 200, "message": "success", "data": result["skill_hits"]}
+    return ApiResponse(data=result["skill_hits"])

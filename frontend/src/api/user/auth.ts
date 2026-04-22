@@ -12,4 +12,6 @@ export const userAuthApi = {
 
   refresh: (refresh_token: string) =>
     client.post('/user/auth/refresh', { refresh_token }),
+
+  me: () => client.get('/user/auth/me'),
 };

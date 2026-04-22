@@ -7,6 +7,16 @@ class ApplicationRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def get_by_user_and_job(self, user_id: int, job_id: int) -> JobApplication:
+        result = await self.db.execute(
+            select(JobApplication).where(
+                JobApplication.user_id == user_id,
+                JobApplication.job_id == job_id,
+                JobApplication.is_deleted == 0
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_id(self, app_id: int) -> JobApplication:
         result = await self.db.execute(
             select(JobApplication).where(JobApplication.id == app_id, JobApplication.is_deleted == 0)
@@ -55,6 +65,14 @@ class ApplicationRepository:
     async def update_status(self, app_id: int, status: int) -> bool:
         await self.db.execute(
             update(JobApplication).where(JobApplication.id == app_id).values(status=status)
+        )
+        await self.db.commit()
+        return True
+
+    async def soft_delete(self, app_id: int) -> bool:
+        """撤回投递（软删除）"""
+        await self.db.execute(
+            update(JobApplication).where(JobApplication.id == app_id).values(is_deleted=1)
         )
         await self.db.commit()
         return True

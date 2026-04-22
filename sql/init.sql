@@ -27,12 +27,13 @@ CREATE TABLE `sys_employee`
     `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '员工ID',
     `emp_no`      VARCHAR(30)          DEFAULT NULL COMMENT '员工工号',
     `real_name`   VARCHAR(50) NOT NULL COMMENT '真实姓名',
+    `email`       VARCHAR(100) NOT NULL COMMENT '邮箱',
+    `password_hash` VARCHAR(255) NOT NULL COMMENT '密码哈希(验证码注册时存默认值)',
     `phone`       VARCHAR(20)          DEFAULT NULL COMMENT '手机号',
     `status`      TINYINT     NOT NULL DEFAULT 1 COMMENT '在职状态：1在职，0离职',
     `is_deleted`  TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除：0未删除，1已删除',
     `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    KEY           `idx_dept_status` (`dept_id`, `status`) COMMENT '部门下在职员工列表查询',
     KEY           `idx_en_phone` (emp_no,  phone, status, is_deleted) COMMENT '员工登录'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='企业员工信息表';
 
@@ -106,6 +107,21 @@ CREATE TABLE `sys_role_menu`
 -- ==========================================================
 -- 业务模块表结构
 -- ==========================================================
+
+-- 8.5 投递申请表
+CREATE TABLE `job_application`
+(
+    `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '投递ID',
+    `user_id`     BIGINT      NOT NULL COMMENT '投递用户ID',
+    `job_id`      BIGINT      NOT NULL COMMENT '岗位ID',
+    `resume_id`   BIGINT      NOT NULL COMMENT '关联简历ID',
+    `status`      TINYINT     NOT NULL DEFAULT 0 COMMENT '状态：0待处理，1已查看，2评估完成，3面试邀请',
+    `is_deleted`  TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '投递时间',
+    `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    KEY           `idx_user_time` (`user_id`, `create_time`) COMMENT '用户查看自己的投递记录(按时间排序)',
+    KEY           `idx_job_status` (`job_id`, `status`) COMMENT 'HR查看岗位投递情况'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='投递申请表';
 
 -- 8. 岗位表
 CREATE TABLE `job_position`

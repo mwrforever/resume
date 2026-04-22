@@ -115,8 +115,8 @@ export default function Auth() {
           login_type: 'password',
           password: formData.password,
         });
-        setTokens(res.data.access_token, res.data.refresh_token);
-        setUserInfo('user', res.data.user_id);
+        setTokens(res.access_token, res.refresh_token);
+        setUserInfo('user', res.user_id);
         navigate('/user/jobs');
       } else {
         res = await employeeAuthApi.login({
@@ -124,8 +124,8 @@ export default function Auth() {
           login_type: 'password',
           password: formData.password,
         });
-        setTokens(res.data.access_token, res.data.refresh_token);
-        setUserInfo('employee', res.data.user_id);
+        setTokens(res.access_token, res.refresh_token);
+        setUserInfo('employee', res.user_id);
         navigate('/employee/dashboard');
       }
     } catch {

@@ -2,8 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth';
 
 // User pages
-import UserLogin from '@/pages/user/login';
-import UserRegister from '@/pages/user/register';
 import UserJobs from '@/pages/user/jobs';
 import UserJobDetail from '@/pages/user/job-detail';
 import UserMyResumes from '@/pages/user/my-resumes';
@@ -11,12 +9,14 @@ import UserMyApplications from '@/pages/user/my-applications';
 import UserApplicationDetail from '@/pages/user/application-detail';
 
 // Employee pages
-import EmployeeLogin from '@/pages/employee/login';
 import EmployeeDashboard from '@/pages/employee/dashboard';
 import EmployeeJobs from '@/pages/employee/jobs';
 import EmployeeJobCreate from '@/pages/employee/job-create';
 import EmployeeResumes from '@/pages/employee/resumes';
 import EmployeeEvaluations from '@/pages/employee/evaluations';
+
+// Shared pages
+import Auth from '@/pages/auth';
 
 function ProtectedRoute({ children, userType }: { children: React.ReactNode; userType: 'user' | 'employee' }) {
   const { userType: currentType } = useAuthStore();
@@ -29,8 +29,8 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         {/* User Routes */}
-        <Route path="/user/login" element={<UserLogin />} />
-        <Route path="/user/register" element={<UserRegister />} />
+        <Route path="/user/login" element={<Auth />} />
+        <Route path="/user/register" element={<Auth />} />
         <Route path="/user/jobs" element={<ProtectedRoute userType="user"><UserJobs /></ProtectedRoute>} />
         <Route path="/user/jobs/:id" element={<ProtectedRoute userType="user"><UserJobDetail /></ProtectedRoute>} />
         <Route path="/user/my-resumes" element={<ProtectedRoute userType="user"><UserMyResumes /></ProtectedRoute>} />
@@ -38,7 +38,8 @@ export default function App() {
         <Route path="/user/my-applications/:id" element={<ProtectedRoute userType="user"><UserApplicationDetail /></ProtectedRoute>} />
 
         {/* Employee Routes */}
-        <Route path="/employee/login" element={<EmployeeLogin />} />
+        <Route path="/employee/login" element={<Auth />} />
+        <Route path="/employee/register" element={<Auth />} />
         <Route path="/employee/dashboard" element={<ProtectedRoute userType="employee"><EmployeeDashboard /></ProtectedRoute>} />
         <Route path="/employee/jobs" element={<ProtectedRoute userType="employee"><EmployeeJobs /></ProtectedRoute>} />
         <Route path="/employee/jobs/create" element={<ProtectedRoute userType="employee"><EmployeeJobCreate /></ProtectedRoute>} />

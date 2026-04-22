@@ -15,11 +15,13 @@ class JobRepository:
         return result.scalar_one_or_none()
 
     async def get_list(self, skip: int = 0, limit: int = 20, status: int = 1) -> list[JobPosition]:
-        """获取岗位列表（用户端：只看招聘中的）"""
+        """获取岗位列表（用户端：只看招聘中的）
+        使用 ORDER BY id 确保分页结果不重复/遗漏
+        """
         query = select(JobPosition).where(JobPosition.is_deleted == 0)
         if status is not None:
             query = query.where(JobPosition.status == status)
-        query = query.offset(skip).limit(limit).order_by(JobPosition.create_time.desc())
+        query = query.order_by(JobPosition.id.desc()).offset(skip).limit(limit)
         result = await self.db.execute(query)
         return result.scalars().all()
 

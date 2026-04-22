@@ -24,9 +24,6 @@ async def upload_resume(
     user_id: int = Depends(get_user_id_from_token)
 ):
     """上传附件简历"""
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.warning(f"upload_resume called, user_id={user_id}, filename={file.filename}")
     try:
         resume = await service.upload_resume(user_id, file)
         return {"code": 200, "message": "上传成功", "data": {
@@ -37,7 +34,6 @@ async def upload_resume(
     except BizError as e:
         raise e
     except Exception as e:
-        logger.error(f"Upload failed: {e}")
         raise BizError(code=500, message=f"上传失败: {str(e)}")
 
 

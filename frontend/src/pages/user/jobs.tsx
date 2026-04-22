@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { PageLayout } from '@/components/layout/page-layout';
 import { UserNav } from '@/components/layout/user-nav';
+import { Button } from '@/components/ui/button';
 import { userJobsApi } from '@/api/user/jobs';
 
 interface Job {
@@ -13,64 +14,77 @@ interface Job {
   skills: string[];
 }
 
+const PAGE_SIZE = 15;
+
 export default function UserJobs() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const observerRef = useRef<HTMLDivElement>(null);
 
-  const loadJobs = async (pageNum: number = 1, append: boolean = false) => {
+  const pageRef = useRef(1);
+  const loadingMoreRef = useRef(false);
+  const hasMoreRef = useRef(true);
+  const initializedRef = useRef(false);
+
+  const loadJobs = useCallback(async (pageNum: number, append: boolean) => {
     if (append) {
+      if (loadingMoreRef.current) return;
       setLoadingMore(true);
+      loadingMoreRef.current = true;
     } else {
       setLoading(true);
     }
     try {
-      const res = await userJobsApi.list({ page: pageNum, page_size: 12 });
+      const res = await userJobsApi.list({ page: pageNum, page_size: PAGE_SIZE });
       const newItems = res.data.items || [];
       if (append) {
         setJobs(prev => [...prev, ...newItems]);
       } else {
         setJobs(newItems);
       }
-      setHasMore(newItems.length === 12);
+      // 返回条数小于分页大小，说明已经到底了
+      const more = newItems.length === PAGE_SIZE;
+      setHasMore(more);
+      hasMoreRef.current = more;
     } catch (error) {
       console.error('Failed to load jobs:', error);
     } finally {
       setLoading(false);
-      setLoadingMore(false);
+      if (append) {
+        setLoadingMore(false);
+        loadingMoreRef.current = false;
+      }
     }
-  };
+  }, []);
 
-  const loadMore = useCallback(() => {
-    if (!loadingMore && hasMore) {
-      const nextPage = page + 1;
-      setPage(nextPage);
-      loadJobs(nextPage, true);
-    }
-  }, [loadingMore, hasMore, page]);
+  const handleLoadMore = useCallback(() => {
+    if (loadingMoreRef.current || !hasMoreRef.current) return;
+    const nextPage = pageRef.current + 1;
+    pageRef.current = nextPage;
+    loadJobs(nextPage, true);
+  }, [loadJobs]);
 
   useEffect(() => {
-    loadJobs(1);
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+    loadJobs(1, false);
   }, []);
 
   useEffect(() => {
-    if (!observerRef.current || !hasMore) return;
+    const handleScroll = () => {
+      if (loadingMoreRef.current || !hasMoreRef.current) return;
+      const scrollTop = window.scrollY;
+      const clientHeight = window.innerHeight;
+      const scrollHeight = document.documentElement.scrollHeight;
+      if (scrollTop + clientHeight >= scrollHeight - 200) {
+        handleLoadMore();
+      }
+    };
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && !loadingMore && hasMore) {
-          loadMore();
-        }
-      },
-      { threshold: 0.1 }
-    );
-
-    observer.observe(observerRef.current);
-    return () => observer.disconnect();
-  }, [loadMore, loadingMore, hasMore]);
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [handleLoadMore]);
 
   return (
     <PageLayout
@@ -95,7 +109,7 @@ export default function UserJobs() {
           <p className="text-muted-foreground">暂时没有在招的岗位，请稍后再来</p>
         </div>
       ) : (
-        <>
+        <div className="pb-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {jobs.map((job) => (
               <Link
@@ -103,8 +117,8 @@ export default function UserJobs() {
                 to={`/user/jobs/${job.id}`}
                 className="group block"
               >
-                <div className="bg-card rounded-xl border border-border p-6 transition-all duration-200 hover:border-accent hover:shadow-lg hover:shadow-accent/5">
-                  <div className="flex items-start justify-between mb-4">
+                <div className="bg-card rounded-xl border border-border p-6 transition-all duration-200 hover:border-accent hover:shadow-lg hover:shadow-accent/5 h-[180px] flex flex-col">
+                  <div className="flex items-start justify-between mb-2 shrink-0">
                     <div className="space-y-1">
                       <h3 className="font-semibold text-lg group-hover:text-accent transition-colors">
                         {job.name}
@@ -118,7 +132,7 @@ export default function UserJobs() {
                     </span>
                   </div>
                   {job.skills && job.skills.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mb-4">
+                    <div className="flex flex-wrap gap-1.5 mb-2 shrink-0 overflow-hidden">
                       {job.skills.map((skill, idx) => (
                         <span key={idx} className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                           {skill}
@@ -126,7 +140,7 @@ export default function UserJobs() {
                       ))}
                     </div>
                   )}
-                  <div className="flex items-center text-sm text-accent font-medium">
+                  <div className="flex items-center text-sm text-accent font-medium mt-auto">
                     查看详情
                     <svg className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -137,20 +151,25 @@ export default function UserJobs() {
             ))}
           </div>
 
-          {/* 滚动加载触发器 */}
-          <div ref={observerRef} className="h-4 mt-4">
+          <div className="py-6 flex flex-col items-center gap-4">
             {loadingMore && (
-              <div className="flex justify-center py-4">
+              <div className="flex flex-col items-center gap-2">
                 <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                <span className="text-sm text-muted-foreground">加载中...</span>
               </div>
             )}
             {!hasMore && jobs.length > 0 && (
-              <p className="text-center text-sm text-muted-foreground py-4">
-                已加载全部岗位
+              <p className="text-center text-sm text-muted-foreground">
+                已经到底了哦 ({jobs.length} 条)
               </p>
             )}
+            {hasMore && !loadingMore && (
+              <Button variant="outline" onClick={handleLoadMore}>
+                加载更多
+              </Button>
+            )}
           </div>
-        </>
+        </div>
       )}
     </PageLayout>
   );

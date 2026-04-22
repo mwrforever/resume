@@ -28,6 +28,15 @@ class EmployeeLoginRequest(BaseModel):
     code: Optional[str] = None
 
 
+class EmployeeRegisterRequest(BaseModel):
+    emp_no: str  # 员工工号
+    email: EmailStr
+    password: str
+    code: str
+    real_name: str
+    dept_id: Optional[int] = 1
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
