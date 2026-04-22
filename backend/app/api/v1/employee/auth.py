@@ -159,13 +159,14 @@ async def refresh_token(
             raise HTTPException(status_code=401, detail="无效的refresh token")
 
         user_id = int(payload["sub"])
+        user_type = payload.get("user_type", "employee")
 
         employee = await service.get_employee_by_id(user_id)
         if not employee or employee.status != 1:
             raise HTTPException(status_code=401, detail="员工已禁用")
 
-        new_access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": "employee"})
-        new_refresh_token = create_refresh_token({"sub": str(user_id), "type": "refresh", "user_type": "employee"})
+        new_access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": user_type})
+        new_refresh_token = create_refresh_token({"sub": str(user_id), "type": "refresh", "user_type": user_type})
 
         return {
             "code": 200,

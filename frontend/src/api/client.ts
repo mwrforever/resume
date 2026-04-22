@@ -30,8 +30,9 @@ client.interceptors.response.use(
         try {
           const refreshUrl = userType === 'employee' ? '/employee/auth/refresh' : '/user/auth/refresh';
           const res = await axios.post(`/api/v1${refreshUrl}`, { refresh_token: refreshToken });
-          useAuthStore.getState().setTokens(res.data.access_token, res.data.refresh_token);
-          originalRequest.headers.Authorization = `Bearer ${res.data.access_token}`;
+          const { access_token, refresh_token: new_refresh_token } = res.data.data;
+          useAuthStore.getState().setTokens(access_token, new_refresh_token);
+          originalRequest.headers.Authorization = `Bearer ${access_token}`;
           return client(originalRequest);
         } catch {
           useAuthStore.getState().logout();
