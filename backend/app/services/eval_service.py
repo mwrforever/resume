@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from app.repositories.eval_repo import EvalRepository
 from app.repositories.resume_repo import ResumeRepository
@@ -18,7 +19,6 @@ class EvalService:
         self.comprehensive_chain = ComprehensiveEvalChain()
 
     def _get_label(self, score: float) -> str:
-        """根据得分获取标签"""
         if score >= 90:
             return "优秀"
         elif score >= 70:
@@ -28,17 +28,7 @@ class EvalService:
         return "未达标"
 
     async def evaluate_resume(self, resume_id: int, job_id: int) -> dict:
-        """
-        对简历进行AI评估
-
-        Args:
-            resume_id: 简历ID
-            job_id: 岗位ID
-
-        Returns:
-            dict: 评估结果
-        """
-        # 获取数据
+        """对简历进行AI评估（并行维度评估）"""
         resume = await self.resume_repo.get_by_id(resume_id)
         if not resume or not resume.raw_text:
             raise NotFoundError("简历不存在或未解析")
@@ -53,53 +43,44 @@ class EvalService:
             match = await self.eval_repo.create_match(resume_id, job_id)
 
         # TODO: 从数据库获取岗位的评估维度和技能要求
-        # 目前使用模拟数据
         dimensions = [
             {"dimension_id": 1, "dimension_name": "技术能力", "weight": 0.4},
             {"dimension_id": 2, "dimension_name": "项目经验", "weight": 0.35},
             {"dimension_id": 3, "dimension_name": "学历背景", "weight": 0.25}
         ]
 
-        # 评估每个维度
-        dimension_results = []
+        # 并行评估所有维度
+        dimension_results = await self._evaluate_dimensions_parallel(
+            match.id, resume.raw_text, job.name, dimensions
+        )
+
+        # 计算加权总分（只计算成功的维度）
+        completed_results = [r for r in dimension_results if r["is_completed"]]
+        if not completed_results:
+            raise Exception("所有维度评估均失败")
+
+        # 重新归一化权重
         total_weighted_score = 0
+        total_weight = 0
+        for i, r in enumerate(dimension_results):
+            if r["is_completed"]:
+                total_weighted_score += r["score"] * dimensions[i]["weight"]
+                total_weight += dimensions[i]["weight"]
 
-        for dim in dimensions:
-            result = self.dimension_chain.evaluate(
-                resume_text=resume.raw_text,
-                dimension_name=dim["dimension_name"],
-                job_name=job.name,
-                job_skills=""
-            )
-
-            await self.eval_repo.create_eval_detail(
-                match_id=match.id,
-                dimension_id=dim["dimension_id"],
-                score=result["score"],
-                advantage=result.get("advantage", ""),
-                disadvantage=result.get("disadvantage", "")
-            )
-
-            dimension_results.append({
-                "dimension_name": dim["dimension_name"],
-                "score": result["score"],
-                "advantage": result.get("advantage", ""),
-                "disadvantage": result.get("disadvantage", "")
-            })
-
-            total_weighted_score += result["score"] * dim["weight"]
+        if total_weight > 0:
+            # 归一化到原始权重总和
+            original_total = sum(d["weight"] for d in dimensions)
+            total_weighted_score = (total_weighted_score / total_weight) * original_total
 
         # 生成综合评价
         comprehensive = self.comprehensive_chain.evaluate(
             job_name=job.name,
             final_score=total_weighted_score,
-            dimensions=dimension_results
+            dimensions=completed_results
         )
 
-        # 确定标签
         label = self._get_label(total_weighted_score)
 
-        # 更新匹配结果
         await self.eval_repo.update_match_result(
             match_id=match.id,
             score=total_weighted_score,
@@ -119,6 +100,54 @@ class EvalService:
             "disadvantage_comment": comprehensive.get("disadvantage_comment", "")
         }
 
+    async def _evaluate_dimensions_parallel(self, match_id: int, resume_text: str, job_name: str, dimensions: list) -> list:
+        """并行评估所有维度"""
+        async def evaluate_single(dim: dict):
+            try:
+                result = self.dimension_chain.evaluate(
+                    resume_text=resume_text,
+                    dimension_name=dim["dimension_name"],
+                    job_name=job_name,
+                    job_skills=""
+                )
+                await self.eval_repo.create_eval_detail_with_status(
+                    match_id=match_id,
+                    dimension_id=dim["dimension_id"],
+                    score=result["score"],
+                    advantage=result.get("advantage", ""),
+                    disadvantage=result.get("disadvantage", ""),
+                    is_completed=True
+                )
+                return {
+                    "dimension_name": dim["dimension_name"],
+                    "score": result["score"],
+                    "advantage": result.get("advantage", ""),
+                    "disadvantage": result.get("disadvantage", ""),
+                    "is_completed": True
+                }
+            except Exception as e:
+                logger.error(f"维度 {dim['dimension_name']} 评估失败: {e}")
+                await self.eval_repo.create_eval_detail_with_status(
+                    match_id=match_id,
+                    dimension_id=dim["dimension_id"],
+                    score=50.0,  # 默认分
+                    advantage="",
+                    disadvantage="",
+                    is_completed=False,
+                    error_message=str(e)
+                )
+                return {
+                    "dimension_name": dim["dimension_name"],
+                    "score": 50.0,
+                    "advantage": "",
+                    "disadvantage": "",
+                    "is_completed": False,
+                    "error_message": str(e)
+                }
+
+        tasks = [evaluate_single(dim) for dim in dimensions]
+        return await asyncio.gather(*tasks)
+
     async def get_evaluation_detail(self, match_id: int) -> dict:
         """获取评估详情"""
         match = await self.eval_repo.get_match_by_id(match_id)
@@ -132,8 +161,8 @@ class EvalService:
             "match_id": match.id,
             "resume_id": match.resume_id,
             "job_id": match.job_id,
-            "final_score": float(match.final_score),
-            "final_label": match.final_label,
+            "final_score": float(match.final_score) if match.final_score else 0,
+            "final_label": match.final_label or "未评估",
             "advantage_comment": match.advantage_comment or "",
             "disadvantage_comment": match.disadvantage_comment or "",
             "dimensions": [
@@ -142,7 +171,9 @@ class EvalService:
                     "dimension_name": d.dimension_name,
                     "score": float(d.dimension_score),
                     "advantage": d.dimension_advantage or "",
-                    "disadvantage": d.dimension_disadvantage or ""
+                    "disadvantage": d.dimension_disadvantage or "",
+                    "is_completed": d.is_completed == 1,
+                    "error_message": d.error_message
                 } for d in details
             ],
             "skill_hits": [
