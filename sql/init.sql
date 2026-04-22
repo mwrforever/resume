@@ -210,6 +210,8 @@ CREATE TABLE `resume_eval_detail`
     `dimension_advantage`    VARCHAR(500) COMMENT '该维度的具体优点(AI生成,精简,无优点时为空字符串)',
     `dimension_disadvantage` VARCHAR(500) COMMENT '该维度的具体缺点(AI生成,精简,无缺点时为空字符串)',
     `ai_reasoning`          TEXT COMMENT 'AI给出的打分理由',
+    `is_completed`          TINYINT       NOT NULL DEFAULT 1 COMMENT '是否成功完成评估：1成功，0失败',
+    `error_message`         VARCHAR(500) COMMENT '评估失败时的错误信息',
     `create_time`           DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     KEY                     `idx_match_dim` (`match_id`, `dimension_id`) COMMENT '查询某次匹配下的所有维度得分(覆盖索引)'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='简历维度评估详情表';
