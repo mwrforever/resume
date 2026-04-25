@@ -8,7 +8,11 @@ __pycache__/
 venv/
 ENV/
 env/
-# .env
+.env
+*.env
+.env.*
+backend/note/
+backend/litellm_uuid.txt
 .eggs/
 *.egg-info/
 *.egg
