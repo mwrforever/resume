@@ -1,29 +1,72 @@
+import asyncio
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from app.schemas.job import SkillSuggestRequest, SkillSuggestItem
-from app.api.deps import get_current_user
+from app.schemas.job import SkillSuggestRequest, SkillSuggestItem, SkillCreate, SkillItem
+from app.repositories.job_repo import JobRepository
+from app.api.deps import get_db, get_current_user
+from app.schemas.response import ApiResponse
 from typing import List
 
 router = APIRouter()
 
 
-@router.post("/suggest", response_model=List[SkillSuggestItem])
+def get_repo(db=Depends(get_db)) -> JobRepository:
+    return JobRepository(db)
+
+
+@router.post("/skill/suggest", response_model=List[SkillSuggestItem])
 async def suggest_skills(
     req: SkillSuggestRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    AI生成岗位技能建议（仅返回前端，不落库）
+    """AI生成岗位技能建议（仅返回前端，不落库）"""
+    from app.utils.ai.prompts import SKILL_SUGGEST_PROMPT
+    from app.utils.ai.client import llm_complete
+    import json, re
 
-    员工发布岗位时输入岗位名称和描述，系统调用AI生成技能列表建议，
-    员工确认后再手动添加技能到岗位。
-    """
-    # TODO: 实现LiteLLM技能建议
-    # 目前返回模拟数据
-    return [
-        {"skill": "React", "type": 1, "reason": "核心框架，必须掌握"},
-        {"skill": "TypeScript", "type": 2, "reason": "提升代码质量和可维护性"},
-        {"skill": "Node.js", "type": 3, "reason": "后端技术栈补充"},
-        {"skill": "Git", "type": 3, "reason": "版本控制和协作开发"},
-        {"skill": "CSS/Tailwind", "type": 2, "reason": "样式和UI开发"},
-    ]
+    prompt = SKILL_SUGGEST_PROMPT.format(job_name=req.name, job_description=req.description or "")
+    raw = await asyncio.to_thread(llm_complete, prompt)
+    match = re.search(r'\[.*\]', raw, re.DOTALL)
+    if match:
+        try:
+            items = json.loads(match.group())
+            return [SkillSuggestItem(skill=i["skill"], type=i["type"], reason=i.get("reason", "")) for i in items if "skill" in i and "type" in i]
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return []
+
+
+@router.get("/{job_id}/skills", response_model=ApiResponse[List[SkillItem]])
+async def list_skills(
+    job_id: int,
+    repo: JobRepository = Depends(get_repo),
+    current_user: dict = Depends(get_current_user)
+):
+    skills = await repo.get_job_skills(job_id)
+    return ApiResponse(data=[SkillItem.model_validate(s) for s in skills])
+
+
+@router.post("/{job_id}/skills", response_model=ApiResponse[SkillItem])
+async def add_skill(
+    job_id: int,
+    body: SkillCreate,
+    repo: JobRepository = Depends(get_repo),
+    current_user: dict = Depends(get_current_user)
+):
+    skill = await repo.add_skill(
+        job_id=job_id,
+        skill_name=body.skill_name,
+        skill_type=body.skill_type,
+        match_label=body.match_label,
+    )
+    return ApiResponse(data=SkillItem.model_validate(skill))
+
+
+@router.delete("/{job_id}/skills/{skill_id}", response_model=ApiResponse)
+async def delete_skill(
+    job_id: int,
+    skill_id: int,
+    repo: JobRepository = Depends(get_repo),
+    current_user: dict = Depends(get_current_user)
+):
+    await repo.delete_skill(skill_id)
+    return ApiResponse(message="删除成功")

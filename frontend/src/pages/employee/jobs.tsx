@@ -1,101 +1,359 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { PageLayout } from '@/components/layout/page-layout';
-import { EmployeeNav } from '@/components/layout/employee-nav';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { AdminLayout } from '@/components/layout/admin-layout';
+import { ConfirmDialog } from '@/components/common/confirm-dialog';
+import { Pagination } from '@/components/common/pagination';
 import { employeeJobsApi } from '@/api/employee/jobs';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { useDebounce } from '@/hooks/use-debounce';
+import { Plus, Pencil, Trash2, RefreshCw, Loader2, X } from 'lucide-react';
+import { CreateJobModal } from '@/components/employee/create-job-modal';
 
-interface Job {
-  id: number;
-  name: string;
-  description: string;
-  status: number;
-  create_time: string;
+// ─── Edit-only dialog ──────────────────────────────────────────────────────
+
+interface JobEditDialogProps {
+  jobId: number;
+  onClose: () => void;
+  onSuccess: () => void;
 }
 
-export default function EmployeeJobs() {
-  const [jobs, setJobs] = useState<Job[]>([]);
+function JobEditDialog({ jobId, onClose, onSuccess }: JobEditDialogProps) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [status, setStatus] = useState(1);
   const [loading, setLoading] = useState(true);
-
-  const loadJobs = async () => {
-    setLoading(true);
-    try {
-      const res = await employeeJobsApi.list();
-      setJobs(res.data.items || []);
-    } catch (error) {
-      console.error('Failed to load jobs:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    loadJobs();
-  }, []);
+    employeeJobsApi.get(jobId).then(res => {
+      const job = res.data?.data ?? res.data;
+      setName(job.name ?? '');
+      setDescription(job.description ?? '');
+      setStatus(job.status ?? 1);
+    }).catch(() => setError('加载失败，请关闭重试')).finally(() => setLoading(false));
+  }, [jobId]);
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('确定要删除这个岗位吗？')) return;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true); setError('');
     try {
-      await employeeJobsApi.delete(id);
-      await loadJobs();
-    } catch (error) {
-      console.error('Failed to delete job:', error);
+      await employeeJobsApi.update(jobId, { name, description, status });
+      onSuccess();
+    } catch {
+      setError('保存失败，请重试');
+      setSaving(false);
     }
   };
 
   return (
-    <PageLayout
+    <Dialog open onOpenChange={onClose} containerClassName="max-w-lg">
+      <DialogContent>
+        <div className="flex items-center justify-between mb-4">
+          <DialogTitle className="mb-0">编辑岗位</DialogTitle>
+          <button onClick={onClose} aria-label="关闭" className="text-[#94A3B8] hover:text-[#1E293B] transition-colors focus-visible:outline-none">
+            <X size={18} />
+          </button>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-10 text-[#94A3B8]">
+            <Loader2 size={20} className="animate-spin mr-2" />加载中…
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-job-name">岗位名称 <span className="text-red-500">*</span></Label>
+              <Input id="edit-job-name" value={name} onChange={e => setName(e.target.value)} required className="h-10" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-job-desc">岗位描述</Label>
+              <Textarea id="edit-job-desc" value={description} onChange={e => setDescription(e.target.value)} className="min-h-[90px] resize-none" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>招聘状态</Label>
+              <div className="flex gap-3">
+                {[{ val: 1, label: '招聘中', active: 'bg-green-100 text-green-700 border-green-300' }, { val: 0, label: '已下架', active: 'bg-[#F1F5F9] text-[#64748B] border-[#CBD5E1]' }].map(opt => (
+                  <button key={opt.val} type="button" onClick={() => setStatus(opt.val)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors focus-visible:outline-none ${status === opt.val ? opt.active : 'bg-white text-[#64748B] border-[#E2E8F0] hover:bg-[#F8FAFC]'}`}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {error && <p className="text-sm text-red-500">{error}</p>}
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
+              <Button type="submit" disabled={saving || !name.trim()} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white">
+                {saving ? <><Loader2 size={14} className="animate-spin mr-1.5" />保存中…</> : '保存修改'}
+              </Button>
+            </div>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const DEFAULT_PAGE_SIZE = 10;
+
+interface Job {
+  id: number;
+  name: string;
+  dept_name?: string;
+  dept_code?: string;
+  status: number;
+  resume_count?: number;
+  create_time: string;
+}
+
+// ─── Main Page ───────────────────────────────────────────────────────────────
+
+export default function EmployeeJobs() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Job | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [dialogMode, setDialogMode] = useState<'create' | 'edit' | null>(null);
+  const [editJobId, setEditJobId] = useState<number | null>(null);
+
+  const searchInput = searchParams.get('search') ?? '';
+  const statusFilter = searchParams.get('status') ?? '';
+  const page = Number(searchParams.get('page') ?? '1');
+  const pageSize = Number(searchParams.get('page_size') ?? String(DEFAULT_PAGE_SIZE));
+
+  const debouncedSearch = useDebounce(searchInput, 350);
+
+  const loadJobs = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
+    try {
+      const params: Record<string, string> = { page: String(page), page_size: String(pageSize) };
+      if (debouncedSearch) params.search = debouncedSearch;
+      if (statusFilter) params.status = statusFilter;
+      const res = await employeeJobsApi.list(params);
+      setJobs(res.data.items || []);
+      setTotal(res.data.total ?? 0);
+    } catch (error) {
+      console.error('Failed to load jobs:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [debouncedSearch, statusFilter, page, pageSize]);
+
+  useEffect(() => { loadJobs(); }, [loadJobs]);
+
+  const setParam = (key: string, val: string, resetPage = true) => {
+    const next = new URLSearchParams(searchParams);
+    if (val) next.set(key, val); else next.delete(key);
+    if (resetPage) next.delete('page');
+    setSearchParams(next);
+  };
+
+  const setPage = (p: number) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('page', String(p));
+    setSearchParams(next);
+  };
+
+  const setPageSize = (size: number) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('page_size', String(size));
+    next.delete('page');
+    setSearchParams(next);
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await employeeJobsApi.delete(deleteTarget.id);
+      setDeleteTarget(null);
+      await loadJobs();
+    } catch (error) {
+      console.error('Failed to delete job:', error);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const openEdit = (job: Job) => {
+    setEditJobId(job.id);
+    setDialogMode('edit');
+  };
+
+  const closeDialog = () => {
+    setDialogMode(null);
+    setEditJobId(null);
+  };
+
+  const handleDialogSuccess = () => {
+    closeDialog();
+    loadJobs();
+  };
+
+  return (
+    <AdminLayout
+      breadcrumbs={[{ label: '岗位管理' }]}
       title="岗位管理"
-      subtitle="管理招聘信息"
-      action={<EmployeeNav />}
+      headerAction={
+        <Button onClick={() => setDialogMode('create')} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white">
+          <Plus size={16} className="mr-1.5" aria-hidden="true" />
+          创建岗位
+        </Button>
+      }
     >
-      <div className="flex justify-between items-center mb-6">
-        <Link to="/employee/jobs/create">
-          <Button>创建岗位</Button>
-        </Link>
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <Input
+          type="search"
+          placeholder="搜索岗位名称…"
+          value={searchInput}
+          onChange={(e) => setParam('search', e.target.value)}
+          className="w-56 bg-white"
+          name="job-search"
+          autoComplete="off"
+        />
+        <Select value={statusFilter} onValueChange={(v) => setParam('status', v)}>
+          <SelectTrigger className="w-36 bg-white">
+            <SelectValue placeholder="全部状态" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">全部状态</SelectItem>
+            <SelectItem value="1">招聘中</SelectItem>
+            <SelectItem value="0">已下架</SelectItem>
+          </SelectContent>
+        </Select>
+        <button
+          onClick={() => loadJobs(true)}
+          disabled={refreshing}
+          aria-label="刷新"
+          className="inline-flex items-center gap-1.5 px-3 h-9 rounded-md border border-[#E2E8F0] bg-white text-sm text-[#64748B] hover:bg-[#F8FAFC] transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+        >
+          <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} aria-hidden="true" />
+          刷新
+        </button>
       </div>
 
-      {loading ? (
-        <div className="animate-pulse space-y-4">
-          <div className="h-20 bg-muted rounded-xl" />
-          <div className="h-20 bg-muted rounded-xl" />
-          <div className="h-20 bg-muted rounded-xl" />
-        </div>
-      ) : jobs.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <p className="text-muted-foreground">还没有创建过岗位</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          {jobs.map((job) => (
-            <Card key={job.id}>
-              <CardContent className="flex justify-between items-center py-4">
-                <div>
-                  <p className="font-medium">{job.name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {job.status === 1 ? '招聘中' : '已下架'} | {job.create_time?.split('T')[0]}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Link to={`/employee/jobs/${job.id}/edit`}>
-                    <Button variant="outline" size="sm">编辑</Button>
-                  </Link>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => handleDelete(job.id)}
-                  >
-                    删除
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+      {/* Table */}
+      <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
+              <th className="text-left px-4 py-3 font-medium text-[#64748B]">岗位名称</th>
+              <th className="text-left px-4 py-3 font-medium text-[#64748B]">部门</th>
+              <th className="text-left px-4 py-3 font-medium text-[#64748B]">状态</th>
+              <th className="text-left px-4 py-3 font-medium text-[#64748B] tabular-nums">简历数</th>
+              <th className="text-left px-4 py-3 font-medium text-[#64748B]">发布时间</th>
+              <th className="text-right px-4 py-3 font-medium text-[#64748B]">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              [...Array(4)].map((_, i) => (
+                <tr key={i} className="border-b border-[#F1F5F9]">
+                  {[...Array(6)].map((__, j) => (
+                    <td key={j} className="px-4 py-3">
+                      <div className="h-4 bg-[#F1F5F9] rounded animate-pulse" />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : jobs.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-4 py-16 text-center text-[#94A3B8]">
+                  <p className="mb-3">还没有创建过岗位</p>
+                  <Button variant="outline" size="sm" onClick={() => setDialogMode('create')}>去创建第一个岗位</Button>
+                </td>
+              </tr>
+            ) : (
+              jobs.map((job) => (
+                <tr key={job.id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors">
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => openEdit(job)}
+                      className="font-medium text-[#1E293B] hover:text-[#2563EB] transition-colors focus-visible:outline-none focus-visible:underline text-left"
+                    >
+                      {job.name}
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-[#64748B]">
+                    {job.dept_name
+                      ? <span>{job.dept_name}{job.dept_code && <span className="ml-1.5 text-xs text-[#94A3B8]">({job.dept_code})</span>}</span>
+                      : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    {job.status === 1
+                      ? <Badge className="bg-green-100 text-green-700 border-green-200">招聘中</Badge>
+                      : <Badge className="bg-[#F1F5F9] text-[#64748B] border-[#E2E8F0]">已下架</Badge>
+                    }
+                  </td>
+                  <td className="px-4 py-3 text-[#64748B] tabular-nums">{job.resume_count ?? 0}</td>
+                  <td className="px-4 py-3 text-[#64748B]">
+                    {new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(job.create_time))}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => openEdit(job)}
+                        aria-label={`编辑岗位 ${job.name}`}
+                        className="inline-flex items-center gap-1 text-xs text-[#2563EB] hover:underline px-2 py-1 rounded hover:bg-blue-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                      >
+                        <Pencil size={13} aria-hidden="true" />
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => setDeleteTarget(job)}
+                        aria-label={`删除岗位 ${job.name}`}
+                        className="inline-flex items-center gap-1 text-xs text-red-500 hover:underline px-2 py-1 rounded hover:bg-red-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                      >
+                        <Trash2 size={13} aria-hidden="true" />
+                        删除
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <Pagination page={page} pageSize={pageSize} total={total} onChange={setPage} onPageSizeChange={setPageSize} />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="确认删除岗位"
+        description={`确定要删除「${deleteTarget?.name}」吗？删除后无法恢复。`}
+        confirmLabel="删除"
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
+        loading={deleting}
+      />
+
+      <CreateJobModal
+        open={dialogMode === 'create'}
+        onClose={closeDialog}
+        onSuccess={handleDialogSuccess}
+      />
+
+      {dialogMode === 'edit' && editJobId && (
+        <JobEditDialog
+          jobId={editJobId}
+          onClose={closeDialog}
+          onSuccess={handleDialogSuccess}
+        />
       )}
-    </PageLayout>
+    </AdminLayout>
   );
 }

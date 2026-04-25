@@ -16,6 +16,8 @@ class JobItem(BaseItem):
     name: str
     description: Optional[str] = None
     status: int
+    dept_name: Optional[str] = None
+    dept_code: Optional[str] = None
     create_time: Optional[datetime] = None
     skills: list[str] = []
 
@@ -35,6 +37,8 @@ class ResumeItem(BaseItem):
     id: int
     file_name: str
     status: int
+    user_id: Optional[int] = None
+    user_name: Optional[str] = None
     create_time: Optional[datetime] = None
 
 
@@ -62,7 +66,10 @@ class EmployeeApplicationItem(BaseItem):
     id: int
     user_id: int
     job_id: int
+    job_name: str = ""
     resume_id: int
+    resume_file_name: Optional[str] = None
+    match_id: Optional[int] = None
     status: int
     status_name: str
     create_time: Optional[datetime] = None

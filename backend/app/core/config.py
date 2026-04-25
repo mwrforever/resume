@@ -58,7 +58,20 @@ class Settings(BaseSettings):
 
     @property
     def redis_url(self) -> str:
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        return self._build_redis_url(self.REDIS_DB)
+
+    def _build_redis_url(self, db: int) -> str:
+        if self.REDIS_PASSWORD:
+            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{db}"
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{db}"
+
+    @property
+    def celery_broker_url(self) -> str:
+        return self._build_redis_url(1)
+
+    @property
+    def celery_result_backend(self) -> str:
+        return self._build_redis_url(2)
 
 
 @lru_cache()

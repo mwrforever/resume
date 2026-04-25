@@ -75,6 +75,46 @@ export interface Job {
   create_time: string;
 }
 
+export interface IDimension {
+  id?: number;
+  dimension_name: string;
+  weight: number;
+  prompt_template: string;
+  sort_order?: number;
+}
+
+export interface ISkill {
+  id?: number;
+  skill_name: string;
+  skill_type: number;  // 1=必须, 2=优先, 3=普通
+  match_label?: string;
+}
+
+export interface ITag {
+  id: number;
+  tag_name: string;
+  tag_type: number;
+  color: string;
+}
+
+export interface IAiSuggestDimension {
+  dimension_name: string;
+  weight: number;
+  prompt_template: string;
+}
+
+export interface IAiSuggestSkill {
+  skill: string;
+  type: number;
+  reason: string;
+}
+
+export interface IAiSuggestResult {
+  comprehensive_description: string;
+  dimensions: IAiSuggestDimension[];
+  skills: IAiSuggestSkill[];
+}
+
 // 投递记录
 export interface Application {
   id: number;

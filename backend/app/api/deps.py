@@ -1,11 +1,12 @@
-from typing import Optional
-from fastapi import Depends, Header, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.models import async_session_maker
+from typing import Optional, Any, AsyncGenerator
+
+from fastapi import Header, HTTPException
+
 from app.core.security import decode_token
+from app.models import async_session_maker
 
 
-async def get_db() -> AsyncSession:
+async def get_db() -> AsyncGenerator[Any, Any]:
     async with async_session_maker() as session:
         yield session
 

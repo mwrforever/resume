@@ -1,92 +1,142 @@
-import { useEffect, useState } from 'react';
-import { PageLayout } from '@/components/layout/page-layout';
-import { EmployeeNav } from '@/components/layout/employee-nav';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { AdminLayout } from '@/components/layout/admin-layout';
 import { ResumePreviewDialog } from '@/components/common/resume-preview-dialog';
+import { Pagination } from '@/components/common/pagination';
 import { employeeResumesApi } from '@/api/employee/resumes';
+import { Eye, RefreshCw } from 'lucide-react';
+
+const DEFAULT_PAGE_SIZE = 10;
 
 interface Resume {
   id: number;
   file_name: string;
   user_id?: number;
+  user_name?: string;
   status: number;
   create_time: string;
 }
 
+const STATUS_BADGE: Record<number, { label: string; cls: string }> = {
+  0: { label: '正常', cls: 'bg-green-100 text-green-700' },
+  1: { label: '异常', cls: 'bg-red-100 text-red-600' },
+};
+
 export default function EmployeeResumes() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [resumes, setResumes] = useState<Resume[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [previewResume, setPreviewResume] = useState<{ id: number; fileName: string } | null>(null);
 
-  useEffect(() => {
-    const loadResumes = async () => {
-      try {
-        const res = await employeeResumesApi.list();
-        setResumes(res.data.items || []);
-      } catch (error) {
-        console.error('Failed to load resumes:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadResumes();
-  }, []);
+  const page = Number(searchParams.get('page') ?? '1');
+  const pageSize = Number(searchParams.get('page_size') ?? String(DEFAULT_PAGE_SIZE));
 
-  const getStatusBadge = (status: number) => {
-    switch (status) {
-      case 0: return <Badge variant="secondary">待处理</Badge>;
-      case 2: return <Badge variant="default">评估完成</Badge>;
-      case 3: return <Badge variant="destructive">处理失败</Badge>;
-      default: return <Badge>未知</Badge>;
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
+    try {
+      const res = await employeeResumesApi.list({ page, page_size: pageSize });
+      setResumes(res.data.items || []);
+      setTotal(res.data.total ?? 0);
+    } catch (error) {
+      console.error('Failed to load resumes:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [page, pageSize]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const setPage = (p: number) => setSearchParams(prev => { const next = new URLSearchParams(prev); next.set('page', String(p)); return next; });
+
+  const setPageSize = (size: number) => setSearchParams(prev => { const next = new URLSearchParams(prev); next.set('page_size', String(size)); next.delete('page'); return next; });
 
   return (
-    <PageLayout title="简历库" subtitle="管理所有简历" action={<EmployeeNav />}>
-      {loading ? (
-        <div className="animate-pulse space-y-4">
-          <div className="h-20 bg-muted rounded-xl" />
-          <div className="h-20 bg-muted rounded-xl" />
-        </div>
-      ) : resumes.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <p className="text-muted-foreground">暂无简历</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          {resumes.map((resume) => (
-            <Card key={resume.id}>
-              <CardContent className="flex justify-between items-center py-4">
-                <div>
-                  <button
-                    onClick={() => setPreviewResume({ id: resume.id, fileName: resume.file_name })}
-                    className="font-medium hover:underline text-left"
-                  >
-                    {resume.file_name}
-                  </button>
-                  <div className="flex items-center gap-3 mt-1">
-                    {getStatusBadge(resume.status)}
-                    <span className="text-sm text-muted-foreground">
-                      {resume.create_time?.split('T')[0]}
-                    </span>
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPreviewResume({ id: resume.id, fileName: resume.file_name })}
-                >
-                  预览
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+    <AdminLayout breadcrumbs={[{ label: '简历库' }]} title="简历库">
+      {/* Toolbar */}
+      <div className="flex items-center justify-end mb-4">
+        <button
+          onClick={() => load(true)}
+          disabled={refreshing}
+          aria-label="刷新"
+          className="inline-flex items-center gap-1.5 px-3 h-8 rounded-md border border-[#E2E8F0] bg-white text-sm text-[#64748B] hover:bg-[#F8FAFC] transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+        >
+          <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} aria-hidden="true" />
+          刷新
+        </button>
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
+              <th className="text-left px-4 py-3 font-medium text-[#64748B]">文件名</th>
+              <th className="text-left px-4 py-3 font-medium text-[#64748B]">上传者</th>
+              <th className="text-left px-4 py-3 font-medium text-[#64748B]">状态</th>
+              <th className="text-left px-4 py-3 font-medium text-[#64748B]">上传时间</th>
+              <th className="text-right px-4 py-3 font-medium text-[#64748B]">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              [...Array(4)].map((_, i) => (
+                <tr key={i} className="border-b border-[#F1F5F9]">
+                  {[...Array(5)].map((__, j) => (
+                    <td key={j} className="px-4 py-3">
+                      <div className="h-4 bg-[#F1F5F9] rounded animate-pulse" />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : resumes.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-16 text-center text-[#94A3B8]">暂无简历</td>
+              </tr>
+            ) : (
+              resumes.map((resume) => {
+                const badge = STATUS_BADGE[resume.status] ?? { label: '未知', cls: 'bg-[#F1F5F9] text-[#64748B]' };
+                return (
+                  <tr key={resume.id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors">
+                    <td className="px-4 py-3 max-w-xs">
+                      <button
+                        onClick={() => setPreviewResume({ id: resume.id, fileName: resume.file_name })}
+                        className="font-medium text-[#1E293B] hover:text-[#2563EB] transition-colors truncate block max-w-full text-left focus-visible:outline-none focus-visible:underline"
+                      >
+                        {resume.file_name}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 text-[#64748B]">{resume.user_name ?? '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${badge.cls}`}>
+                        {badge.label}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-[#64748B]">
+                      {new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(resume.create_time))}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => setPreviewResume({ id: resume.id, fileName: resume.file_name })}
+                        aria-label={`预览简历 ${resume.file_name}`}
+                        className="inline-flex items-center gap-1 text-xs text-[#2563EB] hover:underline px-2 py-1 rounded hover:bg-blue-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                      >
+                        <Eye size={13} aria-hidden="true" />
+                        预览
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <Pagination page={page} pageSize={pageSize} total={total} onChange={setPage} onPageSizeChange={setPageSize} />
 
       {previewResume && (
         <ResumePreviewDialog
@@ -96,6 +146,6 @@ export default function EmployeeResumes() {
           onClose={() => setPreviewResume(null)}
         />
       )}
-    </PageLayout>
+    </AdminLayout>
   );
 }

@@ -2,7 +2,10 @@ import json
 import re
 import logging
 from app.utils.ai.client import llm_complete
-from app.utils.ai.prompts import DIMENSION_EVAL_PROMPT, SKILL_HIT_PROMPT, COMPREHENSIVE_EVAL_PROMPT
+from app.utils.ai.prompts import (
+    DIMENSION_EVAL_PROMPT, SKILL_HIT_PROMPT, COMPREHENSIVE_EVAL_PROMPT,
+    SKILL_SUGGEST_PROMPT, DIMENSION_SUGGEST_PROMPT, JOB_DESCRIPTION_PROMPT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,25 @@ class DimensionEvalChain:
             job_skills=job_skills,
             resume_text=resume_text
         )
+        try:
+            result = llm_complete(prompt)
+            return self._parse_result(result)
+        except Exception as e:
+            logger.error(f"维度评估失败: {e}")
+            return {"score": 50, "advantage": "评估异常", "disadvantage": ""}
+
+    def evaluate_with_template(self, resume_text: str, job_name: str, prompt_template: str,
+                               dimension_name: str = "", job_skills: str = "") -> dict:
+        """使用维度专属 prompt_template 进行评估"""
+        try:
+            prompt = prompt_template.format(
+                resume_text=resume_text,
+                job_name=job_name,
+                dimension_name=dimension_name,
+                job_skills=job_skills,
+            )
+        except KeyError:
+            prompt = prompt_template + f"\n\n简历内容:\n{resume_text}"
         try:
             result = llm_complete(prompt)
             return self._parse_result(result)
@@ -104,3 +126,51 @@ class ComprehensiveEvalChain:
             except json.JSONDecodeError:
                 pass
         return {"advantage_comment": "", "disadvantage_comment": ""}
+
+
+class JobAiSuggestChain:
+    """根据岗位名称和简要描述，一次性生成：详细描述 + 评估维度 + 技能建议"""
+
+    def suggest(self, name: str, description: str) -> dict:
+        """
+        Returns:
+            dict: {comprehensive_description, dimensions, skills}
+        """
+        desc_prompt = JOB_DESCRIPTION_PROMPT.format(job_name=name, job_description=description or "")
+        dim_prompt = DIMENSION_SUGGEST_PROMPT.format(job_name=name, job_description=description or "")
+        skill_prompt = SKILL_SUGGEST_PROMPT.format(job_name=name, job_description=description or "")
+
+        try:
+            comprehensive_description = llm_complete(desc_prompt)
+        except Exception as e:
+            logger.error(f"岗位描述生成失败: {e}")
+            comprehensive_description = description or ""
+
+        try:
+            dim_raw = llm_complete(dim_prompt)
+            dimensions = self._parse_array(dim_raw)
+        except Exception as e:
+            logger.error(f"评估维度生成失败: {e}")
+            dimensions = []
+
+        try:
+            skill_raw = llm_complete(skill_prompt)
+            skills = self._parse_array(skill_raw)
+        except Exception as e:
+            logger.error(f"技能建议生成失败: {e}")
+            skills = []
+
+        return {
+            "comprehensive_description": comprehensive_description.strip(),
+            "dimensions": dimensions,
+            "skills": skills,
+        }
+
+    def _parse_array(self, result: str) -> list:
+        match = re.search(r'\[.*\]', result, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                pass
+        return []

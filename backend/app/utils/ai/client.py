@@ -1,7 +1,12 @@
+import re
 import litellm
 from app.core.config import get_settings
 import logging
 import time
+
+def _strip_thinking(text: str) -> str:
+    """Remove <think>...</think> blocks emitted by reasoning models (e.g. qwen3)."""
+    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +30,20 @@ def llm_complete(prompt: str, model: str = None, max_retries: int = 3) -> str:
     """
     target_model = model or settings.OPENAI_MODEL
     last_error = None
+    litellm.set_verbose=True
 
     for attempt in range(max_retries):
         try:
             response = litellm.completion(
                 model=target_model,
                 messages=[{"role": "user", "content": prompt}],
-                timeout=30,
+                api_key=settings.OPENAI_API_KEY,
+                api_base=settings.OPENAI_API_BASE,
+                timeout=60,
+                extra_body={"enable_thinking": False},
             )
-            return response.choices[0].message.content
+            raw = response.choices[0].message.content or ''
+            return _strip_thinking(raw)
         except Exception as e:
             last_error = e
             logger.warning(f"LLM调用失败 (尝试 {attempt + 1}/{max_retries}): {e}")

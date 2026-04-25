@@ -1,4 +1,4 @@
--- ==========================================================
+﻿-- ==========================================================
 -- 基础规范设定
 -- 主键：统一使用 id BIGINT AUTO_INCREMENT
 -- 索引：严禁联合主键，通过联合索引(最左前缀)优化高频查询
@@ -42,6 +42,7 @@ CREATE TABLE `sys_dept`
 (
     `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '部门ID',
     `parent_id`   BIGINT      NOT NULL DEFAULT 0 COMMENT '父部门ID(0为顶级)',
+    `dept_code`   VARCHAR(20)          DEFAULT NULL COMMENT '部门编码',
     `dept_name`   VARCHAR(50) NOT NULL COMMENT '部门名称',
     `leader_id`   BIGINT               DEFAULT NULL COMMENT '部门负责人员工ID',
     `sort_order`  INT         NOT NULL DEFAULT 0 COMMENT '显示排序',
@@ -51,58 +52,6 @@ CREATE TABLE `sys_dept`
     `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     KEY           `idx_parent_status` (`parent_id`, `status`) COMMENT '查询某父节点下的有效子部门'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='部门表';
-
--- 4. 角色表
-CREATE TABLE `sys_role`
-(
-    `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '角色ID',
-    `role_name`   VARCHAR(50) NOT NULL COMMENT '角色名称(如：超级管理员、普通HR、求职者)',
-    `role_code`   VARCHAR(50) NOT NULL COMMENT '角色权限标识(如：SUPER_ADMIN、CANDIDATE)',
-    `data_scope`  TINYINT     NOT NULL DEFAULT 1 COMMENT '数据权限范围：1全部，2本部门，3仅本人',
-    `status`      TINYINT     NOT NULL DEFAULT 1 COMMENT '状态：1正常，0停用',
-    `is_deleted`  TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
-    `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY `uk_role_code` (`role_code`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色表';
-
--- 5. 菜单/资源权限表 (包含前端路由和后端API接口)
-CREATE TABLE `sys_menu`
-(
-    `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '菜单ID',
-    `parent_id`   BIGINT      NOT NULL DEFAULT 0 COMMENT '父菜单ID',
-    `menu_name`   VARCHAR(50) NOT NULL COMMENT '菜单/按钮名称',
-    `menu_type`   TINYINT     NOT NULL COMMENT '类型：1目录，2菜单，3按钮/API',
-    `path`        VARCHAR(200)         DEFAULT NULL COMMENT '前端路由路径',
-    `perm`        VARCHAR(100)         DEFAULT NULL COMMENT '后端权限标识(如:resume:batch:upload)',
-    `sort_order`  INT         NOT NULL DEFAULT 0 COMMENT '排序',
-    `status`      TINYINT     NOT NULL DEFAULT 1 COMMENT '状态：1显示，0隐藏',
-    `is_deleted`  TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
-    `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    KEY           `idx_parent_status` (`parent_id`, `status`) COMMENT '获取子菜单树'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='菜单权限表';
-
--- 6. 员工-角色关联表 (严禁联合主键，使用单列主键+联合唯一索引)
-CREATE TABLE `sys_employee_role`
-(
-    `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
-    `employee_id` BIGINT   NOT NULL COMMENT '员工ID',
-    `role_id`     BIGINT   NOT NULL COMMENT '角色ID',
-    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '分配时间',
-    UNIQUE KEY `uk_employee_role` (`employee_id`, `role_id`) COMMENT '保证同一员工不重复分配同一角色',
-    KEY           `idx_role_id` (`role_id`) COMMENT '用于反向查询某角色下的所有员工'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='员工角色关联表';
-
--- 7. 角色-菜单关联表 (严禁联合主键，使用单列主键+联合唯一索引)
-CREATE TABLE `sys_role_menu`
-(
-    `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
-    `role_id`     BIGINT   NOT NULL COMMENT '角色ID',
-    `menu_id`     BIGINT   NOT NULL COMMENT '菜单ID',
-    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '分配时间',
-    UNIQUE KEY `uk_role_menu` (`role_id`, `menu_id`) COMMENT '保证同一角色不重复分配同一菜单',
-    KEY           `idx_menu_id` (`menu_id`) COMMENT '用于反向查询某菜单被哪些角色拥有'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色菜单关联表';
 
 -- ==========================================================
 -- 业务模块表结构
@@ -174,7 +123,7 @@ CREATE TABLE `resume`
     `file_path`    VARCHAR(500) NOT NULL COMMENT '文件相对路径',
     `storage_type` VARCHAR(20)  NOT NULL DEFAULT 'LOCAL' COMMENT '存储类型策略：LOCAL/OSS/COS',
     `raw_text`     LONGTEXT COMMENT 'AI解析后的纯文本内容',
-    `status`       TINYINT      NOT NULL DEFAULT 0 COMMENT '状态：0待处理，2评估完成，3处理失败',
+    `status`       TINYINT      NOT NULL DEFAULT 0 COMMENT '状态：0正常 1异常',
     `is_deleted`   TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
     `create_time`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间',
     `update_time`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',

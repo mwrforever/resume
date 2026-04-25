@@ -20,7 +20,10 @@ client.interceptors.request.use(
 
 // Response interceptor
 client.interceptors.response.use(
-  (response) => response.data,
+  (response) => {
+    if (response.config?.responseType === 'blob') return response;
+    return response.data;
+  },
   async (error) => {
     const originalRequest = error.config;
     if (error.response?.status === 401 && !originalRequest._retry) {

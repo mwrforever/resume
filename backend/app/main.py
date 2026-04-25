@@ -28,6 +28,11 @@ from app.api.v1.user.jobs import router as user_jobs_router
 from app.api.v1.user.applications import router as user_applications_router
 from app.api.v1.employee.job_endpoints import router as employee_jobs_router
 from app.api.v1.employee.jobs.skill import router as skill_router
+from app.api.v1.employee.jobs.dimension import router as dimension_router
+from app.api.v1.employee.jobs.tag import router as job_tag_router
+from app.api.v1.employee.jobs.ai import router as job_ai_router
+from app.api.v1.employee.tags import router as tags_router
+from app.api.v1.employee.depts import router as depts_router
 from app.api.v1.employee.applications import router as employee_applications_router
 from app.api.v1.employee.evaluations import router as evaluations_router
 from app.api.v1.employee.resumes import router as employee_resumes_router
@@ -40,7 +45,12 @@ app.include_router(user_resumes_router, prefix="/api/v1/user/resumes", tags=["us
 app.include_router(user_jobs_router, prefix="/api/v1/user/jobs", tags=["user-jobs"])
 app.include_router(user_applications_router, prefix="/api/v1/user/applications", tags=["user-applications"])
 app.include_router(employee_jobs_router, prefix="/api/v1/employee/jobs", tags=["employee-jobs"])
-app.include_router(skill_router, prefix="/api/v1/employee/jobs/skill", tags=["employee-skill"])
+app.include_router(skill_router, prefix="/api/v1/employee/jobs", tags=["employee-skill"])
+app.include_router(dimension_router, prefix="/api/v1/employee/jobs", tags=["employee-dimensions"])
+app.include_router(job_tag_router, prefix="/api/v1/employee/jobs", tags=["employee-job-tags"])
+app.include_router(job_ai_router, prefix="/api/v1/employee/jobs", tags=["employee-job-ai"])
+app.include_router(tags_router, prefix="/api/v1/employee/tags", tags=["employee-tags"])
+app.include_router(depts_router, prefix="/api/v1/employee/depts", tags=["employee-depts"])
 app.include_router(employee_applications_router, prefix="/api/v1/employee/applications", tags=["employee-applications"])
 app.include_router(evaluations_router, prefix="/api/v1/employee/evaluations", tags=["employee-evaluations"])
 app.include_router(employee_resumes_router, prefix="/api/v1/employee/resumes", tags=["employee-resumes"])

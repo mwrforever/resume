@@ -37,16 +37,27 @@ class EvalService:
         if not job:
             raise NotFoundError("岗位不存在")
 
-        # 获取或创建匹配记录
+        # 获取或创建匹配记录；重评估时先清理旧数据
         match = await self.eval_repo.get_match_by_resume_and_job(resume_id, job_id)
         if not match:
             match = await self.eval_repo.create_match(resume_id, job_id)
+        else:
+            await self.eval_repo.delete_eval_details_by_match(match.id)
+            await self.eval_repo.delete_skill_hits_by_match(match.id)
 
-        # TODO: 从数据库获取岗位的评估维度和技能要求
+        # 从数据库读取岗位实际配置的评估维度
+        db_dimensions = await self.job_repo.get_dimensions(job_id)
+        if not db_dimensions:
+            raise NotFoundError("岗位未配置评估维度，无法评估")
+
         dimensions = [
-            {"dimension_id": 1, "dimension_name": "技术能力", "weight": 0.4},
-            {"dimension_id": 2, "dimension_name": "项目经验", "weight": 0.35},
-            {"dimension_id": 3, "dimension_name": "学历背景", "weight": 0.25}
+            {
+                "dimension_id": d.id,
+                "dimension_name": d.dimension_name,
+                "weight": float(d.weight),
+                "prompt_template": d.prompt_template,
+            }
+            for d in db_dimensions
         ]
 
         # 并行评估所有维度
@@ -59,16 +70,14 @@ class EvalService:
         if not completed_results:
             raise Exception("所有维度评估均失败")
 
-        # 重新归一化权重
-        total_weighted_score = 0
-        total_weight = 0
-        for i, r in enumerate(dimension_results):
+        total_weighted_score = 0.0
+        total_weight = 0.0
+        for r, dim in zip(dimension_results, dimensions):
             if r["is_completed"]:
-                total_weighted_score += r["score"] * dimensions[i]["weight"]
-                total_weight += dimensions[i]["weight"]
+                total_weighted_score += r["score"] * dim["weight"]
+                total_weight += dim["weight"]
 
         if total_weight > 0:
-            # 归一化到原始权重总和
             original_total = sum(d["weight"] for d in dimensions)
             total_weighted_score = (total_weighted_score / total_weight) * original_total
 
@@ -89,6 +98,9 @@ class EvalService:
             disadvantage=comprehensive.get("disadvantage_comment", "")
         )
 
+        # 技能命中检测（按 skill_type 分组，各调用一次 LLM）
+        await self._evaluate_skill_hits(match.id, resume.raw_text, job_id)
+
         logger.info(f"简历 {resume_id} 评估完成，岗位 {job_id}，得分 {total_weighted_score}")
 
         return {
@@ -101,14 +113,15 @@ class EvalService:
         }
 
     async def _evaluate_dimensions_parallel(self, match_id: int, resume_text: str, job_name: str, dimensions: list) -> list:
-        """并行评估所有维度"""
+        """并行评估所有维度，优先使用维度专属 prompt_template"""
         async def evaluate_single(dim: dict):
             try:
-                result = self.dimension_chain.evaluate(
-                    resume_text=resume_text,
-                    dimension_name=dim["dimension_name"],
-                    job_name=job_name,
-                    job_skills=""
+                result = await asyncio.to_thread(
+                    self.dimension_chain.evaluate_with_template,
+                    resume_text,
+                    job_name,
+                    dim["prompt_template"],
+                    dim["dimension_name"],
                 )
                 await self.eval_repo.create_eval_detail_with_status(
                     match_id=match_id,
@@ -130,7 +143,7 @@ class EvalService:
                 await self.eval_repo.create_eval_detail_with_status(
                     match_id=match_id,
                     dimension_id=dim["dimension_id"],
-                    score=50.0,  # 默认分
+                    score=50.0,
                     advantage="",
                     disadvantage="",
                     is_completed=False,
@@ -147,6 +160,37 @@ class EvalService:
 
         tasks = [evaluate_single(dim) for dim in dimensions]
         return await asyncio.gather(*tasks)
+
+    async def _evaluate_skill_hits(self, match_id: int, resume_text: str, job_id: int) -> None:
+        """按 skill_type 分组检测技能命中，并写入 resume_skill_hit"""
+        all_skills = await self.job_repo.get_job_skills(job_id)
+        if not all_skills:
+            return
+
+        from itertools import groupby
+        sorted_skills = sorted(all_skills, key=lambda s: s.skill_type)
+        for skill_type, group in groupby(sorted_skills, key=lambda s: s.skill_type):
+            skills_in_group = list(group)
+            skill_list = [{"skill": s.skill_name} for s in skills_in_group]
+            skill_id_map = {s.skill_name: s.id for s in skills_in_group}
+            try:
+                result = await asyncio.to_thread(
+                    self.skill_hit_chain.evaluate,
+                    resume_text,
+                    skill_list,
+                    skill_type,
+                )
+                for hit in result.get("hits", []):
+                    skill_id = skill_id_map.get(hit.get("skill", ""))
+                    if skill_id:
+                        await self.eval_repo.create_skill_hit(
+                            match_id=match_id,
+                            skill_id=skill_id,
+                            is_hit=1 if hit.get("is_hit") else 0,
+                            hit_context=hit.get("hit_context", ""),
+                        )
+            except Exception as e:
+                logger.error(f"skill_type={skill_type} 技能命中检测失败: {e}")
 
     async def get_evaluation_detail(self, match_id: int) -> dict:
         """获取评估详情"""

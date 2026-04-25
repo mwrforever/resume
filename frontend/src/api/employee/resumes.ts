@@ -8,6 +8,4 @@ export const employeeResumesApi = {
 
   getFile: (id: number) =>
     client.get(`/employee/resumes/${id}/file`, { responseType: 'blob' }),
-
-  listPending: () => client.get('/employee/resumes/pending'),
 };

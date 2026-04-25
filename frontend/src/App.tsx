@@ -12,9 +12,11 @@ import UserApplicationDetail from '@/pages/user/application-detail';
 import EmployeeDashboard from '@/pages/employee/dashboard';
 import EmployeeJobs from '@/pages/employee/jobs';
 import EmployeeJobCreate from '@/pages/employee/job-create';
+import EmployeeJobEdit from '@/pages/employee/job-edit';
 import EmployeeResumes from '@/pages/employee/resumes';
-import EmployeeEvaluations from '@/pages/employee/evaluations';
 import EmployeeApplications from '@/pages/employee/applications';
+import EmployeeEvaluations from '@/pages/employee/evaluations';
+import EmployeeEvalDetail from '@/pages/employee/eval-detail';
 
 // Shared pages
 import Auth from '@/pages/auth';
@@ -44,9 +46,11 @@ export default function App() {
         <Route path="/employee/dashboard" element={<ProtectedRoute userType="employee"><EmployeeDashboard /></ProtectedRoute>} />
         <Route path="/employee/jobs" element={<ProtectedRoute userType="employee"><EmployeeJobs /></ProtectedRoute>} />
         <Route path="/employee/jobs/create" element={<ProtectedRoute userType="employee"><EmployeeJobCreate /></ProtectedRoute>} />
+        <Route path="/employee/jobs/:id/edit" element={<ProtectedRoute userType="employee"><EmployeeJobEdit /></ProtectedRoute>} />
         <Route path="/employee/resumes" element={<ProtectedRoute userType="employee"><EmployeeResumes /></ProtectedRoute>} />
-        <Route path="/employee/evaluations" element={<ProtectedRoute userType="employee"><EmployeeEvaluations /></ProtectedRoute>} />
         <Route path="/employee/applications" element={<ProtectedRoute userType="employee"><EmployeeApplications /></ProtectedRoute>} />
+        <Route path="/employee/evaluations" element={<ProtectedRoute userType="employee"><EmployeeEvaluations /></ProtectedRoute>} />
+        <Route path="/employee/evaluations/:id" element={<ProtectedRoute userType="employee"><EmployeeEvalDetail /></ProtectedRoute>} />
 
         <Route path="/" element={<Navigate to="/user/jobs" replace />} />
       </Routes>

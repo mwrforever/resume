@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, Query
 from app.api.deps import get_db, get_current_user
 from app.schemas.response import ApiResponse
@@ -35,11 +37,12 @@ async def get_dashboard_stats(
     avg_score = await repos["eval"].get_avg_match_score()
 
     # 最近动态（模拟数据，实际应从活动日志表查询）
+    now = datetime.now()
     recent_activities = [
-        {"id": 1, "type": "application", "text": "张三投递了 前端工程师 岗位", "time": "10分钟前"},
-        {"id": 2, "type": "evaluation", "text": "李四完成了 AI评估", "time": "30分钟前"},
-        {"id": 3, "type": "resume_upload", "text": "王五上传了新简历", "time": "1小时前"},
-        {"id": 4, "type": "evaluation", "text": "系统完成了 5 份简历评估", "time": "2小时前"},
+        {"id": 1, "type": "application", "text": "张三投递了 前端工程师 岗位", "time": (now - timedelta(minutes=10)).isoformat()},
+        {"id": 2, "type": "evaluation", "text": "李四完成了 AI评估", "time": (now - timedelta(minutes=30)).isoformat()},
+        {"id": 3, "type": "resume_upload", "text": "王五上传了新简历", "time": (now - timedelta(hours=1)).isoformat()},
+        {"id": 4, "type": "evaluation", "text": "系统完成了 5 份简历评估", "time": (now - timedelta(hours=2)).isoformat()},
     ]
 
     return ApiResponse(data={

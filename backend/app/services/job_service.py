@@ -44,7 +44,23 @@ class JobService:
         skills = await self.job_repo.get_skills_by_job_ids([job_id], limit=limit)
         return [s.skill_name for s in skills.get(job_id, [])]
 
-    async def create_job(self, employee_id: int, dept_id: int, name: str, description: str) -> JobPosition:
+    async def create_job(
+        self,
+        employee_id: int,
+        dept_id: int,
+        name: str,
+        description: str,
+        dimensions: list[dict] = None,
+        skills: list[dict] = None,
+        tag_ids: list[int] = None,
+    ) -> JobPosition:
+        if dimensions:
+            return await self.job_repo.create_with_details(
+                employee_id, dept_id, name, description,
+                dimensions=dimensions,
+                skills=skills or [],
+                tag_ids=tag_ids or [],
+            )
         return await self.job_repo.create(employee_id, dept_id, name, description)
 
     async def update_job(self, job_id: int, **kwargs) -> JobPosition:

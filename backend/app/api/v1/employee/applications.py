@@ -3,13 +3,14 @@ from app.services.application_service import ApplicationService
 from app.repositories.application_repo import ApplicationRepository
 from app.repositories.resume_repo import ResumeRepository
 from app.repositories.job_repo import JobRepository
+from app.repositories.eval_repo import EvalRepository
 from app.api.deps import get_db, get_current_user
 from app.schemas.response import ApiResponse, EmployeeApplicationItem, PageData
 
 router = APIRouter()
 
 STATUS_NAMES = {
-    0: "已取消",
+    0: "待评估",
     1: "待处理",
     2: "已查看",
     3: "面试中",
@@ -29,23 +30,35 @@ def get_service(db=Depends(get_db)) -> ApplicationService:
 @router.get("", response_model=ApiResponse[PageData])
 async def list_applications(
     job_id: int = Query(None),
+    status: int = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     service: ApplicationService = Depends(get_service),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db)
 ):
     """获取投递列表（员工端）"""
+    skip = (page - 1) * page_size
     if job_id:
-        apps, total = await service.get_job_applications(job_id, (page-1)*page_size, page_size)
+        apps, total = await service.get_job_applications(job_id, skip, page_size)
     else:
-        apps, total = [], 0
+        apps = await service.app_repo.get_all(skip, page_size, status)
+        total = await service.app_repo.get_all_count(status)
+
+    job_names = await service.get_job_names([a.job_id for a in apps])
+    resume_file_names = await service.resume_repo.get_file_names_batch([a.resume_id for a in apps])
+    eval_repo = EvalRepository(db)
+    match_map = await eval_repo.get_matches_by_pairs_batch([(a.resume_id, a.job_id) for a in apps])
 
     items = [
         EmployeeApplicationItem(
             id=a.id,
             user_id=a.user_id,
             job_id=a.job_id,
+            job_name=job_names.get(a.job_id, ""),
             resume_id=a.resume_id,
+            resume_file_name=resume_file_names.get(a.resume_id),
+            match_id=match_map.get((a.resume_id, a.job_id)),
             status=a.status,
             status_name=STATUS_NAMES.get(a.status, "未知"),
             create_time=a.create_time,

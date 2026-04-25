@@ -20,11 +20,6 @@ async_session_maker = async_sessionmaker(
 )
 
 
-async def async_session():
-    async with async_session_maker() as session:
-        yield session
-
-
 Base = declarative_base()
 
 from .sys_user import SysUser
@@ -37,5 +32,8 @@ from .job_application import JobApplication
 from .resume_job_match import ResumeJobMatch
 from .resume_eval_detail import ResumeEvalDetail
 from .resume_skill_hit import ResumeSkillHit
+from .sys_dept import SysDept
+from .sys_tag import SysTag
+from .job_position_tag import JobPositionTag
 
-__all__ = ["Base", "async_session", "SysUser", "SysEmployee", "Resume", "JobPosition", "JobEvalDimension", "JobSkill", "JobApplication", "ResumeJobMatch", "ResumeEvalDetail", "ResumeSkillHit"]
+__all__ = ["Base", "SysUser", "async_session_maker","SysEmployee", "Resume", "JobPosition", "JobEvalDimension", "JobSkill", "JobApplication", "ResumeJobMatch", "ResumeEvalDetail", "ResumeSkillHit", "SysDept", "SysTag", "JobPositionTag"]

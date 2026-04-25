@@ -5,14 +5,15 @@ interface DialogProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   children: React.ReactNode;
+  containerClassName?: string;
 }
 
-export function Dialog({ open, onOpenChange, children }: DialogProps) {
+export function Dialog({ open, onOpenChange, children, containerClassName }: DialogProps) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/50" onClick={() => onOpenChange?.(false)} />
-      <div className="relative z-50 bg-white rounded-lg shadow-lg max-w-lg w-full mx-4">
+      <div className={cn("relative z-50 bg-white rounded-lg shadow-lg max-w-lg w-full mx-4", containerClassName)}>
         {children}
       </div>
     </div>

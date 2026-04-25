@@ -8,10 +8,12 @@ from app.core.exceptions import NotFoundError, ValidationError
 class ApplicationService:
     # 状态映射
     STATUS_MAP = {
-        0: "待处理",
-        1: "已查看",
-        2: "评估完成",
-        3: "面试邀请"
+        0: "待评估",
+        1: "待处理",
+        2: "已查看",
+        3: "面试中",
+        4: "已拒绝",
+        5: "已录用",
     }
 
     def __init__(self, app_repo: ApplicationRepository, resume_repo: ResumeRepository, job_repo: JobRepository):
@@ -64,19 +66,33 @@ class ApplicationService:
         total = await self.app_repo.get_by_job_count(job_id)
         return apps, total
 
+    async def get_job_name(self, job_id: int) -> str:
+        """获取岗位名称"""
+        job = await self.job_repo.get_by_id(job_id)
+        return job.name if job else ""
+
+    async def get_job_names(self, job_ids: list[int]) -> dict[int, str]:
+        """批量获取岗位名称"""
+        result = {}
+        for job_id in job_ids:
+            job = await self.job_repo.get_by_id(job_id)
+            if job:
+                result[job_id] = job.name
+        return result
+
     async def update_status(self, app_id: int, status: int) -> bool:
         """更新投递状态"""
         return await self.app_repo.update_status(app_id, status)
 
     async def withdraw_application(self, app_id: int, user_id: int) -> bool:
-        """撤回投递（仅限待处理的投递）"""
+        """撤回投递（仅限待评估或待处理状态的投递）"""
         app = await self.app_repo.get_by_id(app_id)
         if not app or app.is_deleted == 1:
             raise NotFoundError("投递记录不存在")
         if app.user_id != user_id:
             raise NotFoundError("投递记录不存在")
-        if app.status != 0:
-            raise ValidationError("只能撤回待处理的投递")
+        if app.status not in (0, 1):
+            raise ValidationError("只能撤回待评估或待处理状态的投递")
         return await self.app_repo.soft_delete(app_id)
 
     def get_status_name(self, status: int) -> str:

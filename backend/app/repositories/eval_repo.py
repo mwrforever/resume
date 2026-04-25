@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.resume_job_match import ResumeJobMatch
 from app.models.resume_eval_detail import ResumeEvalDetail
 from app.models.resume_skill_hit import ResumeSkillHit
+from app.models.job_eval_dimension import JobEvalDimension
 from datetime import datetime
 
 
@@ -60,11 +61,20 @@ class EvalRepository:
         await self.db.refresh(detail)
         return detail
 
-    async def get_eval_details(self, match_id: int) -> list[ResumeEvalDetail]:
+    async def get_eval_details(self, match_id: int) -> list:
+        """Returns list of Row(detail=ResumeEvalDetail, dimension_name=str) for each detail."""
         result = await self.db.execute(
-            select(ResumeEvalDetail).where(ResumeEvalDetail.match_id == match_id)
+            select(ResumeEvalDetail, JobEvalDimension.dimension_name)
+            .outerjoin(JobEvalDimension, JobEvalDimension.id == ResumeEvalDetail.dimension_id)
+            .where(ResumeEvalDetail.match_id == match_id)
         )
-        return result.scalars().all()
+        rows = result.all()
+        # Attach dimension_name as attribute on each detail for transparent access
+        details = []
+        for detail, dimension_name in rows:
+            detail.dimension_name = dimension_name or f"维度{detail.dimension_id}"
+            details.append(detail)
+        return details
 
     async def create_skill_hit(self, match_id: int, skill_id: int,
                                 is_hit: int, hit_context: str) -> ResumeSkillHit:
@@ -120,6 +130,18 @@ class EvalRepository:
         await self.db.refresh(detail)
         return detail
 
+    async def delete_eval_details_by_match(self, match_id: int) -> None:
+        """删除匹配记录下所有维度评估详情（重评估前清理）"""
+        from sqlalchemy import delete as sa_delete
+        await self.db.execute(sa_delete(ResumeEvalDetail).where(ResumeEvalDetail.match_id == match_id))
+        await self.db.commit()
+
+    async def delete_skill_hits_by_match(self, match_id: int) -> None:
+        """删除匹配记录下所有技能命中记录（重评估前清理）"""
+        from sqlalchemy import delete as sa_delete
+        await self.db.execute(sa_delete(ResumeSkillHit).where(ResumeSkillHit.match_id == match_id))
+        await self.db.commit()
+
     async def get_resumes_with_pending_status(self, job_id: int) -> list:
         """获取岗位下待评估的简历（无匹配记录的）"""
         from app.models.resume import Resume
@@ -164,16 +186,15 @@ class EvalRepository:
         }
 
     async def get_resumes_by_job(self, job_id: int, offset: int = 0, limit: int = 20) -> tuple:
-        """获取岗位下的简历列表（按匹配度降序）"""
+        """获取岗位下的简历列表（按匹配度降序，含未评估的简历）"""
         from app.models.resume import Resume
-        from sqlalchemy import desc
+        from sqlalchemy import desc, and_
 
         result = await self.db.execute(
             select(Resume, ResumeJobMatch.final_score, ResumeJobMatch.final_label, ResumeJobMatch.id.label('match_id'))
             .select_from(Resume)
-            .outerjoin(ResumeJobMatch, ResumeJobMatch.resume_id == Resume.id)
-            .where(ResumeJobMatch.job_id == job_id)
-            .order_by(desc(ResumeJobMatch.final_score))
+            .outerjoin(ResumeJobMatch, and_(ResumeJobMatch.resume_id == Resume.id, ResumeJobMatch.job_id == job_id))
+            .order_by(desc(ResumeJobMatch.final_score), Resume.id.desc())
             .offset(offset)
             .limit(limit)
         )
@@ -186,15 +207,15 @@ class EvalRepository:
                 "file_name": row.Resume.file_name,
                 "match_id": row.match_id,
                 "final_score": float(row.final_score) if row.final_score else None,
-                "final_label": row.final_label,
+                "final_label": row.final_label or "待评估",
                 "status": "completed" if row.final_score else "pending"
             })
 
-        # Count total
+        # Count total resumes for this job (regardless of evaluation status)
         count_result = await self.db.execute(
-            select(func.count())
-            .select_from(ResumeJobMatch)
-            .where(ResumeJobMatch.job_id == job_id)
+            select(func.count(Resume.id))
+            .select_from(Resume)
+            .where(Resume.is_deleted == 0, Resume.status == 2)
         )
         total = count_result.scalar() or 0
 
@@ -220,6 +241,21 @@ class EvalRepository:
             )
         )
         return result.scalar() or 0
+
+    async def get_matches_by_pairs_batch(self, pairs: list[tuple[int, int]]) -> dict[tuple[int, int], int]:
+        """批量查询匹配记录ID: (resume_id, job_id) -> match_id"""
+        from sqlalchemy import or_, and_
+        if not pairs:
+            return {}
+        conditions = [
+            and_(ResumeJobMatch.resume_id == r, ResumeJobMatch.job_id == j)
+            for r, j in pairs
+        ]
+        result = await self.db.execute(
+            select(ResumeJobMatch.id, ResumeJobMatch.resume_id, ResumeJobMatch.job_id)
+            .where(or_(*conditions))
+        )
+        return {(row.resume_id, row.job_id): row.id for row in result.all()}
 
     async def get_avg_match_score(self) -> float:
         """获取平均匹配分数"""

@@ -8,7 +8,7 @@ __pycache__/
 venv/
 ENV/
 env/
-.env
+# .env
 .eggs/
 *.egg-info/
 *.egg

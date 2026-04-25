@@ -33,3 +33,15 @@
     @apply tracking-tight;
   }
 }
+
+.docx-content h1 { font-size: 1.6em; font-weight: 700; margin: 0.8em 0 0.4em; }
+.docx-content h2 { font-size: 1.3em; font-weight: 600; margin: 0.8em 0 0.4em; }
+.docx-content h3 { font-size: 1.1em; font-weight: 600; margin: 0.6em 0 0.3em; }
+.docx-content p  { margin: 0.4em 0; }
+.docx-content ul, .docx-content ol { padding-left: 1.5em; margin: 0.4em 0; }
+.docx-content li { margin: 0.2em 0; }
+.docx-content table { border-collapse: collapse; width: 100%; margin: 0.6em 0; }
+.docx-content td, .docx-content th { border: 1px solid #e2e8f0; padding: 6px 10px; }
+.docx-content th { background: #f8fafc; font-weight: 600; }
+.docx-content strong { font-weight: 700; }
+.docx-content em { font-style: italic; }
