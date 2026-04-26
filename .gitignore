@@ -38,6 +38,9 @@ frontend/dist/
 frontend/build/
 frontend/.vite/
 frontend/.next/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # React specific
 .DS_Store

@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/admin-layout';
-import { ResumePreviewDialog } from '@/components/common/resume-preview-dialog';
 import { Pagination } from '@/components/common/pagination';
 import { employeeResumesApi } from '@/api/employee/resumes';
+import { useThrottleCallback } from '@/hooks/use-debounce';
 import { Eye, RefreshCw } from 'lucide-react';
 
 const DEFAULT_PAGE_SIZE = 10;
+const ResumePreviewDialog = lazy(async () => {
+  const module = await import('@/components/common/resume-preview-dialog');
+  return { default: module.ResumePreviewDialog };
+});
 
 interface Resume {
   id: number;
@@ -53,13 +57,14 @@ export default function EmployeeResumes() {
   const setPage = (p: number) => setSearchParams(prev => { const next = new URLSearchParams(prev); next.set('page', String(p)); return next; });
 
   const setPageSize = (size: number) => setSearchParams(prev => { const next = new URLSearchParams(prev); next.set('page_size', String(size)); next.delete('page'); return next; });
+  const handleRefresh = useThrottleCallback(() => load(true));
 
   return (
     <AdminLayout breadcrumbs={[{ label: '简历库' }]} title="简历库">
       {/* Toolbar */}
       <div className="flex items-center justify-end mb-4">
         <button
-          onClick={() => load(true)}
+          onClick={handleRefresh}
           disabled={refreshing}
           aria-label="刷新"
           className="inline-flex items-center gap-1.5 px-3 h-8 rounded-md border border-[#E2E8F0] bg-white text-sm text-[#64748B] hover:bg-[#F8FAFC] transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
@@ -139,12 +144,14 @@ export default function EmployeeResumes() {
       <Pagination page={page} pageSize={pageSize} total={total} onChange={setPage} onPageSizeChange={setPageSize} />
 
       {previewResume && (
-        <ResumePreviewDialog
-          resumeId={previewResume.id}
-          fileName={previewResume.fileName}
-          open={!!previewResume}
-          onClose={() => setPreviewResume(null)}
-        />
+        <Suspense fallback={null}>
+          <ResumePreviewDialog
+            resumeId={previewResume.id}
+            fileName={previewResume.fileName}
+            open={!!previewResume}
+            onClose={() => setPreviewResume(null)}
+          />
+        </Suspense>
       )}
     </AdminLayout>
   );

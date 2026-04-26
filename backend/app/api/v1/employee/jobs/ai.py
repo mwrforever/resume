@@ -1,7 +1,8 @@
 import asyncio
-from fastapi import APIRouter, Depends
+
+from fastapi import APIRouter
+
 from app.schemas.job import AiSuggestRequest, AiSuggestResponse, AiSuggestDimension, SkillSuggestItem
-from app.api.deps import get_current_user
 from app.schemas.response import ApiResponse
 from app.utils.ai.chains import JobAiSuggestChain
 
@@ -13,7 +14,6 @@ _chain = JobAiSuggestChain()
 @router.post("/ai/suggest", response_model=ApiResponse[AiSuggestResponse])
 async def ai_suggest(
     req: AiSuggestRequest,
-    current_user: dict = Depends(get_current_user)
 ):
     """根据岗位名称和简要描述，AI生成：详细描述 + 评估维度 + 技能建议（不落库）"""
     result = await asyncio.to_thread(_chain.suggest, req.name, req.description or "")

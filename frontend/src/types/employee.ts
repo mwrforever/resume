@@ -73,6 +73,9 @@ export interface Job {
   dept_id: number;
   status: number;
   create_time: string;
+  resume_count?: number;
+  dept_name?: string;
+  dept_code?: string;
 }
 
 export interface IDimension {
@@ -95,6 +98,9 @@ export interface ITag {
   tag_name: string;
   tag_type: number;
   color: string;
+  sort_order?: number;
+  status?: number;
+  job_count?: number;
 }
 
 export interface IAiSuggestDimension {

@@ -19,6 +19,7 @@ class JobItem(BaseItem):
     dept_name: Optional[str] = None
     dept_code: Optional[str] = None
     create_time: Optional[datetime] = None
+    resume_count: int = 0
     skills: list[str] = []
 
 

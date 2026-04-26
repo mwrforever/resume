@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from app.repositories.job_repo import JobRepository
+from app.services.job_service import JobService
 from app.schemas.job import TagItem
 from app.api.deps import get_db, get_current_user
 from app.schemas.response import ApiResponse
@@ -34,5 +35,6 @@ async def set_job_tags(
     repo: JobRepository = Depends(get_repo),
     current_user: dict = Depends(get_current_user)
 ):
+    await JobService(repo).ensure_job_editable(job_id)
     await repo.set_job_tags(job_id, body.tag_ids)
     return ApiResponse(message="标签设置成功")

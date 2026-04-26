@@ -1,7 +1,7 @@
 from app.repositories.job_repo import JobRepository
 from app.models.job_position import JobPosition
 from app.models.job_skill import JobSkill
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 
 
 class JobService:
@@ -49,7 +49,7 @@ class JobService:
         employee_id: int,
         dept_id: int,
         name: str,
-        description: str,
+        description: str = None,
         dimensions: list[dict] = None,
         skills: list[dict] = None,
         tag_ids: list[int] = None,
@@ -65,6 +65,16 @@ class JobService:
 
     async def update_job(self, job_id: int, **kwargs) -> JobPosition:
         return await self.job_repo.update(job_id, **kwargs)
+
+    async def ensure_job_editable(self, job_id: int) -> None:
+        job = await self.job_repo.get_by_id(job_id)
+        if not job:
+            raise NotFoundError("岗位不存在")
+        if job.status == 1:
+            raise ValidationError("招聘中的岗位不能编辑")
+        application_count = await self.job_repo.count_applications(job_id)
+        if application_count > 0:
+            raise ValidationError("已有投递的岗位不能编辑")
 
     async def delete_job(self, job_id: int) -> bool:
         return await self.job_repo.delete(job_id)

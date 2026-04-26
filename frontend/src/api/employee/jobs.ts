@@ -22,14 +22,16 @@ export const employeeJobsApi = {
     tag_ids?: number[];
   }) =>
     client.put(`/employee/jobs/${id}`, data),
+  publish: (id: number) =>
+    client.put(`/employee/jobs/${id}`, { status: 1 }),
   delete: (id: number) =>
     client.delete(`/employee/jobs/${id}`),
 
   // AI
   suggestSkills: (data: { name: string; description: string }) =>
     client.post('/employee/jobs/skill/suggest', data),
-  aiSuggest: (data: { name: string; description: string }) =>
-    client.post('/employee/jobs/ai/suggest', data),
+  aiSuggest: (data: { name: string; description: string }, signal?: AbortSignal) =>
+    client.post('/employee/jobs/ai/suggest', data, { signal, timeout: 120000 }),
 
   // Tags global list
   listAllTags: (tag_type?: number) =>

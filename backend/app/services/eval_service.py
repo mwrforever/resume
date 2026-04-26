@@ -1,22 +1,24 @@
 import asyncio
 import logging
+from pathlib import Path
+from typing import Any
 from app.repositories.eval_repo import EvalRepository
 from app.repositories.resume_repo import ResumeRepository
 from app.repositories.job_repo import JobRepository
-from app.utils.ai.chains import DimensionEvalChain, SkillHitChain, ComprehensiveEvalChain
-from app.core.exceptions import NotFoundError
+from app.utils.ai.chains import ResumeEvalChain
+from app.utils.resume_parser import extract_resume_text
+from app.core.config import get_settings
+from app.core.exceptions import NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
 
 
 class EvalService:
-    def __init__(self, eval_repo: EvalRepository, resume_repo: ResumeRepository, job_repo: JobRepository):
+    def __init__(self, eval_repo: EvalRepository, resume_repo: ResumeRepository, job_repo: JobRepository) -> None:
         self.eval_repo = eval_repo
         self.resume_repo = resume_repo
         self.job_repo = job_repo
-        self.dimension_chain = DimensionEvalChain()
-        self.skill_hit_chain = SkillHitChain()
-        self.comprehensive_chain = ComprehensiveEvalChain()
+        self.resume_eval_chain = ResumeEvalChain()
 
     def _get_label(self, score: float) -> str:
         if score >= 90:
@@ -30,7 +32,10 @@ class EvalService:
     async def evaluate_resume(self, resume_id: int, job_id: int) -> dict:
         """对简历进行AI评估（并行维度评估）"""
         resume = await self.resume_repo.get_by_id(resume_id)
-        if not resume or not resume.raw_text:
+        if not resume:
+            raise NotFoundError("简历不存在或未解析")
+        resume_text = resume.raw_text or await self._parse_resume_text(resume)
+        if not resume_text:
             raise NotFoundError("简历不存在或未解析")
 
         job = await self.job_repo.get_by_id(job_id)
@@ -60,15 +65,42 @@ class EvalService:
             for d in db_dimensions
         ]
 
-        # 并行评估所有维度
-        dimension_results = await self._evaluate_dimensions_parallel(
-            match.id, resume.raw_text, job.name, dimensions
+        all_skills = await self.job_repo.get_job_skills(job_id)
+        skills = [
+            {
+                "skill_id": s.id,
+                "skill": s.skill_name,
+                "type": s.skill_type,
+            }
+            for s in all_skills
+        ]
+
+        eval_result = await asyncio.to_thread(
+            self.resume_eval_chain.evaluate,
+            resume_text,
+            job.name,
+            job.description or "",
+            [
+                {
+                    "dimension_name": d["dimension_name"],
+                    "weight": d["weight"],
+                    "prompt_template": d["prompt_template"],
+                }
+                for d in dimensions
+            ],
+            [{"skill": s["skill"], "type": s["type"]} for s in skills],
+        )
+
+        dimension_results = await self._save_dimension_results(
+            match.id,
+            dimensions,
+            eval_result.get("dimensions", []),
         )
 
         # 计算加权总分（只计算成功的维度）
         completed_results = [r for r in dimension_results if r["is_completed"]]
         if not completed_results:
-            raise Exception("所有维度评估均失败")
+            raise ValidationError("AI评估结果缺少有效维度")
 
         total_weighted_score = 0.0
         total_weight = 0.0
@@ -81,25 +113,19 @@ class EvalService:
             original_total = sum(d["weight"] for d in dimensions)
             total_weighted_score = (total_weighted_score / total_weight) * original_total
 
-        # 生成综合评价
-        comprehensive = self.comprehensive_chain.evaluate(
-            job_name=job.name,
-            final_score=total_weighted_score,
-            dimensions=completed_results
-        )
-
         label = self._get_label(total_weighted_score)
+        advantage_comment = str(eval_result.get("advantage_comment") or "")
+        disadvantage_comment = str(eval_result.get("disadvantage_comment") or "")
 
         await self.eval_repo.update_match_result(
             match_id=match.id,
             score=total_weighted_score,
             label=label,
-            advantage=comprehensive.get("advantage_comment", ""),
-            disadvantage=comprehensive.get("disadvantage_comment", "")
+            advantage=advantage_comment,
+            disadvantage=disadvantage_comment
         )
 
-        # 技能命中检测（按 skill_type 分组，各调用一次 LLM）
-        await self._evaluate_skill_hits(match.id, resume.raw_text, job_id)
+        await self._save_skill_hits(match.id, skills, eval_result.get("skill_hits", []))
 
         logger.info(f"简历 {resume_id} 评估完成，岗位 {job_id}，得分 {total_weighted_score}")
 
@@ -108,89 +134,100 @@ class EvalService:
             "final_score": total_weighted_score,
             "final_label": label,
             "dimensions": dimension_results,
-            "advantage_comment": comprehensive.get("advantage_comment", ""),
-            "disadvantage_comment": comprehensive.get("disadvantage_comment", "")
+            "advantage_comment": advantage_comment,
+            "disadvantage_comment": disadvantage_comment
         }
 
-    async def _evaluate_dimensions_parallel(self, match_id: int, resume_text: str, job_name: str, dimensions: list) -> list:
-        """并行评估所有维度，优先使用维度专属 prompt_template"""
-        async def evaluate_single(dim: dict):
-            try:
-                result = await asyncio.to_thread(
-                    self.dimension_chain.evaluate_with_template,
-                    resume_text,
-                    job_name,
-                    dim["prompt_template"],
-                    dim["dimension_name"],
-                )
+    async def _parse_resume_text(self, resume: Any) -> str:
+        settings = get_settings()
+        file_path = Path(resume.file_path)
+        if not file_path.is_absolute():
+            file_path = Path(settings.LOCAL_STORAGE_PATH) / file_path
+        if not file_path.exists():
+            raise NotFoundError("简历文件不存在")
+        raw_text = extract_resume_text(file_path)
+        if raw_text:
+            await self.resume_repo.update_raw_text(resume.id, raw_text)
+        return raw_text
+
+    def _normalize_score(self, value: Any) -> float:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(100.0, score))
+
+    async def _save_dimension_results(self, match_id: int, dimensions: list[dict], ai_dimensions: list) -> list:
+        result_by_name = {
+            str(item.get("dimension_name", "")).strip(): item
+            for item in ai_dimensions
+            if isinstance(item, dict)
+        }
+        dimension_results = []
+
+        for index, dim in enumerate(dimensions):
+            item = result_by_name.get(str(dim["dimension_name"]).strip())
+            if item is None and index < len(ai_dimensions) and isinstance(ai_dimensions[index], dict):
+                item = ai_dimensions[index]
+
+            if item is None:
                 await self.eval_repo.create_eval_detail_with_status(
                     match_id=match_id,
                     dimension_id=dim["dimension_id"],
-                    score=result["score"],
-                    advantage=result.get("advantage", ""),
-                    disadvantage=result.get("disadvantage", ""),
-                    is_completed=True
-                )
-                return {
-                    "dimension_name": dim["dimension_name"],
-                    "score": result["score"],
-                    "advantage": result.get("advantage", ""),
-                    "disadvantage": result.get("disadvantage", ""),
-                    "is_completed": True
-                }
-            except Exception as e:
-                logger.error(f"维度 {dim['dimension_name']} 评估失败: {e}")
-                await self.eval_repo.create_eval_detail_with_status(
-                    match_id=match_id,
-                    dimension_id=dim["dimension_id"],
-                    score=50.0,
+                    score=0.0,
                     advantage="",
                     disadvantage="",
                     is_completed=False,
-                    error_message=str(e)
+                    error_message="AI评估结果缺少该维度"
                 )
-                return {
+                dimension_results.append({
                     "dimension_name": dim["dimension_name"],
-                    "score": 50.0,
+                    "score": 0.0,
                     "advantage": "",
                     "disadvantage": "",
                     "is_completed": False,
-                    "error_message": str(e)
-                }
+                    "error_message": "AI评估结果缺少该维度"
+                })
+                continue
 
-        tasks = [evaluate_single(dim) for dim in dimensions]
-        return await asyncio.gather(*tasks)
+            score = self._normalize_score(item.get("score"))
+            advantage = str(item.get("advantage") or "")
+            disadvantage = str(item.get("disadvantage") or "")
+            await self.eval_repo.create_eval_detail_with_status(
+                match_id=match_id,
+                dimension_id=dim["dimension_id"],
+                score=score,
+                advantage=advantage,
+                disadvantage=disadvantage,
+                is_completed=True
+            )
+            dimension_results.append({
+                "dimension_name": dim["dimension_name"],
+                "score": score,
+                "advantage": advantage,
+                "disadvantage": disadvantage,
+                "is_completed": True
+            })
 
-    async def _evaluate_skill_hits(self, match_id: int, resume_text: str, job_id: int) -> None:
-        """按 skill_type 分组检测技能命中，并写入 resume_skill_hit"""
-        all_skills = await self.job_repo.get_job_skills(job_id)
-        if not all_skills:
-            return
+        return dimension_results
 
-        from itertools import groupby
-        sorted_skills = sorted(all_skills, key=lambda s: s.skill_type)
-        for skill_type, group in groupby(sorted_skills, key=lambda s: s.skill_type):
-            skills_in_group = list(group)
-            skill_list = [{"skill": s.skill_name} for s in skills_in_group]
-            skill_id_map = {s.skill_name: s.id for s in skills_in_group}
-            try:
-                result = await asyncio.to_thread(
-                    self.skill_hit_chain.evaluate,
-                    resume_text,
-                    skill_list,
-                    skill_type,
-                )
-                for hit in result.get("hits", []):
-                    skill_id = skill_id_map.get(hit.get("skill", ""))
-                    if skill_id:
-                        await self.eval_repo.create_skill_hit(
-                            match_id=match_id,
-                            skill_id=skill_id,
-                            is_hit=1 if hit.get("is_hit") else 0,
-                            hit_context=hit.get("hit_context", ""),
-                        )
-            except Exception as e:
-                logger.error(f"skill_type={skill_type} 技能命中检测失败: {e}")
+    async def _save_skill_hits(self, match_id: int, skills: list[dict], ai_hits: list) -> None:
+        hit_by_name = {
+            str(item.get("skill", "")).strip(): item
+            for item in ai_hits
+            if isinstance(item, dict)
+        }
+
+        for skill in skills:
+            item = hit_by_name.get(str(skill["skill"]).strip())
+            is_hit = bool(item and item.get("is_hit"))
+            hit_context = str(item.get("hit_context") or "") if item else ""
+            await self.eval_repo.create_skill_hit(
+                match_id=match_id,
+                skill_id=skill["skill_id"],
+                is_hit=1 if is_hit else 0,
+                hit_context=hit_context,
+            )
 
     async def get_evaluation_detail(self, match_id: int) -> dict:
         """获取评估详情"""
@@ -223,8 +260,11 @@ class EvalService:
             "skill_hits": [
                 {
                     "skill_id": h.skill_id,
+                    "skill_name": getattr(h, "skill_name", None),
+                    "skill_type": getattr(h, "skill_type", None),
                     "is_hit": h.is_hit == 1,
-                    "hit_context": h.hit_context or ""
+                    "hit_context": h.hit_context or "",
+                    "match_label": getattr(h, "match_label", None)
                 } for h in hits
             ]
         }

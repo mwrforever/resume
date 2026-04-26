@@ -11,9 +11,16 @@ vi.mock('@/api/employee/evaluations', () => ({
   },
 }));
 
-vi.mock('@/api/employee/resumes', () => ({
-  employeeResumesApi: {
+vi.mock('@/api/employee/jobs', () => ({
+  employeeJobsApi: {
     list: vi.fn(),
+  },
+}));
+
+vi.mock('@/api/employee/analytics', () => ({
+  employeeAnalyticsApi: {
+    getMatchDistribution: vi.fn(),
+    getJobResumeList: vi.fn(),
   },
 }));
 
@@ -27,30 +34,45 @@ vi.mock('@/store/auth', () => ({
 }));
 
 import { employeeEvaluationsApi } from '@/api/employee/evaluations';
-import { employeeResumesApi } from '@/api/employee/resumes';
+import { employeeJobsApi } from '@/api/employee/jobs';
+import { employeeAnalyticsApi } from '@/api/employee/analytics';
+
+const mockJobs = [
+  { id: 1, name: 'Frontend Developer', status: 1, create_time: '2024-01-15T00:00:00Z' },
+];
 
 const mockResumes = [
-  { id: 1, file_name: 'resume_frontend.pdf' },
-  { id: 2, file_name: 'resume_backend.pdf' },
-  { id: 3, file_name: 'resume_fullstack.pdf' },
+  { resume_id: 1, file_name: 'resume_frontend.pdf', status: 'pending' },
+  { resume_id: 2, file_name: 'resume_backend.pdf', status: 'pending' },
+  { resume_id: 3, file_name: 'resume_fullstack.pdf', status: 'pending' },
 ];
 
 describe('EmployeeEvaluations Page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(employeeJobsApi.list).mockResolvedValue({
+      data: { items: mockJobs, total: 1 }
+    } as any);
+    vi.mocked(employeeAnalyticsApi.getMatchDistribution).mockResolvedValue({
+      data: { total: 3, excellent: 0, good: 0, average: 0, fail: 0 }
+    } as any);
+    vi.mocked(employeeAnalyticsApi.getJobResumeList).mockResolvedValue({
+      data: { items: mockResumes, total: 3 }
+    } as any);
   });
 
   describe('RED Phase - Failing Tests', () => {
     it('test_evaluations_list_renders_with_scores', async () => {
-      vi.mocked(employeeResumesApi.list).mockResolvedValue({
-        data: { items: mockResumes, total: 3 }
-      } as any);
+      const user = userEvent.setup();
 
       render(
         <MemoryRouter>
           <EmployeeEvaluations />
         </MemoryRouter>
       );
+
+      await user.click(await screen.findByRole('button', { name: '请选择岗位' }));
+      await user.click(screen.getByRole('option', { name: 'Frontend Developer' }));
 
       await waitFor(() => {
         expect(screen.getByText('resume_frontend.pdf')).toBeInTheDocument();
@@ -60,9 +82,7 @@ describe('EmployeeEvaluations Page', () => {
     });
 
     it('test_evaluation_detail_modal_opens', async () => {
-      vi.mocked(employeeResumesApi.list).mockResolvedValue({
-        data: { items: mockResumes, total: 3 }
-      } as any);
+      const user = userEvent.setup();
 
       render(
         <MemoryRouter>
@@ -70,17 +90,15 @@ describe('EmployeeEvaluations Page', () => {
         </MemoryRouter>
       );
 
+      await user.click(await screen.findByRole('button', { name: '请选择岗位' }));
+      await user.click(screen.getByRole('option', { name: 'Frontend Developer' }));
+
       await waitFor(() => {
-        // The page should show resume selection cards
-        const resumeCards = screen.getAllByRole('button');
-        expect(resumeCards.length).toBeGreaterThan(0);
+        expect(screen.getByLabelText('选择简历 resume_frontend.pdf')).toBeInTheDocument();
       });
     });
 
     it('test_batch_evaluate_button_triggers_action', async () => {
-      vi.mocked(employeeResumesApi.list).mockResolvedValue({
-        data: { items: mockResumes, total: 3 }
-      } as any);
       vi.mocked(employeeEvaluationsApi.batchEvaluate).mockResolvedValue({
         data: { success: true }
       } as any);
@@ -92,30 +110,18 @@ describe('EmployeeEvaluations Page', () => {
         </MemoryRouter>
       );
 
-      // Wait for resumes to load
+      await user.click(await screen.findByRole('button', { name: '请选择岗位' }));
+      await user.click(screen.getByRole('option', { name: 'Frontend Developer' }));
+
       await waitFor(() => {
         expect(screen.getByText('resume_frontend.pdf')).toBeInTheDocument();
       });
 
-      // Enter job ID
-      const jobInput = screen.getByPlaceholderText('输入岗位ID');
-      await user.type(jobInput, '1');
+      await user.click(screen.getByLabelText('选择简历 resume_frontend.pdf'));
+      await user.click(screen.getByLabelText('选择简历 resume_backend.pdf'));
 
-      // Wait for state update
       await waitFor(() => {
-        expect(screen.getByDisplayValue('1')).toBeInTheDocument();
-      });
-
-      // Select resumes by clicking on them
-      const resume1Button = screen.getByText('resume_frontend.pdf').closest('button');
-      const resume2Button = screen.getByText('resume_backend.pdf').closest('button');
-
-      if (resume1Button) await user.click(resume1Button);
-      if (resume2Button) await user.click(resume2Button);
-
-      // Check that batch evaluate button is enabled
-      await waitFor(() => {
-        const batchButton = screen.getByRole('button', { name: /开始AI评估/i });
+        const batchButton = screen.getByRole('button', { name: /开始 AI 评估/i });
         expect(batchButton).not.toBeDisabled();
       });
     });

@@ -77,19 +77,23 @@ class ApplicationRepository:
         await self.db.commit()
         return True
 
-    async def get_all(self, skip: int = 0, limit: int = 20, status: int = None) -> list[JobApplication]:
+    async def get_all(self, skip: int = 0, limit: int = 20, status: int = None, job_ids: list[int] = None) -> list[JobApplication]:
         """获取所有投递记录（员工端），可按状态过滤"""
         query = select(JobApplication).where(JobApplication.is_deleted == 0)
         if status is not None:
             query = query.where(JobApplication.status == status)
+        if job_ids:
+            query = query.where(JobApplication.job_id.in_(job_ids))
         query = query.order_by(JobApplication.create_time.desc()).offset(skip).limit(limit)
         result = await self.db.execute(query)
         return result.scalars().all()
 
-    async def get_all_count(self, status: int = None) -> int:
+    async def get_all_count(self, status: int = None, job_ids: list[int] = None) -> int:
         """获取所有投递记录总数（员工端），可按状态过滤"""
         query = select(func.count(JobApplication.id)).where(JobApplication.is_deleted == 0)
         if status is not None:
             query = query.where(JobApplication.status == status)
+        if job_ids:
+            query = query.where(JobApplication.job_id.in_(job_ids))
         result = await self.db.execute(query)
         return result.scalar() or 0

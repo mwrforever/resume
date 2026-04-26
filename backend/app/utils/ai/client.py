@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-def llm_complete(prompt: str, model: str = None, max_retries: int = 3) -> str:
+def llm_complete(prompt: str, model: str = None, max_retries: int = 3, timeout: int = 60) -> str:
     """
     统一LLM调用入口
 
@@ -21,6 +21,7 @@ def llm_complete(prompt: str, model: str = None, max_retries: int = 3) -> str:
         prompt: 提示词
         model: 模型名称，默认使用配置中的模型
         max_retries: 最大重试次数
+        timeout: 单次请求超时时间（秒）
 
     Returns:
         LLM返回的文本内容
@@ -30,7 +31,7 @@ def llm_complete(prompt: str, model: str = None, max_retries: int = 3) -> str:
     """
     target_model = model or settings.OPENAI_MODEL
     last_error = None
-    litellm.set_verbose=True
+    # litellm.set_verbose=True
 
     for attempt in range(max_retries):
         try:
@@ -39,7 +40,7 @@ def llm_complete(prompt: str, model: str = None, max_retries: int = 3) -> str:
                 messages=[{"role": "user", "content": prompt}],
                 api_key=settings.OPENAI_API_KEY,
                 api_base=settings.OPENAI_API_BASE,
-                timeout=60,
+                timeout=timeout,
                 extra_body={"enable_thinking": False},
             )
             raw = response.choices[0].message.content or ''
@@ -53,7 +54,7 @@ def llm_complete(prompt: str, model: str = None, max_retries: int = 3) -> str:
     # 所有重试都失败，尝试备用模型
     if model != settings.FALLBACK_MODEL and target_model != settings.FALLBACK_MODEL:
         logger.info(f"尝试使用备用模型 {settings.FALLBACK_MODEL}")
-        return llm_complete(prompt, model=settings.FALLBACK_MODEL, max_retries=max_retries)
+        return llm_complete(prompt, model=settings.FALLBACK_MODEL, max_retries=max_retries, timeout=timeout)
 
     logger.error(f"LLM调用最终失败: {last_error}")
     raise last_error

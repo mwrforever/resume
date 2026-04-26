@@ -20,12 +20,13 @@ class ResumeRepository:
         )
         return list(result.scalars().all())
 
-    async def create(self, user_id: int, file_name: str, file_path: str, storage_type: str) -> Resume:
+    async def create(self, user_id: int, file_name: str, file_path: str, storage_type: str, raw_text: str = "") -> Resume:
         resume = Resume(
             user_id=user_id,
             file_name=file_name,
             file_path=file_path,
-            storage_type=storage_type
+            storage_type=storage_type,
+            raw_text=raw_text
         )
         self.db.add(resume)
         await self.db.commit()

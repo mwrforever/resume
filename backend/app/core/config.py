@@ -1,10 +1,16 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+from pathlib import Path
+from urllib.parse import quote
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore"
@@ -62,16 +68,17 @@ class Settings(BaseSettings):
 
     def _build_redis_url(self, db: int) -> str:
         if self.REDIS_PASSWORD:
-            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{db}"
+            password = quote(self.REDIS_PASSWORD, safe="")
+            return f"redis://:{password}@{self.REDIS_HOST}:{self.REDIS_PORT}/{db}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{db}"
 
     @property
     def celery_broker_url(self) -> str:
-        return self._build_redis_url(1)
+        return self.CELERY_BROKER_URL or self._build_redis_url(1)
 
     @property
     def celery_result_backend(self) -> str:
-        return self._build_redis_url(2)
+        return self.CELERY_RESULT_BACKEND or self._build_redis_url(2)
 
 
 @lru_cache()

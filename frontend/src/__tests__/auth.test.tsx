@@ -54,7 +54,6 @@ describe('Auth Page - TDD Tests', () => {
 
   describe('RED Phase - Failing Tests', () => {
     it('test_auth_page_shows_user_and_employee_tabs', async () => {
-      const user = userEvent.setup();
       renderAuth();
 
       // Find all buttons with 用户 and 员工 text (both desktop and mobile versions)

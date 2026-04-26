@@ -15,6 +15,7 @@ const SKILL_TYPE_OPTIONS = [
   { value: 3, label: '普通技能', cls: 'bg-[#F1F5F9] text-[#64748B]' },
 ];
 const TAG_TYPE_LABEL: Record<number, string> = { 1: '岗位特性', 2: '福利待遇', 3: '技能加分' };
+const getResponseData = <T,>(res: any, fallback: T): T => res?.data?.data ?? res?.data ?? fallback;
 
 interface CreateJobModalProps {
   open: boolean;
@@ -43,25 +44,29 @@ export function CreateJobModal({ open, onClose, onSuccess }: CreateJobModalProps
   const [aiError, setAiError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
+  const aiAbortRef = useRef<AbortController | null>(null);
 
   // Load static data once on open
   useEffect(() => {
     if (!open) return;
     employeeJobsApi.listDepts().then(res => {
-      const list: Dept[] = res.data?.data ?? [];
+      const list = getResponseData<Dept[]>(res, []);
       setDepts(list);
       if (list.length > 0 && deptId === null) setDeptId(list[0].id);
     });
-    employeeJobsApi.listAllTags().then(res => setAllTags(res.data?.data ?? []));
+    employeeJobsApi.listAllTags().then(res => setAllTags(getResponseData<ITag[]>(res, [])));
   }, [open]);
 
   // Reset form on close
   useEffect(() => {
     if (!open) {
+      aiAbortRef.current?.abort();
+      aiAbortRef.current = null;
       setName(''); setDescription(''); setDeptId(null);
       setDimensions([]); setSkills([]); setSelectedTagIds([]);
       setShowPrompt({}); setAiError(''); setFormError('');
       setNewSkillName(''); setNewSkillType(1);
+      setSuggesting(false);
     }
   }, [open]);
 
@@ -97,12 +102,21 @@ export function CreateJobModal({ open, onClose, onSuccess }: CreateJobModalProps
   };
 
   // ── AI suggest ──────────────────────────────────────────────────────────────
+  const cancelAiSuggest = () => {
+    aiAbortRef.current?.abort();
+    aiAbortRef.current = null;
+    setSuggesting(false);
+  };
+
   const handleAiSuggest = async () => {
     if (!name.trim()) return;
+    aiAbortRef.current?.abort();
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
     setSuggesting(true); setAiError('');
     try {
-      const res = await employeeJobsApi.aiSuggest({ name, description });
-      const data = res.data?.data;
+      const res = await employeeJobsApi.aiSuggest({ name, description }, controller.signal);
+      const data = getResponseData<any>(res, null);
       if (data) {
         if (data.comprehensive_description) setDescription(data.comprehensive_description);
         if (data.dimensions?.length) {
@@ -117,10 +131,17 @@ export function CreateJobModal({ open, onClose, onSuccess }: CreateJobModalProps
           setSkills(data.skills.map((s: any) => ({ skill_name: s.skill, skill_type: s.type ?? 3 })));
         }
       }
-    } catch {
+    } catch (err: any) {
+      if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.name === 'AbortError') {
+        setAiError('已中断 AI 生成');
+        return;
+      }
       setAiError('AI 生成失败，请重试');
     } finally {
-      setSuggesting(false);
+      if (aiAbortRef.current === controller) {
+        aiAbortRef.current = null;
+        setSuggesting(false);
+      }
     }
   };
 
@@ -155,7 +176,7 @@ export function CreateJobModal({ open, onClose, onSuccess }: CreateJobModalProps
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0] flex-shrink-0">
-          <h2 className="text-base font-semibold text-[#1E293B]">发布岗位</h2>
+          <h2 className="text-base font-semibold text-[#1E293B]">创建岗位（待发布）</h2>
           <button onClick={onClose} aria-label="关闭"
             className="text-[#94A3B8] hover:text-[#1E293B] transition-colors focus-visible:outline-none">
             <X size={18} />
@@ -213,12 +234,19 @@ export function CreateJobModal({ open, onClose, onSuccess }: CreateJobModalProps
                 </div>
               </div>
 
-              <Button type="button" variant="outline" onClick={handleAiSuggest}
-                disabled={!name.trim() || suggesting} className="gap-2 h-8 text-xs">
-                {suggesting
-                  ? <><Loader2 size={13} className="animate-spin" />AI 生成中…</>
-                  : <><Sparkles size={13} />AI 一键生成（描述 + 维度 + 技能）</>}
-              </Button>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={handleAiSuggest}
+                  disabled={!name.trim() || suggesting} className="gap-2 h-8 text-xs">
+                  {suggesting
+                    ? <><Loader2 size={13} className="animate-spin" />AI 生成中…</>
+                    : <><Sparkles size={13} />AI 一键生成（描述 + 维度 + 技能）</>}
+                </Button>
+                {suggesting && (
+                  <Button type="button" variant="outline" onClick={cancelAiSuggest} className="h-8 text-xs">
+                    中断
+                  </Button>
+                )}
+              </div>
               {aiError && <p className="text-xs text-red-500">{aiError}</p>}
             </div>
 

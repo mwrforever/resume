@@ -13,6 +13,8 @@ import EmployeeDashboard from '@/pages/employee/dashboard';
 import EmployeeJobs from '@/pages/employee/jobs';
 import EmployeeJobCreate from '@/pages/employee/job-create';
 import EmployeeJobEdit from '@/pages/employee/job-edit';
+import EmployeeJobPreview from '@/pages/employee/job-preview';
+import EmployeeTags from '@/pages/employee/tags';
 import EmployeeResumes from '@/pages/employee/resumes';
 import EmployeeApplications from '@/pages/employee/applications';
 import EmployeeEvaluations from '@/pages/employee/evaluations';
@@ -46,7 +48,9 @@ export default function App() {
         <Route path="/employee/dashboard" element={<ProtectedRoute userType="employee"><EmployeeDashboard /></ProtectedRoute>} />
         <Route path="/employee/jobs" element={<ProtectedRoute userType="employee"><EmployeeJobs /></ProtectedRoute>} />
         <Route path="/employee/jobs/create" element={<ProtectedRoute userType="employee"><EmployeeJobCreate /></ProtectedRoute>} />
+        <Route path="/employee/jobs/:id/preview" element={<ProtectedRoute userType="employee"><EmployeeJobPreview /></ProtectedRoute>} />
         <Route path="/employee/jobs/:id/edit" element={<ProtectedRoute userType="employee"><EmployeeJobEdit /></ProtectedRoute>} />
+        <Route path="/employee/tags" element={<ProtectedRoute userType="employee"><EmployeeTags /></ProtectedRoute>} />
         <Route path="/employee/resumes" element={<ProtectedRoute userType="employee"><EmployeeResumes /></ProtectedRoute>} />
         <Route path="/employee/applications" element={<ProtectedRoute userType="employee"><EmployeeApplications /></ProtectedRoute>} />
         <Route path="/employee/evaluations" element={<ProtectedRoute userType="employee"><EmployeeEvaluations /></ProtectedRoute>} />

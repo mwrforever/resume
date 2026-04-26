@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.repositories.job_repo import JobRepository
+from app.services.job_service import JobService
 from app.schemas.job import DimensionCreate, DimensionItem
 from app.api.deps import get_db, get_current_user
 from app.schemas.response import ApiResponse
@@ -29,6 +30,7 @@ async def add_dimension(
     repo: JobRepository = Depends(get_repo),
     current_user: dict = Depends(get_current_user)
 ):
+    await JobService(repo).ensure_job_editable(job_id)
     dim = await repo.add_dimension(
         job_id=job_id,
         dimension_name=body.dimension_name,
@@ -47,6 +49,7 @@ async def update_dimension(
     repo: JobRepository = Depends(get_repo),
     current_user: dict = Depends(get_current_user)
 ):
+    await JobService(repo).ensure_job_editable(job_id)
     dim = await repo.update_dimension(
         dim_id,
         dimension_name=body.dimension_name,
@@ -64,5 +67,6 @@ async def delete_dimension(
     repo: JobRepository = Depends(get_repo),
     current_user: dict = Depends(get_current_user)
 ):
+    await JobService(repo).ensure_job_editable(job_id)
     await repo.delete_dimension(dim_id)
     return ApiResponse(message="删除成功")

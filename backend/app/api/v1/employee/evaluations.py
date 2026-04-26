@@ -35,7 +35,7 @@ async def batch_evaluate(
 ):
     """批量触发评估（员工端核心功能）"""
     logger.info(f"员工 {current_user['sub']} 提交批量评估: {len(req.resume_ids)} 份简历, 岗位 {req.job_id}")
-    run_evaluation_task.delay(req.resume_ids, req.job_id)
+    run_evaluation_task.apply_async(args=(req.resume_ids, req.job_id), ignore_result=True)
     return ApiResponse(code=200, message="评估任务已提交", data={"count": len(req.resume_ids)})
 
 

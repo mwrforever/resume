@@ -13,6 +13,7 @@ interface ResumePreviewDialogProps {
   fileName: string;
   open: boolean;
   onClose: () => void;
+  fileUrl?: string;
 }
 
 type PreviewContent =
@@ -21,7 +22,7 @@ type PreviewContent =
   | { type: 'image'; url: string }
   | { type: 'error'; message: string };
 
-export function ResumePreviewDialog({ resumeId, fileName, open, onClose }: ResumePreviewDialogProps) {
+export function ResumePreviewDialog({ resumeId, fileName, open, onClose, fileUrl }: ResumePreviewDialogProps) {
   const [loading, setLoading] = useState(true);
   const [content, setContent] = useState<PreviewContent | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -44,7 +45,7 @@ export function ResumePreviewDialog({ resumeId, fileName, open, onClose }: Resum
     const load = async () => {
       try {
         const token = useAuthStore.getState().accessToken;
-        const resp = await fetch(`/api/v1/employee/resumes/${resumeId}/file`, {
+        const resp = await fetch(fileUrl ?? `/api/v1/employee/resumes/${resumeId}/file`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -53,7 +54,7 @@ export function ResumePreviewDialog({ resumeId, fileName, open, onClose }: Resum
         if (fileExt === 'pdf') {
           blobUrl = URL.createObjectURL(blob);
           setContent({ type: 'pdf', url: blobUrl });
-        } else if (['docx', 'doc'].includes(fileExt)) {
+        } else if (fileExt === 'docx') {
           setContent({ type: 'docx', blob });
         } else if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(fileExt)) {
           blobUrl = URL.createObjectURL(blob);
@@ -72,7 +73,7 @@ export function ResumePreviewDialog({ resumeId, fileName, open, onClose }: Resum
     load();
 
     return () => { if (blobUrl) URL.revokeObjectURL(blobUrl); };
-  }, [open, resumeId, fileExt]);
+  }, [open, resumeId, fileExt, fileUrl]);
 
   useEffect(() => {
     if (content?.type !== 'docx' || !docxContainerRef.current) return;

@@ -2,6 +2,7 @@ import asyncio
 from fastapi import APIRouter, Depends
 from app.schemas.job import SkillSuggestRequest, SkillSuggestItem, SkillCreate, SkillItem
 from app.repositories.job_repo import JobRepository
+from app.services.job_service import JobService
 from app.api.deps import get_db, get_current_user
 from app.schemas.response import ApiResponse
 from typing import List
@@ -52,6 +53,7 @@ async def add_skill(
     repo: JobRepository = Depends(get_repo),
     current_user: dict = Depends(get_current_user)
 ):
+    await JobService(repo).ensure_job_editable(job_id)
     skill = await repo.add_skill(
         job_id=job_id,
         skill_name=body.skill_name,
@@ -68,5 +70,6 @@ async def delete_skill(
     repo: JobRepository = Depends(get_repo),
     current_user: dict = Depends(get_current_user)
 ):
+    await JobService(repo).ensure_job_editable(job_id)
     await repo.delete_skill(skill_id)
     return ApiResponse(message="删除成功")

@@ -17,6 +17,7 @@ const SKILL_TYPE_OPTIONS = [
 ];
 
 const TAG_TYPE_LABEL: Record<number, string> = { 1: '岗位特性', 2: '福利待遇', 3: '技能加分' };
+const getResponseData = <T,>(res: any, fallback: T): T => res?.data?.data ?? res?.data ?? fallback;
 
 export default function EmployeeJobEdit() {
   const { id } = useParams<{ id: string }>();
@@ -54,15 +55,15 @@ export default function EmployeeJobEdit() {
           employeeJobsApi.getJobTags(jobId),
           employeeJobsApi.listAllTags(),
         ]);
-        const job = jobRes.data?.data ?? jobRes.data;
+        const job = getResponseData<any>(jobRes, {});
         setName(job.name ?? '');
         setDescription(job.description ?? '');
         setStatus(job.status ?? 1);
-        setDimensions(dimRes.data ?? []);
-        setSkills(skillRes.data ?? []);
-        const currentTagIds = (tagRes.data ?? []).map((t: ITag) => t.id);
+        setDimensions(getResponseData<IDimension[]>(dimRes, []));
+        setSkills(getResponseData<ISkill[]>(skillRes, []));
+        const currentTagIds = getResponseData<ITag[]>(tagRes, []).map((t: ITag) => t.id);
         setSelectedTagIds(currentTagIds);
-        setAllTags(allTagRes.data ?? []);
+        setAllTags(getResponseData<ITag[]>(allTagRes, []));
       } catch {
         setError('加载失败，请刷新重试');
       } finally {
@@ -104,11 +105,11 @@ export default function EmployeeJobEdit() {
     try {
       if (dim.id) {
         const res = await employeeJobsApi.updateDimension(jobId, dim.id, dim);
-        const updated = res.data?.data;
+        const updated = getResponseData<IDimension | null>(res, null);
         if (updated) setDimensions(prev => prev.map((d, i) => i === idx ? { ...d, ...updated } : d));
       } else {
         const res = await employeeJobsApi.addDimension(jobId, dim);
-        const created = res.data?.data;
+        const created = getResponseData<IDimension | null>(res, null);
         if (created) setDimensions(prev => prev.map((d, i) => i === idx ? { ...d, ...created } : d));
       }
     } catch {}
@@ -124,7 +125,7 @@ export default function EmployeeJobEdit() {
     const newSkill: ISkill = { skill_name: newSkillName.trim(), skill_type: newSkillType };
     try {
       const res = await employeeJobsApi.addSkill(jobId, newSkill);
-      const created = res.data?.data;
+      const created = getResponseData<ISkill | null>(res, null);
       setSkills(prev => [...prev, created ?? newSkill]);
       setNewSkillName('');
     } catch {}

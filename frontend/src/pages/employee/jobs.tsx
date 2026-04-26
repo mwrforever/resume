@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { Pagination } from '@/components/common/pagination';
@@ -11,8 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { useDebounce } from '@/hooks/use-debounce';
-import { Plus, Pencil, Trash2, RefreshCw, Loader2, X } from 'lucide-react';
+import { useDebounce, useThrottleCallback } from '@/hooks/use-debounce';
+import { Plus, Pencil, Trash2, RefreshCw, Loader2, X, Eye, Send } from 'lucide-react';
 import { CreateJobModal } from '@/components/employee/create-job-modal';
 
 // ─── Edit-only dialog ──────────────────────────────────────────────────────
@@ -77,9 +77,9 @@ function JobEditDialog({ jobId, onClose, onSuccess }: JobEditDialogProps) {
               <Textarea id="edit-job-desc" value={description} onChange={e => setDescription(e.target.value)} className="min-h-[90px] resize-none" />
             </div>
             <div className="space-y-1.5">
-              <Label>招聘状态</Label>
+              <Label>岗位状态</Label>
               <div className="flex gap-3">
-                {[{ val: 1, label: '招聘中', active: 'bg-green-100 text-green-700 border-green-300' }, { val: 0, label: '已下架', active: 'bg-[#F1F5F9] text-[#64748B] border-[#CBD5E1]' }].map(opt => (
+                {[{ val: 2, label: '待发布', active: 'bg-amber-100 text-amber-700 border-amber-300' }, { val: 0, label: '已下架', active: 'bg-[#F1F5F9] text-[#64748B] border-[#CBD5E1]' }].map(opt => (
                   <button key={opt.val} type="button" onClick={() => setStatus(opt.val)}
                     className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors focus-visible:outline-none ${status === opt.val ? opt.active : 'bg-white text-[#64748B] border-[#E2E8F0] hover:bg-[#F8FAFC]'}`}>
                     {opt.label}
@@ -116,6 +116,7 @@ interface Job {
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function EmployeeJobs() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [total, setTotal] = useState(0);
@@ -123,22 +124,24 @@ export default function EmployeeJobs() {
   const [refreshing, setRefreshing] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Job | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [publishingId, setPublishingId] = useState<number | null>(null);
   const [dialogMode, setDialogMode] = useState<'create' | 'edit' | null>(null);
   const [editJobId, setEditJobId] = useState<number | null>(null);
+  const [searchText, setSearchText] = useState(searchParams.get('search') ?? '');
 
   const searchInput = searchParams.get('search') ?? '';
   const statusFilter = searchParams.get('status') ?? '';
   const page = Number(searchParams.get('page') ?? '1');
   const pageSize = Number(searchParams.get('page_size') ?? String(DEFAULT_PAGE_SIZE));
 
-  const debouncedSearch = useDebounce(searchInput, 350);
+  const debouncedSearchText = useDebounce(searchText, 350);
 
   const loadJobs = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     try {
       const params: Record<string, string> = { page: String(page), page_size: String(pageSize) };
-      if (debouncedSearch) params.search = debouncedSearch;
+      if (searchInput) params.search = searchInput;
       if (statusFilter) params.status = statusFilter;
       const res = await employeeJobsApi.list(params);
       setJobs(res.data.items || []);
@@ -149,9 +152,23 @@ export default function EmployeeJobs() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [debouncedSearch, statusFilter, page, pageSize]);
+  }, [searchInput, statusFilter, page, pageSize]);
 
   useEffect(() => { loadJobs(); }, [loadJobs]);
+
+  useEffect(() => {
+    setSearchText(searchInput);
+  }, [searchInput]);
+
+  useEffect(() => {
+    if (debouncedSearchText === searchInput) return;
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (debouncedSearchText) next.set('search', debouncedSearchText); else next.delete('search');
+      next.delete('page');
+      return next;
+    });
+  }, [debouncedSearchText, searchInput, setSearchParams]);
 
   const setParam = (key: string, val: string, resetPage = true) => {
     const next = new URLSearchParams(searchParams);
@@ -187,7 +204,20 @@ export default function EmployeeJobs() {
     }
   };
 
+  const handlePublish = async (job: Job) => {
+    setPublishingId(job.id);
+    try {
+      await employeeJobsApi.publish(job.id);
+      await loadJobs();
+    } catch (error) {
+      console.error('Failed to publish job:', error);
+    } finally {
+      setPublishingId(null);
+    }
+  };
+
   const openEdit = (job: Job) => {
+    if (job.status === 1 || (job.resume_count ?? 0) > 0) return;
     setEditJobId(job.id);
     setDialogMode('edit');
   };
@@ -201,6 +231,7 @@ export default function EmployeeJobs() {
     closeDialog();
     loadJobs();
   };
+  const handleRefresh = useThrottleCallback(() => loadJobs(true));
 
   return (
     <AdminLayout
@@ -218,8 +249,8 @@ export default function EmployeeJobs() {
         <Input
           type="search"
           placeholder="搜索岗位名称…"
-          value={searchInput}
-          onChange={(e) => setParam('search', e.target.value)}
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
           className="w-56 bg-white"
           name="job-search"
           autoComplete="off"
@@ -231,11 +262,12 @@ export default function EmployeeJobs() {
           <SelectContent>
             <SelectItem value="">全部状态</SelectItem>
             <SelectItem value="1">招聘中</SelectItem>
+            <SelectItem value="2">待发布</SelectItem>
             <SelectItem value="0">已下架</SelectItem>
           </SelectContent>
         </Select>
         <button
-          onClick={() => loadJobs(true)}
+          onClick={handleRefresh}
           disabled={refreshing}
           aria-label="刷新"
           className="inline-flex items-center gap-1.5 px-3 h-9 rounded-md border border-[#E2E8F0] bg-white text-sm text-[#64748B] hover:bg-[#F8FAFC] transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
@@ -277,12 +309,16 @@ export default function EmployeeJobs() {
                 </td>
               </tr>
             ) : (
-              jobs.map((job) => (
+              jobs.map((job) => {
+                const resumeCount = job.resume_count ?? 0;
+                const canEdit = job.status !== 1 && resumeCount === 0;
+                return (
                 <tr key={job.id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors">
                   <td className="px-4 py-3">
                     <button
                       onClick={() => openEdit(job)}
-                      className="font-medium text-[#1E293B] hover:text-[#2563EB] transition-colors focus-visible:outline-none focus-visible:underline text-left"
+                      disabled={!canEdit}
+                      className="font-medium text-[#1E293B] hover:text-[#2563EB] transition-colors focus-visible:outline-none focus-visible:underline text-left disabled:cursor-not-allowed disabled:text-[#64748B] disabled:hover:text-[#64748B]"
                     >
                       {job.name}
                     </button>
@@ -295,26 +331,45 @@ export default function EmployeeJobs() {
                   <td className="px-4 py-3">
                     {job.status === 1
                       ? <Badge className="bg-green-100 text-green-700 border-green-200">招聘中</Badge>
+                      : job.status === 2
+                        ? <Badge className="bg-amber-100 text-amber-700 border-amber-200">待发布</Badge>
                       : <Badge className="bg-[#F1F5F9] text-[#64748B] border-[#E2E8F0]">已下架</Badge>
                     }
                   </td>
-                  <td className="px-4 py-3 text-[#64748B] tabular-nums">{job.resume_count ?? 0}</td>
+                  <td className="px-4 py-3 text-[#64748B] tabular-nums">{resumeCount}</td>
                   <td className="px-4 py-3 text-[#64748B]">
                     {new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(job.create_time))}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
                       <button
+                        onClick={() => navigate(`/employee/jobs/${job.id}/preview`)}
+                        className="inline-flex items-center gap-1 text-xs text-[#64748B] hover:underline px-2 py-1 rounded hover:bg-[#F1F5F9] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                      >
+                        <Eye size={13} aria-hidden="true" />
+                        预览
+                      </button>
+                      {job.status !== 1 && (
+                        <button
+                          onClick={() => handlePublish(job)}
+                          disabled={publishingId === job.id}
+                          className="inline-flex items-center gap-1 text-xs text-green-600 hover:underline px-2 py-1 rounded hover:bg-green-50 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
+                        >
+                          {publishingId === job.id ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Send size={13} aria-hidden="true" />}
+                          发布
+                        </button>
+                      )}
+                      <button
                         onClick={() => openEdit(job)}
-                        aria-label={`编辑岗位 ${job.name}`}
-                        className="inline-flex items-center gap-1 text-xs text-[#2563EB] hover:underline px-2 py-1 rounded hover:bg-blue-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                        disabled={!canEdit}
+                        title={!canEdit ? '招聘中或已有投递的岗位不能编辑' : undefined}
+                        className="inline-flex items-center gap-1 text-xs text-[#2563EB] hover:underline px-2 py-1 rounded hover:bg-blue-50 transition-colors disabled:cursor-not-allowed disabled:text-[#94A3B8] disabled:hover:no-underline disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
                       >
                         <Pencil size={13} aria-hidden="true" />
                         编辑
                       </button>
                       <button
                         onClick={() => setDeleteTarget(job)}
-                        aria-label={`删除岗位 ${job.name}`}
                         className="inline-flex items-center gap-1 text-xs text-red-500 hover:underline px-2 py-1 rounded hover:bg-red-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
                       >
                         <Trash2 size={13} aria-hidden="true" />
@@ -323,7 +378,8 @@ export default function EmployeeJobs() {
                     </div>
                   </td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>

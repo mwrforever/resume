@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CheckCircle2, FileText, Upload } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { userResumesApi } from '@/api/user/resumes';
@@ -47,11 +48,13 @@ export function ResumeSelectorDialog({ open, onOpenChange, onSelect }: ResumeSel
     setUploading(true);
     try {
       const res = await userResumesApi.upload(file);
+      const payload = res as unknown as { data?: Partial<Resume> } & Partial<Resume>;
+      const resumeData = payload.data ?? payload;
       // API returns {code, message, data: {id, file_name, file_path}}
       const newResume: Resume = {
-        id: res.data?.id ?? res.id,
-        file_name: res.data?.file_name ?? res.file_name,
-        file_path: res.data?.file_path ?? res.file_path ?? '',
+        id: resumeData.id ?? 0,
+        file_name: resumeData.file_name ?? file.name,
+        file_path: resumeData.file_path ?? '',
       };
       setResumes(prev => [newResume, ...prev]);
       setSelectedId(newResume.id);
@@ -74,76 +77,74 @@ export function ResumeSelectorDialog({ open, onOpenChange, onSelect }: ResumeSel
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogTitle>选择简历</DialogTitle>
+      <DialogContent className="max-w-xl">
+        <DialogTitle className="mb-1">选择简历</DialogTitle>
+        <p className="mb-5 text-sm text-muted-foreground">选择一份已上传简历，或上传新简历后继续投递。</p>
 
         {loading ? (
-          <div className="flex justify-center py-8">
-            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <div className="flex justify-center py-12" aria-label="正在加载简历列表">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
         ) : (
           <>
-            <div className="max-h-80 overflow-y-auto mb-4">
+            <div className="mb-4 max-h-80 space-y-3 overflow-y-auto pr-1">
               {resumes.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">暂无可用简历</p>
+                <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center">
+                  <FileText className="mx-auto h-8 w-8 text-accent" aria-hidden="true" />
+                  <p className="mt-3 text-sm font-medium text-foreground">暂无可用简历</p>
+                  <p className="mt-1 text-xs text-muted-foreground">请先上传 PDF 或 DOCX 文件。</p>
+                </div>
               ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left py-2 px-2 font-medium text-muted-foreground w-8"></th>
-                      <th className="text-left py-2 px-2 font-medium text-muted-foreground">文件名</th>
-                      <th className="text-left py-2 px-2 font-medium text-muted-foreground">上传时间</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {resumes.map((resume) => (
-                      <tr
-                        key={resume.id}
-                        onClick={() => setSelectedId(resume.id)}
-                        className={`border-b cursor-pointer transition-colors ${
-                          selectedId === resume.id ? 'bg-primary/5' : 'hover:bg-muted/50'
-                        }`}
-                      >
-                        <td className="py-2 px-2">
-                          <div className={`w-4 h-4 rounded border flex items-center justify-center ${
-                            selectedId === resume.id ? 'border-primary bg-primary' : 'border-border'
-                          }`}>
-                            {selectedId === resume.id && (
-                              <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                              </svg>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-2 px-2 font-medium truncate max-w-[180px]">{resume.file_name}</td>
-                        <td className="py-2 px-2 text-muted-foreground">
-                          {resume.create_time ? new Date(resume.create_time).toLocaleDateString() : '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                resumes.map((resume) => {
+                  const selected = selectedId === resume.id;
+
+                  return (
+                    <label
+                      key={resume.id}
+                      className={`flex cursor-pointer items-center gap-3 rounded-2xl border p-4 transition-[border-color,box-shadow,background-color] focus-within:ring-2 focus-within:ring-ring ${
+                        selected ? 'border-accent bg-accent/5 shadow-sm' : 'border-border bg-white hover:border-accent/50 hover:bg-muted/30'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="resume-selector"
+                        value={resume.id}
+                        checked={selected}
+                        onChange={() => setSelectedId(resume.id)}
+                        className="sr-only"
+                      />
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent" aria-hidden="true">
+                        <FileText className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-foreground">{resume.file_name}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          上传时间：{resume.create_time ? new Intl.DateTimeFormat('zh-CN').format(new Date(resume.create_time)) : '-'}
+                        </p>
+                      </div>
+                      {selected ? <CheckCircle2 className="h-5 w-5 shrink-0 text-accent" aria-hidden="true" /> : null}
+                    </label>
+                  );
+                })
               )}
             </div>
 
-            <div className="border-t pt-4 space-y-3">
-              <label className="flex items-center justify-center w-full p-3 border-2 border-dashed border-border rounded-lg cursor-pointer hover:border-primary/50 transition-colors">
+            <div className="space-y-3 border-t pt-4">
+              <label className="flex w-full cursor-pointer items-center justify-center rounded-2xl border-2 border-dashed border-border p-3 transition-colors hover:border-accent/60 focus-within:ring-2 focus-within:ring-ring">
                 <div className="flex items-center gap-2">
                   {uploading ? (
-                    <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                   ) : (
-                    <svg className="w-5 h-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                    </svg>
+                    <Upload className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
                   )}
                   <span className="text-sm text-muted-foreground">
-                    {uploading ? '上传中...' : '上传新简历'}
+                    {uploading ? '上传中…' : '上传新简历'}
                   </span>
                 </div>
                 <input
                   type="file"
-                  className="hidden"
-                  accept=".pdf,.doc,.docx"
+                  className="sr-only"
+                  accept=".pdf,.docx"
                   onChange={handleFileChange}
                   disabled={uploading}
                 />
@@ -154,7 +155,7 @@ export function ResumeSelectorDialog({ open, onOpenChange, onSelect }: ResumeSel
                 disabled={!selectedId}
                 onClick={handleConfirm}
               >
-                确认
+                确认选择
               </Button>
             </div>
           </>

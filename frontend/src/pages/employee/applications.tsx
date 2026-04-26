@@ -1,155 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { Pagination } from '@/components/common/pagination';
-import { ResumePreviewDialog } from '@/components/common/resume-preview-dialog';
-import { EvaluationRadarChart } from '@/components/common/radar-chart';
-import { MatchBadge } from '@/components/common/match-badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { employeeApplicationsApi } from '@/api/employee/applications';
 import { employeeEvaluationsApi } from '@/api/employee/evaluations';
-import { BarChart2, ChevronDown, Eye, Loader2, RefreshCw, X } from 'lucide-react';
+import { employeeJobsApi } from '@/api/employee/jobs';
+import { useThrottleCallback } from '@/hooks/use-debounce';
+import type { Job } from '@/types/employee';
+import { BarChart2, ChevronDown, Eye, Loader2, RefreshCw, X, Zap } from 'lucide-react';
 
 const DEFAULT_PAGE_SIZE = 10;
-
-interface Evaluation {
-  final_score: number;
-  final_label: '优秀' | '良好' | '一般' | '未达标';
-  advantage_comment: string;
-  disadvantage_comment: string;
-  dimensions: { dimension_name: string; score: number }[];
-  skill_hits: { skill_name: string; skill_type: number; is_hit: boolean }[];
-}
-
-function EvalReportDialog({ matchId, onClose }: { matchId: number; onClose: () => void }) {
-  const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    employeeEvaluationsApi.getEvaluation(matchId)
-      .then((res) => setEvaluation(res.data))
-      .catch(() => setEvaluation(null))
-      .finally(() => setLoading(false));
-  }, [matchId]);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onMouseDown={onClose}
-    >
-      <div
-        className="bg-[#F5F7FA] rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0] bg-white rounded-t-xl">
-          <h2 className="text-base font-semibold text-[#1E293B]">简历分析报告</h2>
-          <button
-            onClick={onClose}
-            className="text-[#64748B] hover:text-[#1E293B] p-1 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
-            aria-label="关闭"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="p-6">
-          {loading ? (
-            <div className="space-y-4">
-              {[...Array(3)].map((_, i) => <div key={i} className="h-32 bg-white rounded-lg animate-pulse" />)}
-            </div>
-          ) : !evaluation ? (
-            <p className="text-[#94A3B8] text-center py-12">评估记录不存在</p>
-          ) : (
-            <>
-              <Card className="mb-6">
-                <CardContent className="p-6 flex items-center gap-6">
-                  <div>
-                    <p className="text-sm text-[#64748B] mb-1">综合匹配度</p>
-                    <p className="text-4xl font-bold tabular-nums text-[#1E293B]">{evaluation.final_score}</p>
-                    <p className="text-sm text-[#94A3B8]">/100</p>
-                  </div>
-                  <div className="flex-1 space-y-2">
-                    <MatchBadge label={evaluation.final_label} />
-                    <div className="w-full bg-[#F1F5F9] rounded-full h-2 mt-2">
-                      <div
-                        className="h-2 rounded-full bg-[#2563EB] transition-all"
-                        style={{ width: `${evaluation.final_score}%` }}
-                        role="progressbar"
-                        aria-valuenow={evaluation.final_score}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                      />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="space-y-6">
-                  <Card>
-                    <CardHeader><CardTitle className="text-sm">多维度得分</CardTitle></CardHeader>
-                    <CardContent>
-                      <EvaluationRadarChart
-                        data={evaluation.dimensions.map((d) => ({ dimension: d.dimension_name, score: d.score }))}
-                      />
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardHeader><CardTitle className="text-sm">优缺点评价</CardTitle></CardHeader>
-                    <CardContent className="space-y-3">
-                      {evaluation.advantage_comment && (
-                        <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                          <p className="text-xs font-semibold text-green-700 mb-1">优点</p>
-                          <p className="text-sm text-[#1E293B]">{evaluation.advantage_comment}</p>
-                        </div>
-                      )}
-                      <div className="p-3 bg-[#FFF7ED] border border-orange-200 rounded-lg">
-                        <p className="text-xs font-semibold text-orange-700 mb-1">待提升</p>
-                        <p className="text-sm text-[#1E293B]">{evaluation.disadvantage_comment || '这份简历挺符合岗位预期 🎉'}</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                <Card>
-                  <CardHeader><CardTitle className="text-sm">技能命中详情</CardTitle></CardHeader>
-                  <CardContent className="p-0">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                          <th className="text-left px-4 py-3 font-medium text-[#64748B]">技能</th>
-                          <th className="text-left px-4 py-3 font-medium text-[#64748B]">类型</th>
-                          <th className="text-left px-4 py-3 font-medium text-[#64748B]">命中</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {evaluation.skill_hits.map((hit, idx) => (
-                          <tr key={idx} className="border-b border-[#F1F5F9]">
-                            <td className="px-4 py-2.5 text-[#1E293B]">{hit.skill_name ?? '—'}</td>
-                            <td className="px-4 py-2.5 text-[#64748B]">
-                              {hit.skill_type === 1 ? '必须满足' : hit.skill_type === 2 ? '优先匹配' : '普通技能'}
-                            </td>
-                            <td className="px-4 py-2.5">
-                              {hit.is_hit
-                                ? <span className="text-green-600 font-medium" aria-label="已命中">✓</span>
-                                : <span className="text-[#94A3B8]" aria-label="未命中">✗</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </CardContent>
-                </Card>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+const ResumePreviewDialog = lazy(async () => {
+  const module = await import('@/components/common/resume-preview-dialog');
+  return { default: module.ResumePreviewDialog };
+});
 
 interface Application {
   id: number;
@@ -236,11 +101,15 @@ export default function EmployeeApplications() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [previewResume, setPreviewResume] = useState<{ id: number; fileName: string } | null>(null);
-  const [reportMatchId, setReportMatchId] = useState<number | null>(null);
   const [evaluatingIds, setEvaluatingIds] = useState<Set<number>>(new Set());
   const [submittedIds, setSubmittedIds] = useState<Set<number>>(new Set());
+  const [selectedAppIds, setSelectedAppIds] = useState<number[]>([]);
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobFilterOpen, setJobFilterOpen] = useState(false);
 
   const filterStatus = searchParams.get('status') ?? '';
+  const filterJobIds = searchParams.getAll('job_ids').map(Number).filter(Boolean);
   const page = Number(searchParams.get('page') ?? '1');
   const pageSize = Number(searchParams.get('page_size') ?? String(DEFAULT_PAGE_SIZE));
 
@@ -248,20 +117,28 @@ export default function EmployeeApplications() {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     try {
-      const params: Record<string, string> = { page: String(page), page_size: String(pageSize) };
-      if (filterStatus) params.status = filterStatus;
+      const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+      if (filterStatus) params.set('status', filterStatus);
+      filterJobIds.forEach((id) => params.append('job_ids', String(id)));
       const res = await employeeApplicationsApi.list(params);
       setApplications(res.data.items || []);
       setTotal(res.data.total ?? 0);
+      setSelectedAppIds([]);
     } catch (error) {
       console.error('Failed to load applications:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [filterStatus, page, pageSize]);
+  }, [filterStatus, filterJobIds.join(','), page, pageSize]);
 
   useEffect(() => { loadApplications(); }, [loadApplications]);
+
+  useEffect(() => {
+    employeeJobsApi.list({ page: 1, page_size: 100 })
+      .then((res) => setJobs(res.data.items || []))
+      .catch((error) => console.error('Failed to load jobs:', error));
+  }, []);
 
   const setPage = (p: number) => {
     const next = new URLSearchParams(searchParams);
@@ -275,6 +152,7 @@ export default function EmployeeApplications() {
     next.delete('page');
     setSearchParams(next);
   };
+  const handleRefresh = useThrottleCallback(() => loadApplications(true));
 
   const handleStatusUpdate = async (appId: number, newStatus: number) => {
     try {
@@ -305,10 +183,66 @@ export default function EmployeeApplications() {
     }
   };
 
+  const selectedApps = applications.filter((app) => selectedAppIds.includes(app.id));
+  const selectedJobIds = Array.from(new Set(selectedApps.map((app) => app.job_id)));
+  const canBatchEvaluate = selectedApps.length > 0 && selectedJobIds.length === 1 && !batchSubmitting;
+  const allSelected = applications.length > 0 && applications.every((app) => selectedAppIds.includes(app.id));
+
+  const toggleApplication = (appId: number) => {
+    setSelectedAppIds((prev) => prev.includes(appId) ? prev.filter((id) => id !== appId) : [...prev, appId]);
+  };
+
+  const toggleAll = () => {
+    setSelectedAppIds(allSelected ? [] : applications.map((app) => app.id));
+  };
+
+  const handleBatchEvaluate = async () => {
+    if (!canBatchEvaluate) return;
+    setBatchSubmitting(true);
+    try {
+      await employeeEvaluationsApi.batchEvaluate({
+        resume_ids: selectedApps.map((app) => app.resume_id),
+        job_id: selectedJobIds[0],
+      });
+      setSubmittedIds((prev) => {
+        const next = new Set(prev);
+        selectedApps.forEach((app) => next.add(app.id));
+        return next;
+      });
+      setSelectedAppIds([]);
+      setTimeout(() => {
+        setSubmittedIds((prev) => {
+          const next = new Set(prev);
+          selectedApps.forEach((app) => next.delete(app.id));
+          return next;
+        });
+      }, 4000);
+      loadApplications(true);
+    } catch (error) {
+      console.error('Failed to submit batch evaluation:', error);
+    } finally {
+      setBatchSubmitting(false);
+    }
+  };
+
+  const selectedFilterJobs = jobs.filter((job) => filterJobIds.includes(job.id));
+
+  const setFilterJobIds = (jobIds: number[]) => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('job_ids');
+    jobIds.forEach((id) => next.append('job_ids', String(id)));
+    next.delete('page');
+    setSearchParams(next);
+  };
+
+  const toggleFilterJob = (jobId: number) => {
+    setFilterJobIds(filterJobIds.includes(jobId) ? filterJobIds.filter((id) => id !== jobId) : [...filterJobIds, jobId]);
+  };
+
   return (
     <AdminLayout breadcrumbs={[{ label: '投递管理' }]} title="投递管理">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
         <Select
           value={filterStatus}
           onValueChange={(v) => {
@@ -328,8 +262,61 @@ export default function EmployeeApplications() {
             ))}
           </SelectContent>
         </Select>
+        <div className="relative w-full max-w-md">
+          <div
+            tabIndex={0}
+            onFocus={() => setJobFilterOpen(true)}
+            className="min-h-9 w-full rounded-md border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm focus-within:ring-2 focus-within:ring-[#2563EB] focus-within:outline-none"
+          >
+            {selectedFilterJobs.length === 0 ? (
+              <span className="text-[#94A3B8] leading-6">按岗位筛选</span>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {selectedFilterJobs.map((job) => (
+                  <span key={job.id} className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-0.5 text-xs text-[#2563EB]">
+                    {job.name}
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => toggleFilterJob(job.id)}
+                      className="rounded hover:bg-blue-100"
+                      aria-label={`移除岗位 ${job.name}`}
+                    >
+                      <X size={12} aria-hidden="true" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          {jobFilterOpen && (
+            <>
+              <div className="fixed inset-0 z-[90]" onMouseDown={() => setJobFilterOpen(false)} aria-hidden="true" />
+              <div className="absolute left-0 top-full z-[100] mt-1 max-h-72 w-full overflow-auto rounded-lg border border-[#E2E8F0] bg-white py-1 shadow-lg">
+                {jobs.length === 0 ? (
+                  <p className="px-3 py-2 text-sm text-[#94A3B8]">暂无岗位</p>
+                ) : (
+                  jobs.map((job) => {
+                    const checked = filterJobIds.includes(job.id);
+                    return (
+                      <label key={job.id} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-[#1E293B] hover:bg-[#F8FAFC]">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleFilterJob(job.id)}
+                          className="rounded border-[#CBD5E1] accent-[#2563EB]"
+                        />
+                        <span className="truncate">{job.name}</span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </>
+          )}
+        </div>
         <button
-          onClick={() => loadApplications(true)}
+          onClick={handleRefresh}
           disabled={refreshing}
           aria-label="刷新"
           className="inline-flex items-center gap-1.5 px-3 h-9 rounded-md border border-[#E2E8F0] bg-white text-sm text-[#64748B] hover:bg-[#F8FAFC] transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
@@ -337,6 +324,18 @@ export default function EmployeeApplications() {
           <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} aria-hidden="true" />
           刷新
         </button>
+        <button
+          onClick={handleBatchEvaluate}
+          disabled={!canBatchEvaluate}
+          title={selectedApps.length > 0 && selectedJobIds.length > 1 ? '只能批量评估同一岗位的投递' : undefined}
+          className="inline-flex items-center gap-1.5 px-3 h-9 rounded-md bg-[#2563EB] text-sm text-white hover:bg-[#1D4ED8] transition-colors disabled:cursor-not-allowed disabled:bg-[#CBD5E1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+        >
+          {batchSubmitting ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Zap size={14} aria-hidden="true" />}
+          批量AI评估{selectedAppIds.length > 0 ? `（${selectedAppIds.length}）` : ''}
+        </button>
+        {selectedApps.length > 0 && selectedJobIds.length > 1 && (
+          <span className="text-xs text-amber-600">请选择同一岗位的投递进行批量评估</span>
+        )}
       </div>
 
       {/* Table */}
@@ -344,6 +343,16 @@ export default function EmployeeApplications() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
+              <th className="px-4 py-3 w-10">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  disabled={applications.length === 0}
+                  aria-label="全选投递"
+                  className="rounded border-[#CBD5E1] accent-[#2563EB]"
+                />
+              </th>
               <th className="text-left px-4 py-3 font-medium text-[#64748B]">求职者</th>
               <th className="text-left px-4 py-3 font-medium text-[#64748B]">投递岗位</th>
               <th className="text-left px-4 py-3 font-medium text-[#64748B]">简历</th>
@@ -356,7 +365,7 @@ export default function EmployeeApplications() {
             {loading ? (
               [...Array(4)].map((_, i) => (
                 <tr key={i} className="border-b border-[#F1F5F9]">
-                  {[...Array(6)].map((__, j) => (
+                  {[...Array(7)].map((__, j) => (
                     <td key={j} className="px-4 py-3">
                       <div className="h-4 bg-[#F1F5F9] rounded animate-pulse" />
                     </td>
@@ -365,7 +374,7 @@ export default function EmployeeApplications() {
               ))
             ) : applications.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-16 text-center text-[#94A3B8]">
+                <td colSpan={7} className="px-4 py-16 text-center text-[#94A3B8]">
                   暂无投递记录
                 </td>
               </tr>
@@ -375,6 +384,15 @@ export default function EmployeeApplications() {
                 const isSubmitted = submittedIds.has(app.id);
                 return (
                   <tr key={app.id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors">
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedAppIds.includes(app.id)}
+                        onChange={() => toggleApplication(app.id)}
+                        aria-label={`选择投递 ${app.id}`}
+                        className="rounded border-[#CBD5E1] accent-[#2563EB]"
+                      />
+                    </td>
                     <td className="px-4 py-3 text-[#64748B] tabular-nums">用户 {app.user_id}</td>
                     <td className="px-4 py-3 font-medium text-[#1E293B]">{app.job_name}</td>
                     <td className="px-4 py-3 text-[#64748B] max-w-[180px]">
@@ -407,13 +425,13 @@ export default function EmployeeApplications() {
                           </button>
                         )}
                         {app.match_id && (
-                          <button
-                            onClick={() => setReportMatchId(app.match_id!)}
+                          <Link
+                            to={`/employee/evaluations/${app.match_id}`}
                             className="inline-flex items-center gap-1 text-xs text-[#2563EB] hover:underline px-2 py-1 rounded hover:bg-blue-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
                           >
                             <BarChart2 size={13} aria-hidden="true" />
                             分析报告
-                          </button>
+                          </Link>
                         )}
                       </div>
                     </td>
@@ -428,15 +446,14 @@ export default function EmployeeApplications() {
       <Pagination page={page} pageSize={pageSize} total={total} onChange={setPage} onPageSizeChange={setPageSize} />
 
       {previewResume && (
-        <ResumePreviewDialog
-          resumeId={previewResume.id}
-          fileName={previewResume.fileName}
-          open={!!previewResume}
-          onClose={() => setPreviewResume(null)}
-        />
-      )}
-      {reportMatchId && (
-        <EvalReportDialog matchId={reportMatchId} onClose={() => setReportMatchId(null)} />
+        <Suspense fallback={null}>
+          <ResumePreviewDialog
+            resumeId={previewResume.id}
+            fileName={previewResume.fileName}
+            open={!!previewResume}
+            onClose={() => setPreviewResume(null)}
+          />
+        </Suspense>
       )}
     </AdminLayout>
   );

@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, Query
-from app.services.job_service import JobService
-from app.repositories.job_repo import JobRepository
-from app.schemas.job import JobCreate, JobUpdate, DimensionItem, SkillItem, TagItem
+
 from app.api.deps import get_db, get_current_user
-from app.schemas.response import ApiResponse, JobItem, PageData
 from app.models.job_position import JobPosition
 from app.models.sys_dept import SysDept
-from typing import List
+from app.repositories.job_repo import JobRepository
+from app.schemas.job import JobCreate, JobUpdate, DimensionItem, SkillItem, TagItem
+from app.schemas.response import ApiResponse, JobItem, PageData
+from app.services.job_service import JobService
 
 router = APIRouter()
 
@@ -15,11 +15,12 @@ def get_job_service(db=Depends(get_db)) -> JobService:
     return JobService(JobRepository(db))
 
 
-def _build_job_item(job: "JobPosition", dept: "SysDept | None") -> JobItem:
+async def _build_job_item(job: "JobPosition", dept: "SysDept | None", service: JobService) -> JobItem:
     item = JobItem.model_validate(job)
     if dept:
         item.dept_name = dept.dept_name
         item.dept_code = dept.dept_code
+    item.resume_count = await service.job_repo.count_applications(job.id)
     return item
 
 
@@ -39,7 +40,7 @@ async def list_employee_jobs(
     return ApiResponse(
         data=PageData(
             total=total,
-            items=[_build_job_item(job, dept) for job, dept in rows]
+            items=[await _build_job_item(job, dept, service) for job, dept in rows]
         )
     )
 
@@ -56,7 +57,7 @@ async def get_job(
     if not row:
         raise HTTPException(status_code=404, detail="岗位不存在")
     job, dept = row
-    item = _build_job_item(job, dept)
+    item = await _build_job_item(job, dept, service)
     dimensions = await service.job_repo.get_dimensions(job_id)
     skills = await service.job_repo.get_job_skills(job_id)
     tags = await service.job_repo.get_job_tags(job_id)
@@ -97,6 +98,9 @@ async def update_job(
     """员工端：编辑岗位"""
     payload = job.model_dump(exclude_unset=True)
     tag_ids = payload.pop("tag_ids", None)
+    is_status_only = set(payload.keys()) <= {"status"} and tag_ids is None
+    if not is_status_only:
+        await service.ensure_job_editable(job_id)
     if payload:
         await service.update_job(job_id, **payload)
     if tag_ids is not None:

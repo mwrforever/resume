@@ -4,6 +4,7 @@ from app.models.resume_job_match import ResumeJobMatch
 from app.models.resume_eval_detail import ResumeEvalDetail
 from app.models.resume_skill_hit import ResumeSkillHit
 from app.models.job_eval_dimension import JobEvalDimension
+from app.models.job_skill import JobSkill
 from datetime import datetime
 
 
@@ -91,9 +92,17 @@ class EvalRepository:
 
     async def get_skill_hits(self, match_id: int) -> list[ResumeSkillHit]:
         result = await self.db.execute(
-            select(ResumeSkillHit).where(ResumeSkillHit.match_id == match_id)
+            select(ResumeSkillHit, JobSkill.skill_name, JobSkill.skill_type, JobSkill.match_label)
+            .outerjoin(JobSkill, JobSkill.id == ResumeSkillHit.skill_id)
+            .where(ResumeSkillHit.match_id == match_id)
         )
-        return result.scalars().all()
+        hits = []
+        for hit, skill_name, skill_type, match_label in result.all():
+            hit.skill_name = skill_name
+            hit.skill_type = skill_type
+            hit.match_label = match_label
+            hits.append(hit)
+        return hits
 
     async def update_match_error(self, match_id: int, error_message: str) -> bool:
         """更新匹配记录的错误状态"""

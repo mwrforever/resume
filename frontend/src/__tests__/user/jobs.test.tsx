@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import UserJobs from '@/pages/user/jobs';
 
@@ -87,9 +86,13 @@ describe('UserJobs Page', () => {
     });
 
     it('test_jobs_display_with_infinite_scroll_indicator', async () => {
-      // Mock 11 items with total 12 - hasMore=false since items.length(11) < pageSize(12), shows "已加载全部岗位"
+      const loadedJobs = Array.from({ length: 11 }, (_, index) => ({
+        ...mockJobs[0],
+        id: index + 1,
+        name: `Frontend Developer ${index + 1}`,
+      }));
       vi.mocked(userJobsApi.list).mockResolvedValue({
-        data: { items: Array(11).fill(mockJobs[0]), total: 12 }
+        data: { items: loadedJobs, total: 11 }
       } as any);
 
       render(
@@ -98,9 +101,8 @@ describe('UserJobs Page', () => {
         </MemoryRouter>
       );
 
-      // Wait for the infinite scroll indicator to appear
       await waitFor(() => {
-        expect(screen.getByText('已加载全部岗位')).toBeInTheDocument();
+        expect(screen.getByText('已经到底了哦 (11 条)')).toBeInTheDocument();
       }, { timeout: 2000 });
     });
 

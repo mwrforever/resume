@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { PageLayout } from '@/components/layout/page-layout';
-import { UserNav } from '@/components/layout/user-nav';
+import { CheckCircle2, ClipboardCheck, Eye, FileText, Trash2 } from 'lucide-react';
 import { userJobsApi } from '@/api/user/jobs';
 import { userApplicationsApi } from '@/api/user/applications';
 import { resumePreviewApi } from '@/api/user/resumes';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { ResumeSelectorDialog } from '@/components/resume-selector-dialog';
+import { EmptyState, PageSkeleton, ResumePreviewModal, SectionCard, SkillPill, StatusPill } from '@/components/user/user-ui';
+import { UserShell } from '@/components/user/user-shell';
 
 interface Job {
   id: number;
@@ -22,6 +22,40 @@ interface UploadedResume {
   id: number;
   file_name: string;
   file_path: string;
+}
+
+function ResumeAttachmentCard({
+  resume,
+  onPreview,
+  onRemove,
+}: {
+  resume: UploadedResume;
+  onPreview: () => void;
+  onRemove?: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 p-4">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-accent shadow-sm" aria-hidden="true">
+          <FileText className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-foreground">{resume.file_name}</p>
+          <p className="text-xs text-muted-foreground">附件简历</p>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button variant="ghost" size="sm" onClick={onPreview} aria-label="预览简历">
+          <Eye className="h-4 w-4" aria-hidden="true" />
+        </Button>
+        {onRemove ? (
+          <Button variant="ghost" size="sm" onClick={onRemove} aria-label="移除简历" className="text-muted-foreground hover:text-destructive">
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 export default function UserJobDetail() {
@@ -101,142 +135,87 @@ export default function UserJobDetail() {
 
   if (loading) {
     return (
-      <PageLayout title="加载中..." action={<UserNav />}>
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 w-64 bg-muted rounded" />
-          <div className="h-32 bg-muted rounded-xl" />
-          <div className="h-48 bg-muted rounded-xl" />
-        </div>
-      </PageLayout>
+      <UserShell title="加载中…" subtitle="正在获取岗位详情" eyebrow="Job Detail">
+        <PageSkeleton rows={3} />
+      </UserShell>
     );
   }
 
   if (!job) {
     return (
-      <PageLayout title="岗位不存在" action={<UserNav />}>
-        <div className="text-center py-24">
-          <p className="text-muted-foreground">该岗位已下架或不存在</p>
-        </div>
-      </PageLayout>
+      <UserShell title="岗位不存在" subtitle="该岗位已下架或不存在" eyebrow="Job Detail">
+        <EmptyState title="未找到岗位" description="请返回岗位列表查看当前开放的招聘机会。" />
+      </UserShell>
     );
   }
 
   return (
-    <PageLayout
+    <UserShell
       title={job.name}
-      subtitle="岗位详情"
-      action={<UserNav />}
+      subtitle="查看岗位描述、技能要求，并选择附件简历完成投递。"
+      eyebrow="Job Detail"
+      action={
+        <StatusPill className={job.applied ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-accent/10 text-accent ring-1 ring-accent/20'}>
+          {job.applied ? '已投递' : '可投递'}
+        </StatusPill>
+      }
     >
-      {showPreview && previewUrl && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="font-semibold">简历预览</h3>
-              <button onClick={() => setShowPreview(false)} className="text-muted-foreground hover:text-foreground">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <iframe src={previewUrl} className="flex-1 w-full" title="resume-preview" />
-          </div>
-        </div>
-      )}
+      <ResumePreviewModal open={showPreview} url={previewUrl} onClose={() => setShowPreview(false)} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-6">
-          <Card>
-            <CardContent className="pt-6">
-              {job.skills && job.skills.length > 0 && (
-                <>
-                  <h2 className="text-lg font-semibold mb-4">技能要求</h2>
-                  <div className="flex flex-wrap gap-2 mb-4">
-                    {job.skills.map((skill, idx) => (
-                      <span key={idx} className="inline-flex items-center rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                        {skill}
-                      </span>
-                    ))}
-                  </div>
-                  <hr className="border-border mb-4" />
-                </>
-              )}
-              <h2 className="text-lg font-semibold mb-4">岗位描述</h2>
-              <p className="text-muted-foreground whitespace-pre-wrap">
-                {job.description || '暂无详细描述'}
-              </p>
-            </CardContent>
-          </Card>
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <SectionCard title="技能要求" description="岗位期望候选人具备的能力标签">
+            {job.skills && job.skills.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {job.skills.map((skill, idx) => (
+                  <SkillPill key={`${skill}-${idx}`} tone="accent">
+                    {skill}
+                  </SkillPill>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">暂无技能要求</p>
+            )}
+          </SectionCard>
+
+          <SectionCard title="岗位描述" description="阅读岗位职责与任职要求">
+            <p className="whitespace-pre-wrap break-words text-sm leading-7 text-muted-foreground md:text-base">
+              {job.description || '暂无详细描述'}
+            </p>
+          </SectionCard>
         </div>
 
-        <div className="space-y-6">
-          <Card>
-            <CardContent className="pt-6">
-              <h2 className="text-lg font-semibold mb-4">附件简历</h2>
-              {job.applied && appliedResume ? (
-                // 已投递，显示简历信息，无添加按钮
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/50">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <svg className="w-5 h-5 text-muted-foreground flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      <span className="text-sm truncate">{appliedResume.file_name}</span>
-                    </div>
-                    <button
-                      onClick={() => handlePreview(appliedResume)}
-                      className="p-1.5 text-muted-foreground hover:text-accent transition-colors"
-                      title="预览"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                    </button>
-                  </div>
-                  <p className="text-sm text-muted-foreground text-center">已投递</p>
+        <aside className="space-y-6">
+          <SectionCard title="附件简历" description={job.applied ? '你已完成投递，可查看已使用的简历。' : '选择一份简历后即可提交投递。'}>
+            {job.applied && appliedResume ? (
+              // 已投递，显示简历信息，无添加按钮
+              <div className="space-y-4">
+                <ResumeAttachmentCard resume={appliedResume} onPreview={() => handlePreview(appliedResume)} />
+                <div className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                  已投递
                 </div>
-              ) : attachedResume ? (
-                // 未投递但选择了简历
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/50">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <svg className="w-5 h-5 text-muted-foreground flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      <span className="text-sm truncate">{attachedResume.file_name}</span>
-                    </div>
-                    <div className="flex gap-1 ml-2">
-                      <button
-                        onClick={() => handlePreview(attachedResume)}
-                        className="p-1.5 text-muted-foreground hover:text-accent transition-colors"
-                        title="预览"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={handleRemoveResume}
-                        className="p-1.5 text-muted-foreground hover:text-destructive transition-colors"
-                        title="删除"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                  <Button
-                    className="w-full"
-                    disabled={applying}
-                    onClick={handleApply}
-                  >
-                    {applying ? '投递中...' : '确认投递'}
-                  </Button>
+              </div>
+            ) : attachedResume ? (
+              // 未投递但选择了简历
+              <div className="space-y-4">
+                <ResumeAttachmentCard resume={attachedResume} onPreview={() => handlePreview(attachedResume)} onRemove={handleRemoveResume} />
+                <Button
+                  className="w-full"
+                  disabled={applying}
+                  onClick={handleApply}
+                >
+                  {applying ? '投递中…' : '确认投递'}
+                </Button>
+              </div>
+            ) : (
+              // 未投递且未选择简历
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-dashed border-border bg-muted/30 px-4 py-8 text-center">
+                  <ClipboardCheck className="mx-auto h-8 w-8 text-accent" aria-hidden="true" />
+                  <p className="mt-3 text-sm font-medium text-foreground">还未选择附件简历</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">请选择已上传简历，或在弹窗中上传新简历。</p>
                 </div>
-              ) : (
-                // 未投递且未选择简历
                 <Button
                   className="w-full"
                   variant="outline"
@@ -244,10 +223,10 @@ export default function UserJobDetail() {
                 >
                   添加附件简历
                 </Button>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+              </div>
+            )}
+          </SectionCard>
+        </aside>
       </div>
 
       <ResumeSelectorDialog
@@ -255,6 +234,6 @@ export default function UserJobDetail() {
         onOpenChange={setShowResumeDialog}
         onSelect={handleSelectResume}
       />
-    </PageLayout>
+    </UserShell>
   );
 }

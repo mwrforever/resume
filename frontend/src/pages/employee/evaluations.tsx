@@ -230,9 +230,9 @@ export default function EmployeeEvaluations() {
                             : <span className="text-xs text-[#94A3B8]">待评估</span>}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {resume.status === 'completed' && (
+                          {resume.status === 'completed' && resume.match_id && (
                             <Link
-                              to={`/employee/evaluations/${resume.resume_id}`}
+                              to={`/employee/evaluations/${resume.match_id}`}
                               className="text-xs text-[#2563EB] hover:underline focus-visible:outline-none focus-visible:underline"
                             >
                               查看详情

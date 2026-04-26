@@ -34,12 +34,12 @@ function Select({ value, onValueChange, children }: SelectProps) {
     <SelectContext.Provider value={{ value, onValueChange, open, setOpen, selectedLabel, setSelectedLabel }}>
       {open && (
         <div
-          className="fixed inset-0 z-40"
+          className="fixed inset-0 z-[90]"
           onMouseDown={() => setOpen(false)}
           aria-hidden="true"
         />
       )}
-      <div className="relative z-50">
+      <div className={cn("relative", open ? "z-[100]" : "z-0")}>
         {children}
       </div>
     </SelectContext.Provider>
@@ -103,7 +103,7 @@ function SelectContent({ children, className }: SelectContentProps) {
   return (
     <div
       className={cn(
-        "select-content absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border bg-background shadow-md",
+        "select-content absolute z-[110] mt-1 max-h-60 w-full overflow-auto rounded-md border bg-background shadow-md",
         className
       )}
     >

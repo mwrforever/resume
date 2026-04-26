@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useThrottleCallback } from '@/hooks/use-debounce';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
@@ -14,6 +15,14 @@ export function Pagination({ page, pageSize, total, onChange, onPageSizeChange }
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const end = Math.min(page * pageSize, total);
+  const throttledChange = useThrottleCallback((nextPage: number) => {
+    if (nextPage === page || nextPage < 1 || nextPage > totalPages) return;
+    onChange(nextPage);
+  });
+  const throttledPageSizeChange = useThrottleCallback((size: number) => {
+    if (size === pageSize) return;
+    onPageSizeChange?.(size);
+  });
 
   const getPages = (): (number | '...')[] => {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
@@ -38,7 +47,7 @@ export function Pagination({ page, pageSize, total, onChange, onPageSizeChange }
             <span className="text-xs text-[#94A3B8]">每页</span>
             <select
               value={pageSize}
-              onChange={(e) => onPageSizeChange(Number(e.target.value))}
+              onChange={(e) => throttledPageSizeChange(Number(e.target.value))}
               aria-label="每页条数"
               className="h-7 px-1.5 rounded border border-[#E2E8F0] bg-white text-xs text-[#1E293B] focus:outline-none focus:ring-2 focus:ring-[#2563EB] cursor-pointer"
             >
@@ -52,7 +61,7 @@ export function Pagination({ page, pageSize, total, onChange, onPageSizeChange }
 
       <div className="flex items-center gap-1">
         <button
-          onClick={() => onChange(page - 1)}
+          onClick={() => throttledChange(page - 1)}
           disabled={page <= 1}
           aria-label="上一页"
           className="inline-flex items-center justify-center w-8 h-8 rounded border border-[#E2E8F0] bg-white text-[#1E293B] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#F8FAFC] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
@@ -68,7 +77,7 @@ export function Pagination({ page, pageSize, total, onChange, onPageSizeChange }
           ) : (
             <button
               key={p}
-              onClick={() => onChange(p as number)}
+              onClick={() => throttledChange(p as number)}
               aria-current={p === page ? 'page' : undefined}
               className={`inline-flex items-center justify-center w-8 h-8 rounded border text-sm tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] ${
                 p === page
@@ -82,7 +91,7 @@ export function Pagination({ page, pageSize, total, onChange, onPageSizeChange }
         )}
 
         <button
-          onClick={() => onChange(page + 1)}
+          onClick={() => throttledChange(page + 1)}
           disabled={page >= totalPages}
           aria-label="下一页"
           className="inline-flex items-center justify-center w-8 h-8 rounded border border-[#E2E8F0] bg-white text-[#1E293B] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#F8FAFC] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"

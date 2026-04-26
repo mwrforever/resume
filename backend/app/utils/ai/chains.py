@@ -3,129 +3,10 @@ import re
 import logging
 from app.utils.ai.client import llm_complete
 from app.utils.ai.prompts import (
-    DIMENSION_EVAL_PROMPT, SKILL_HIT_PROMPT, COMPREHENSIVE_EVAL_PROMPT,
-    SKILL_SUGGEST_PROMPT, DIMENSION_SUGGEST_PROMPT, JOB_DESCRIPTION_PROMPT,
+    JOB_AI_SUGGEST_PROMPT, RESUME_EVAL_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
-
-
-class DimensionEvalChain:
-    """维度评估Chain"""
-
-    def evaluate(self, resume_text: str, dimension_name: str, job_name: str, job_skills: str) -> dict:
-        """
-        评估简历在指定维度的得分
-
-        Returns:
-            dict: {score: int, advantage: str, disadvantage: str}
-        """
-        prompt = DIMENSION_EVAL_PROMPT.format(
-            dimension_name=dimension_name,
-            job_name=job_name,
-            job_skills=job_skills,
-            resume_text=resume_text
-        )
-        try:
-            result = llm_complete(prompt)
-            return self._parse_result(result)
-        except Exception as e:
-            logger.error(f"维度评估失败: {e}")
-            return {"score": 50, "advantage": "评估异常", "disadvantage": ""}
-
-    def evaluate_with_template(self, resume_text: str, job_name: str, prompt_template: str,
-                               dimension_name: str = "", job_skills: str = "") -> dict:
-        """使用维度专属 prompt_template 进行评估"""
-        try:
-            prompt = prompt_template.format(
-                resume_text=resume_text,
-                job_name=job_name,
-                dimension_name=dimension_name,
-                job_skills=job_skills,
-            )
-        except KeyError:
-            prompt = prompt_template + f"\n\n简历内容:\n{resume_text}"
-        try:
-            result = llm_complete(prompt)
-            return self._parse_result(result)
-        except Exception as e:
-            logger.error(f"维度评估失败: {e}")
-            return {"score": 50, "advantage": "评估异常", "disadvantage": ""}
-
-    def _parse_result(self, result: str) -> dict:
-        """解析JSON结果"""
-        match = re.search(r'\{.*\}', result, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group())
-            except json.JSONDecodeError:
-                pass
-        return {"score": 50, "advantage": "解析失败", "disadvantage": ""}
-
-
-class SkillHitChain:
-    """技能命中检测Chain"""
-
-    def evaluate(self, resume_text: str, skill_list: list, skill_type: int) -> dict:
-        """
-        检测简历中技能的命中情况
-
-        Returns:
-            dict: {hits: [{skill, is_hit, hit_context}]}
-        """
-        prompt = SKILL_HIT_PROMPT.format(
-            skill_list=", ".join([s["skill"] for s in skill_list]),
-            skill_type=skill_type,
-            resume_text=resume_text
-        )
-        try:
-            result = llm_complete(prompt)
-            return self._parse_result(result)
-        except Exception as e:
-            logger.error(f"技能命中检测失败: {e}")
-            return {"hits": []}
-
-    def _parse_result(self, result: str) -> dict:
-        match = re.search(r'\{.*\}', result, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group())
-            except json.JSONDecodeError:
-                pass
-        return {"hits": []}
-
-
-class ComprehensiveEvalChain:
-    """综合评价Chain"""
-
-    def evaluate(self, job_name: str, final_score: float, dimensions: list) -> dict:
-        """
-        生成简历对岗位的综合评价
-
-        Returns:
-            dict: {advantage_comment: str, disadvantage_comment: str}
-        """
-        dimensions_str = ", ".join([f"{d['dimension_name']}:{d['score']}分" for d in dimensions])
-        prompt = COMPREHENSIVE_EVAL_PROMPT.format(
-            job_name=job_name,
-            final_score=final_score,
-            dimensions=dimensions_str
-        )
-        try:
-            result = llm_complete(prompt)
-            return self._parse_result(result)
-        except Exception as e:
-            logger.error(f"综合评价生成失败: {e}")
-            return {"advantage_comment": "", "disadvantage_comment": ""}
-
-    def _parse_result(self, result: str) -> dict:
-        match = re.search(r'\{.*\}', result, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group())
-            except json.JSONDecodeError:
-                pass
-        return {"advantage_comment": "", "disadvantage_comment": ""}
 
 
 class JobAiSuggestChain:
@@ -136,41 +17,53 @@ class JobAiSuggestChain:
         Returns:
             dict: {comprehensive_description, dimensions, skills}
         """
-        desc_prompt = JOB_DESCRIPTION_PROMPT.format(job_name=name, job_description=description or "")
-        dim_prompt = DIMENSION_SUGGEST_PROMPT.format(job_name=name, job_description=description or "")
-        skill_prompt = SKILL_SUGGEST_PROMPT.format(job_name=name, job_description=description or "")
-
+        prompt = JOB_AI_SUGGEST_PROMPT.format(job_name=name, job_description=description or "")
         try:
-            comprehensive_description = llm_complete(desc_prompt)
+            raw = llm_complete(prompt, max_retries=2, timeout=90)
+            result = self._parse_object(raw)
         except Exception as e:
-            logger.error(f"岗位描述生成失败: {e}")
-            comprehensive_description = description or ""
-
-        try:
-            dim_raw = llm_complete(dim_prompt)
-            dimensions = self._parse_array(dim_raw)
-        except Exception as e:
-            logger.error(f"评估维度生成失败: {e}")
-            dimensions = []
-
-        try:
-            skill_raw = llm_complete(skill_prompt)
-            skills = self._parse_array(skill_raw)
-        except Exception as e:
-            logger.error(f"技能建议生成失败: {e}")
-            skills = []
+            logger.error(f"岗位AI建议生成失败: {e}")
+            result = {}
 
         return {
-            "comprehensive_description": comprehensive_description.strip(),
-            "dimensions": dimensions,
-            "skills": skills,
+            "comprehensive_description": str(result.get("comprehensive_description") or description or "").strip(),
+            "dimensions": result.get("dimensions") if isinstance(result.get("dimensions"), list) else [],
+            "skills": result.get("skills") if isinstance(result.get("skills"), list) else [],
         }
 
-    def _parse_array(self, result: str) -> list:
-        match = re.search(r'\[.*\]', result, re.DOTALL)
+    def _parse_object(self, result: str) -> dict:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group())
+                parsed = json.loads(match.group())
+                if isinstance(parsed, dict):
+                    return parsed
             except json.JSONDecodeError:
                 pass
-        return []
+        return {}
+
+
+class ResumeEvalChain:
+    """一次性生成简历维度评估、技能命中和综合评价"""
+
+    def evaluate(self, resume_text: str, job_name: str, job_description: str, dimensions: list, skills: list) -> dict:
+        prompt = RESUME_EVAL_PROMPT.format(
+            job_name=job_name,
+            job_description=job_description or "",
+            dimensions=json.dumps(dimensions, ensure_ascii=False),
+            skills=json.dumps(skills, ensure_ascii=False),
+            resume_text=resume_text,
+        )
+        raw = llm_complete(prompt, max_retries=2, timeout=120)
+        return self._parse_result(raw)
+
+    def _parse_result(self, result: str) -> dict:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group())
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+        return {}

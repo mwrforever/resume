@@ -1,3 +1,4 @@
+from typing import List
 from fastapi import APIRouter, Depends, Query
 from app.services.application_service import ApplicationService
 from app.repositories.application_repo import ApplicationRepository
@@ -30,6 +31,7 @@ def get_service(db=Depends(get_db)) -> ApplicationService:
 @router.get("", response_model=ApiResponse[PageData])
 async def list_applications(
     job_id: int = Query(None),
+    job_ids: List[int] = Query(None),
     status: int = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -39,11 +41,9 @@ async def list_applications(
 ):
     """获取投递列表（员工端）"""
     skip = (page - 1) * page_size
-    if job_id:
-        apps, total = await service.get_job_applications(job_id, skip, page_size)
-    else:
-        apps = await service.app_repo.get_all(skip, page_size, status)
-        total = await service.app_repo.get_all_count(status)
+    filter_job_ids = job_ids or ([job_id] if job_id else None)
+    apps = await service.app_repo.get_all(skip, page_size, status, filter_job_ids)
+    total = await service.app_repo.get_all_count(status, filter_job_ids)
 
     job_names = await service.get_job_names([a.job_id for a in apps])
     resume_file_names = await service.resume_repo.get_file_names_batch([a.resume_id for a in apps])

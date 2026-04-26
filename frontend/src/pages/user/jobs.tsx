@@ -1,9 +1,11 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { PageLayout } from '@/components/layout/page-layout';
-import { UserNav } from '@/components/layout/user-nav';
+import { ArrowRight, Briefcase, CalendarDays, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { userJobsApi } from '@/api/user/jobs';
+import { EmptyState, PageSkeleton, SkillPill, StatusPill } from '@/components/user/user-ui';
+import { UserShell } from '@/components/user/user-shell';
+import { useThrottleCallback } from '@/hooks/use-debounce';
 
 interface Job {
   id: number;
@@ -58,12 +60,12 @@ export default function UserJobs() {
     }
   }, []);
 
-  const handleLoadMore = useCallback(() => {
+  const handleLoadMore = useThrottleCallback(() => {
     if (loadingMoreRef.current || !hasMoreRef.current) return;
     const nextPage = pageRef.current + 1;
     pageRef.current = nextPage;
     loadJobs(nextPage, true);
-  }, [loadJobs]);
+  });
 
   useEffect(() => {
     if (initializedRef.current) return;
@@ -87,75 +89,79 @@ export default function UserJobs() {
   }, [handleLoadMore]);
 
   return (
-    <PageLayout
+    <UserShell
       title="招聘岗位"
-      subtitle="发现适合你的机会"
-      action={<UserNav />}
+      subtitle="浏览开放岗位，查看技能要求，并选择合适的简历完成投递。"
+      eyebrow="Job Marketplace"
+      action={
+        <div className="rounded-2xl border border-accent/20 bg-accent/10 px-4 py-3 text-sm text-accent">
+          <span className="font-semibold tabular-nums">{jobs.length}</span> 个岗位已加载
+        </div>
+      }
     >
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="h-48 bg-muted animate-pulse rounded-xl" />
-          ))}
-        </div>
+        <PageSkeleton rows={6} />
       ) : jobs.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
-            <svg className="w-8 h-8 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-medium mb-2">暂无岗位</h3>
-          <p className="text-muted-foreground">暂时没有在招的岗位，请稍后再来</p>
-        </div>
+        <EmptyState
+          title="暂无岗位"
+          description="暂时没有在招岗位，请稍后再来查看新的机会。"
+          icon={<Briefcase className="h-8 w-8" aria-hidden="true" />}
+        />
       ) : (
         <div className="pb-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="mb-6 flex items-center gap-3 rounded-2xl border border-border/80 bg-white px-4 py-3 text-sm text-muted-foreground shadow-sm">
+            <Search className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
+            <p>点击岗位卡片可查看详情并选择附件简历进行投递。</p>
+          </div>
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
             {jobs.map((job) => (
               <Link
                 key={job.id}
                 to={`/user/jobs/${job.id}`}
-                className="group block"
+                className="group block rounded-3xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
-                <div className="bg-card rounded-xl border border-border p-6 transition-all duration-200 hover:border-accent hover:shadow-lg hover:shadow-accent/5 h-[180px] flex flex-col">
-                  <div className="flex items-start justify-between mb-2 shrink-0">
-                    <div className="space-y-1">
-                      <h3 className="font-semibold text-lg group-hover:text-accent transition-colors">
+                <article className="flex min-h-[15rem] flex-col rounded-3xl border border-border/80 bg-white p-6 shadow-sm shadow-slate-200/60 [content-visibility:auto] transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-accent/60 hover:shadow-lg hover:shadow-accent/10">
+                  <div className="mb-4 flex items-start justify-between gap-4">
+                    <div className="min-w-0 space-y-2">
+                      <h2 className="line-clamp-2 text-xl font-semibold leading-7 text-foreground transition-colors group-hover:text-accent">
                         {job.name}
-                      </h3>
-                      <p className="text-sm text-muted-foreground">
-                        发布时间 {job.create_time?.split('T')[0]}
+                      </h2>
+                      <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                        <CalendarDays className="h-4 w-4" aria-hidden="true" />
+                        发布时间 {job.create_time ? new Intl.DateTimeFormat('zh-CN').format(new Date(job.create_time)) : '-'}
                       </p>
                     </div>
-                    <span className="inline-flex items-center rounded-full bg-accent/10 px-2.5 py-0.5 text-xs font-medium text-accent">
+                    <StatusPill className="shrink-0 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
                       招聘中
-                    </span>
+                    </StatusPill>
                   </div>
                   {job.skills && job.skills.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mb-2 shrink-0 overflow-hidden">
-                      {job.skills.map((skill, idx) => (
-                        <span key={idx} className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                    <div className="mb-5 flex max-h-16 flex-wrap gap-2 overflow-hidden">
+                      {job.skills.slice(0, 6).map((skill, idx) => (
+                        <SkillPill key={`${job.id}-${skill}-${idx}`}>
                           {skill}
-                        </span>
+                        </SkillPill>
                       ))}
+                      {job.skills.length > 6 ? <SkillPill>+{job.skills.length - 6}</SkillPill> : null}
                     </div>
                   )}
-                  <div className="flex items-center text-sm text-accent font-medium mt-auto">
+                  <div className="mt-auto flex items-center justify-between border-t border-border/70 pt-4 text-sm">
+                    <span className="text-muted-foreground">岗位 ID #{job.id}</span>
+                    <span className="inline-flex items-center font-semibold text-accent">
                     查看详情
-                    <svg className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
+                      <ArrowRight className="ml-1 h-4 w-4 transition-transform duration-200 group-hover:translate-x-1" aria-hidden="true" />
+                    </span>
                   </div>
-                </div>
+                </article>
               </Link>
             ))}
           </div>
 
-          <div className="py-6 flex flex-col items-center gap-4">
+          <div className="flex flex-col items-center gap-4 py-8" aria-live="polite">
             {loadingMore && (
               <div className="flex flex-col items-center gap-2">
-                <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                <span className="text-sm text-muted-foreground">加载中...</span>
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                <span className="text-sm text-muted-foreground">加载中…</span>
               </div>
             )}
             {!hasMore && jobs.length > 0 && (
@@ -171,6 +177,6 @@ export default function UserJobs() {
           </div>
         </div>
       )}
-    </PageLayout>
+    </UserShell>
   );
 }

@@ -1,9 +1,10 @@
-from sqlalchemy import select, update, delete
+from sqlalchemy import func, select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.job_position import JobPosition
 from app.models.job_skill import JobSkill
 from app.models.job_eval_dimension import JobEvalDimension
 from app.models.job_position_tag import JobPositionTag
+from app.models.job_application import JobApplication
 from app.models.sys_tag import SysTag
 from app.models.sys_dept import SysDept
 from app.utils.ai.prompts import DIMENSION_EVAL_PROMPT
@@ -40,7 +41,8 @@ class JobRepository:
         result = await self.db.execute(query)
         return result.scalars().all()
 
-    async def get_list_with_dept(self, skip: int = 0, limit: int = 20, status: int = None, search: str = None) -> list[tuple[JobPosition, SysDept | None]]:
+    async def get_list_with_dept(self, skip: int = 0, limit: int = 20, status: int = None, search: str = None) -> list[
+        tuple[JobPosition, SysDept | None]]:
         """获取岗位列表（员工端，含部门名称和编码）"""
         query = (
             select(JobPosition, SysDept)
@@ -84,7 +86,8 @@ class JobRepository:
             employee_id=employee_id,
             dept_id=dept_id,
             name=name,
-            description=description
+            description=description,
+            status=2,
         )
         self.db.add(job)
         await self.db.commit()
@@ -92,17 +95,17 @@ class JobRepository:
         return job
 
     async def create_with_details(
-        self,
-        employee_id: int,
-        dept_id: int,
-        name: str,
-        description: str,
-        dimensions: list[dict],
-        skills: list[dict],
-        tag_ids: list[int]
+            self,
+            employee_id: int,
+            dept_id: int,
+            name: str,
+            description: str,
+            dimensions: list[dict],
+            skills: list[dict],
+            tag_ids: list[int]
     ) -> JobPosition:
         """原子创建岗位及其维度、技能、标签"""
-        job = JobPosition(employee_id=employee_id, dept_id=dept_id, name=name, description=description)
+        job = JobPosition(employee_id=employee_id, dept_id=dept_id, name=name, description=description, status=2)
         self.db.add(job)
         await self.db.flush()  # 获取 job.id，不提交事务
 
@@ -139,6 +142,15 @@ class JobRepository:
         await self.db.commit()
         return await self.get_by_id(job_id)
 
+    async def count_applications(self, job_id: int) -> int:
+        result = await self.db.execute(
+            select(func.count(JobApplication.id)).where(
+                JobApplication.job_id == job_id,
+                JobApplication.is_deleted == 0,
+            )
+        )
+        return result.scalar() or 0
+
     async def get_skills_by_job_ids(self, job_ids: list[int], limit: int = 5) -> dict[int, list[JobSkill]]:
         """批量获取岗位技能（按skill_type升序，返回前limit个），返回 {job_id: [skills]}"""
         if not job_ids:
@@ -172,7 +184,7 @@ class JobRepository:
         return result.scalars().all()
 
     async def add_dimension(self, job_id: int, dimension_name: str, weight: float,
-                             prompt_template: str, sort_order: int = 0) -> JobEvalDimension:
+                            prompt_template: str, sort_order: int = 0) -> JobEvalDimension:
         template = prompt_template or DIMENSION_EVAL_PROMPT
         dim = JobEvalDimension(
             job_id=job_id,

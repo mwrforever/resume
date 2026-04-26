@@ -58,8 +58,8 @@ describe('UserMyApplications Page', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('岗位ID: 101')).toBeInTheDocument();
-        expect(screen.getByText('岗位ID: 102')).toBeInTheDocument();
+        expect(screen.getByText('岗位 ID: 101')).toBeInTheDocument();
+        expect(screen.getByText('岗位 ID: 102')).toBeInTheDocument();
       });
     });
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { employeeJobsApi } from '@/api/employee/jobs';
@@ -17,6 +17,7 @@ const SKILL_TYPE_OPTIONS = [
 ];
 
 const TAG_TYPE_LABEL: Record<number, string> = { 1: '岗位特性', 2: '福利待遇', 3: '技能加分' };
+const getResponseData = <T,>(res: any, fallback: T): T => res?.data?.data ?? res?.data ?? fallback;
 
 export default function EmployeeJobCreate() {
   const navigate = useNavigate();
@@ -45,9 +46,14 @@ export default function EmployeeJobCreate() {
   const [aiError, setAiError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
+  const aiAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    employeeJobsApi.listAllTags().then(res => setAllTags(res.data ?? []));
+    employeeJobsApi.listAllTags().then(res => setAllTags(getResponseData<ITag[]>(res, [])));
+    return () => {
+      aiAbortRef.current?.abort();
+      aiAbortRef.current = null;
+    };
   }, []);
 
   // ── Dimension helpers ────────────────────────────────────
@@ -87,13 +93,22 @@ export default function EmployeeJobCreate() {
   const removeSkill = (idx: number) => setSkills(prev => prev.filter((_, i) => i !== idx));
 
   // ── AI suggest ────────────────────────────────────────────
+  const cancelAiSuggest = () => {
+    aiAbortRef.current?.abort();
+    aiAbortRef.current = null;
+    setSuggesting(false);
+  };
+
   const handleAiSuggest = async () => {
     if (!name.trim()) return;
+    aiAbortRef.current?.abort();
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
     setSuggesting(true);
     setAiError('');
     try {
-      const res = await employeeJobsApi.aiSuggest({ name, description });
-      const data = res.data?.data;
+      const res = await employeeJobsApi.aiSuggest({ name, description }, controller.signal);
+      const data = getResponseData<any>(res, null);
       if (data) {
         if (data.comprehensive_description) setDescription(data.comprehensive_description);
         if (data.dimensions?.length) {
@@ -111,10 +126,17 @@ export default function EmployeeJobCreate() {
           })));
         }
       }
-    } catch {
+    } catch (err: any) {
+      if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.name === 'AbortError') {
+        setAiError('已中断 AI 生成');
+        return;
+      }
       setAiError('AI 生成失败，请重试');
     } finally {
-      setSuggesting(false);
+      if (aiAbortRef.current === controller) {
+        aiAbortRef.current = null;
+        setSuggesting(false);
+      }
     }
   };
 
@@ -151,7 +173,7 @@ export default function EmployeeJobCreate() {
   return (
     <AdminLayout
       breadcrumbs={[{ label: '岗位管理', href: '/employee/jobs' }, { label: '创建岗位' }]}
-      title="创建岗位"
+      title="创建岗位（待发布）"
     >
       <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
 
@@ -178,12 +200,19 @@ export default function EmployeeJobCreate() {
                 onChange={e => setDeptId(parseInt(e.target.value) || 1)} className="h-10 w-28" />
             </div>
 
-            <Button type="button" variant="outline" onClick={handleAiSuggest}
-              disabled={!name.trim() || suggesting} className="gap-2">
-              {suggesting
-                ? <><Loader2 size={14} className="animate-spin" />AI 生成中…</>
-                : <><Sparkles size={14} />AI 一键生成（描述 + 维度 + 技能）</>}
-            </Button>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={handleAiSuggest}
+                disabled={!name.trim() || suggesting} className="gap-2">
+                {suggesting
+                  ? <><Loader2 size={14} className="animate-spin" />AI 生成中…</>
+                  : <><Sparkles size={14} />AI 一键生成（描述 + 维度 + 技能）</>}
+              </Button>
+              {suggesting && (
+                <Button type="button" variant="outline" onClick={cancelAiSuggest}>
+                  中断
+                </Button>
+              )}
+            </div>
             {aiError && <p className="text-xs text-red-500">{aiError}</p>}
           </CardContent>
         </Card>

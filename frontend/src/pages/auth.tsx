@@ -4,12 +4,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import { userAuthApi } from '@/api/user/auth';
+import { userAuthApi, type AuthResult, type AuthTokens } from '@/api/user/auth';
 import { employeeAuthApi } from '@/api/employee/auth';
 import { useAuthStore } from '@/store/auth';
 
 type AuthMode = 'login' | 'register';
 type UserType = 'user' | 'employee';
+
+function unwrapAuthTokens(result: AuthResult): AuthTokens {
+  return 'data' in result ? result.data : result;
+}
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -108,24 +112,23 @@ export default function Auth() {
     setLoading(true);
     setError('');
     try {
-      let res;
       if (userType === 'user') {
-        res = await userAuthApi.login({
+        const res = unwrapAuthTokens(await userAuthApi.login({
           identifier,
           login_type: 'password',
           password: formData.password,
-        });
+        }));
         setTokens(res.access_token, res.refresh_token);
-        setUserInfo('user', res.user_id);
+        setUserInfo('user', String(res.user_id));
         navigate('/user/jobs');
       } else {
-        res = await employeeAuthApi.login({
+        const res = unwrapAuthTokens(await employeeAuthApi.login({
           identifier,
           login_type: 'password',
           password: formData.password,
-        });
+        }));
         setTokens(res.access_token, res.refresh_token);
-        setUserInfo('employee', res.user_id);
+        setUserInfo('employee', String(res.user_id));
         navigate('/employee/dashboard');
       }
     } catch {
@@ -151,27 +154,26 @@ export default function Auth() {
 
     setLoading(true);
     try {
-      let res;
       if (userType === 'user') {
-        res = await userAuthApi.register({
+        const res = unwrapAuthTokens(await userAuthApi.register({
           email: formData.email,
           password: formData.password,
           code: formData.code,
           real_name: formData.realName,
-        });
-        setTokens(res.data.access_token, res.data.refresh_token);
-        setUserInfo('user', res.data.user_id);
+        }));
+        setTokens(res.access_token, res.refresh_token);
+        setUserInfo('user', String(res.user_id));
         navigate('/user/jobs');
       } else {
-        res = await employeeAuthApi.register({
+        const res = unwrapAuthTokens(await employeeAuthApi.register({
           emp_no: formData.empNo,
           email: formData.email,
           password: formData.password,
           code: formData.code,
           real_name: formData.realName,
-        });
-        setTokens(res.data.access_token, res.data.refresh_token);
-        setUserInfo('employee', res.data.user_id);
+        }));
+        setTokens(res.access_token, res.refresh_token);
+        setUserInfo('employee', String(res.user_id));
         navigate('/employee/dashboard');
       }
     } catch (err: any) {
