@@ -74,9 +74,10 @@ async def get_job_resume_list(
     current_user: dict = Depends(get_current_user)
 ):
     """获取岗位下的简历列表（按匹配度降序）"""
-    resumes, total = await repos["eval"].get_resumes_by_job(job_id, (page-1)*page_size, page_size)
+    resumes, total = await repos["eval"].get_applications_by_job(job_id, (page-1)*page_size, page_size)
     items = [
         {
+            "application_id": r["application_id"],
             "resume_id": r["resume_id"],
             "file_name": r["file_name"],
             "match_id": r.get("match_id"),

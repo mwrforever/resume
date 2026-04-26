@@ -78,7 +78,7 @@ async def update_tag(
     if not tag:
         raise NotFoundError("标签不存在")
     if await repo.count_job_associations(tag_id) > 0:
-        raise ValidationError("已有岗位关联该标签，不允许修改")
+        raise ValidationError("已有评估模板引用该标签，不允许修改")
     payload = body.model_dump(exclude_unset=True)
     if payload:
         tag = await repo.update(tag_id, **payload)
@@ -95,6 +95,6 @@ async def delete_tag(
     if not tag:
         raise NotFoundError("标签不存在")
     if await repo.count_job_associations(tag_id) > 0:
-        raise ValidationError("已有岗位关联该标签，不允许删除")
+        raise ValidationError("已有评估模板引用该标签，不允许删除")
     await repo.delete(tag_id)
     return ApiResponse(message="删除成功")

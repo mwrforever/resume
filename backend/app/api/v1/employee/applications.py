@@ -5,6 +5,8 @@ from app.repositories.application_repo import ApplicationRepository
 from app.repositories.resume_repo import ResumeRepository
 from app.repositories.job_repo import JobRepository
 from app.repositories.eval_repo import EvalRepository
+from app.repositories.eval_template_repo import EvalTemplateRepository
+from app.services.eval_template_service import EvalTemplateService
 from app.api.deps import get_db, get_current_user
 from app.schemas.response import ApiResponse, EmployeeApplicationItem, PageData
 
@@ -17,6 +19,7 @@ STATUS_NAMES = {
     3: "面试中",
     4: "已拒绝",
     5: "已录用",
+    6: "已结束",
 }
 
 
@@ -24,7 +27,8 @@ def get_service(db=Depends(get_db)) -> ApplicationService:
     return ApplicationService(
         ApplicationRepository(db),
         ResumeRepository(db),
-        JobRepository(db)
+        JobRepository(db),
+        EvalTemplateService(EvalTemplateRepository(db)),
     )
 
 
@@ -45,20 +49,20 @@ async def list_applications(
     apps = await service.app_repo.get_all(skip, page_size, status, filter_job_ids)
     total = await service.app_repo.get_all_count(status, filter_job_ids)
 
-    job_names = await service.get_job_names([a.job_id for a in apps])
     resume_file_names = await service.resume_repo.get_file_names_batch([a.resume_id for a in apps])
     eval_repo = EvalRepository(db)
-    match_map = await eval_repo.get_matches_by_pairs_batch([(a.resume_id, a.job_id) for a in apps])
+    match_map = await eval_repo.get_matches_by_application_ids([a.id for a in apps])
 
     items = [
         EmployeeApplicationItem(
             id=a.id,
             user_id=a.user_id,
             job_id=a.job_id,
-            job_name=job_names.get(a.job_id, ""),
+            job_name=(a.job_snapshot or {}).get("job", {}).get("name", ""),
+            job_snapshot=a.job_snapshot,
             resume_id=a.resume_id,
             resume_file_name=resume_file_names.get(a.resume_id),
-            match_id=match_map.get((a.resume_id, a.job_id)),
+            match_id=match_map.get(a.id),
             status=a.status,
             status_name=STATUS_NAMES.get(a.status, "未知"),
             create_time=a.create_time,

@@ -6,15 +6,15 @@ from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_batch_evaluation_triggers_for_resumes(
+async def test_batch_evaluation_triggers_for_applications(
     client: AsyncClient,
     employee_headers: dict
 ):
-    """Test that batch evaluation triggers evaluation for specified resumes"""
+    """Test that batch evaluation triggers evaluation for specified applications"""
     # Submit batch evaluation request
     response = await client.post(
         "/api/v1/employee/evaluations/batch",
-        json={"resume_ids": [1, 2, 3], "job_id": 1},
+        json={"application_ids": [1, 2, 3]},
         headers=employee_headers
     )
     assert response.status_code == 200
@@ -53,7 +53,7 @@ async def test_evaluations_require_auth(client: AsyncClient):
     # Batch evaluation without auth - returns 422 for missing required header
     response = await client.post(
         "/api/v1/employee/evaluations/batch",
-        json={"resume_ids": [1], "job_id": 1}
+        json={"application_ids": [1]}
     )
     # FastAPI returns 422 for missing required Header parameter
     assert response.status_code == 422

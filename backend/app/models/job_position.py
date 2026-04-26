@@ -9,6 +9,7 @@ class JobPosition(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     employee_id = Column(BigInteger, nullable=False, comment="发布人(员工ID)")
     dept_id = Column(BigInteger, nullable=False, comment="所属招聘部门")
+    template_id = Column(BigInteger, comment="评估模板ID")
     name = Column(String(100), nullable=False, comment="岗位名称")
     description = Column(Text, comment="岗位简要描述(用于AI生成技能)")
     status = Column(SmallInteger, nullable=False, default=2, comment="状态：1招聘中，0已下架，2待发布")

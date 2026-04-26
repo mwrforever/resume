@@ -26,14 +26,16 @@ from .sys_user import SysUser
 from .sys_employee import SysEmployee
 from .resume import Resume
 from .job_position import JobPosition
-from .job_eval_dimension import JobEvalDimension
-from .job_skill import JobSkill
 from .job_application import JobApplication
 from .resume_job_match import ResumeJobMatch
 from .resume_eval_detail import ResumeEvalDetail
 from .resume_skill_hit import ResumeSkillHit
 from .sys_dept import SysDept
 from .sys_tag import SysTag
-from .job_position_tag import JobPositionTag
+from .eval_dimension import EvalDimension
+from .eval_template import EvalTemplate
+from .eval_template_dimension import EvalTemplateDimension
+from .eval_template_skill import EvalTemplateSkill
+from .eval_template_tag import EvalTemplateTag
 
-__all__ = ["Base", "SysUser", "async_session_maker","SysEmployee", "Resume", "JobPosition", "JobEvalDimension", "JobSkill", "JobApplication", "ResumeJobMatch", "ResumeEvalDetail", "ResumeSkillHit", "SysDept", "SysTag", "JobPositionTag"]
+__all__ = ["Base", "SysUser", "async_session_maker", "SysEmployee", "Resume", "JobPosition", "JobApplication", "ResumeJobMatch", "ResumeEvalDetail", "ResumeSkillHit", "SysDept", "SysTag", "EvalDimension", "EvalTemplate", "EvalTemplateDimension", "EvalTemplateSkill", "EvalTemplateTag"]

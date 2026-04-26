@@ -1,4 +1,4 @@
-﻿-- ==========================================================
+-- ==========================================================
 -- 基础规范设定
 -- 主键：统一使用 id BIGINT AUTO_INCREMENT
 -- 索引：严禁联合主键，通过联合索引(最左前缀)优化高频查询
@@ -60,16 +60,18 @@ CREATE TABLE `sys_dept`
 -- 8.5 投递申请表
 CREATE TABLE `job_application`
 (
-    `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '投递ID',
-    `user_id`     BIGINT      NOT NULL COMMENT '投递用户ID',
-    `job_id`      BIGINT      NOT NULL COMMENT '岗位ID',
-    `resume_id`   BIGINT      NOT NULL COMMENT '关联简历ID',
-    `status`      TINYINT     NOT NULL DEFAULT 0 COMMENT '状态：0待处理，1已查看，2评估完成，3面试邀请',
-    `is_deleted`  TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
-    `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '投递时间',
-    `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    KEY           `idx_user_time` (`user_id`, `create_time`) COMMENT '用户查看自己的投递记录(按时间排序)',
-    KEY           `idx_job_status` (`job_id`, `status`) COMMENT 'HR查看岗位投递情况'
+    `id`           BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '投递ID',
+    `user_id`      BIGINT   NOT NULL COMMENT '投递用户ID',
+    `job_id`       BIGINT   NOT NULL COMMENT '岗位ID',
+    `resume_id`    BIGINT   NOT NULL COMMENT '关联简历ID',
+    `status`       TINYINT  NOT NULL DEFAULT 0 COMMENT '状态：0待评估，1待处理，2已查看，3面试中，4已拒绝，5已录用，6已结束',
+    `job_snapshot` JSON COMMENT '投递时岗位与评估模板快照',
+    `is_deleted`   TINYINT  NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    `create_time`  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '投递时间',
+    `update_time`  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    KEY            `idx_user_time` (`user_id`, `create_time`) COMMENT '用户查看自己的投递记录(按时间排序)',
+    KEY            `idx_job_status` (`job_id`, `status`) COMMENT 'HR查看岗位投递情况',
+    KEY            `idx_user_job_status` (`user_id`, `job_id`, `status`, `is_deleted`) COMMENT '校验用户同岗位有效投递'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='投递申请表';
 
 -- 8. 岗位表
@@ -78,41 +80,72 @@ CREATE TABLE `job_position`
     `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '岗位ID',
     `employee_id` BIGINT       NOT NULL COMMENT '发布人(员工ID)',
     `dept_id`     BIGINT       NOT NULL COMMENT '所属招聘部门',
+    `template_id` BIGINT                DEFAULT NULL COMMENT '评估模板ID',
     `name`        VARCHAR(100) NOT NULL COMMENT '岗位名称',
     `description` TEXT COMMENT '岗位简要描述(用于AI生成技能)',
-    `status`      TINYINT      NOT NULL DEFAULT 1 COMMENT '状态：2待发布，1招聘中，0已下架',
+    `status`      TINYINT      NOT NULL DEFAULT 2 COMMENT '状态：1招聘中，0已下架，2待发布',
     `is_deleted`  TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
     `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '发布时间',
     `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     KEY           `idx_dept_status` (`dept_id`, `status`, `create_time`) COMMENT 'HR查看本部门有效岗位(支持按时间排序)',
-    KEY           `idx_emp_status` (`employee_id`, `status`) COMMENT '查看我发布的岗位'
+    KEY           `idx_emp_status` (`employee_id`, `status`) COMMENT '查看我发布的岗位',
+    KEY           `idx_template_status` (`template_id`, `status`) COMMENT '查询模板绑定岗位'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='岗位表';
 
--- 9. 岗位评估维度表 (高度自定义评分机制)
-CREATE TABLE `job_eval_dimension`
+-- 9. 全局评估维度表
+CREATE TABLE `eval_dimension`
 (
-    `id`              BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '维度ID',
-    `job_id`          BIGINT        NOT NULL COMMENT '关联岗位ID',
-    `dimension_name`  VARCHAR(50)   NOT NULL COMMENT '维度名称(如：项目经验)',
-    `weight`          DECIMAL(5, 2) NOT NULL COMMENT '权重占比(如0.30)',
-    `prompt_template` TEXT          NOT NULL COMMENT 'LangChain提示词模板',
+    `id`                      BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '维度ID',
+    `dimension_name`          VARCHAR(50) NOT NULL COMMENT '维度名称',
+    `description`             VARCHAR(255)         DEFAULT NULL COMMENT '维度说明',
+    `default_prompt_template` TEXT        NOT NULL COMMENT '默认提示词模板',
+    `sort_order`              INT         NOT NULL DEFAULT 0 COMMENT '排序',
+    `status`                  TINYINT     NOT NULL DEFAULT 1 COMMENT '状态：1正常，0停用',
+    `is_deleted`              TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    `create_time`             DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`             DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    KEY                       `idx_status_sort` (`status`, `sort_order`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='全局评估维度表';
+
+-- 10. 评估模板表
+CREATE TABLE `eval_template`
+(
+    `id`            BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '模板ID',
+    `template_name` VARCHAR(100) NOT NULL COMMENT '模板名称',
+    `description`   VARCHAR(255)          DEFAULT NULL COMMENT '模板说明',
+    `status`        TINYINT      NOT NULL DEFAULT 1 COMMENT '状态：1启用，0停用',
+    `is_deleted`    TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    `create_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    KEY             `idx_status_time` (`status`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估模板表';
+
+-- 10.1 评估模板维度表
+CREATE TABLE `eval_template_dimension`
+(
+    `id`              BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    `template_id`     BIGINT        NOT NULL COMMENT '模板ID',
+    `dimension_id`    BIGINT        NOT NULL COMMENT '全局维度ID',
+    `weight`          DECIMAL(5, 2) NOT NULL COMMENT '权重',
+    `prompt_template` TEXT          NOT NULL COMMENT '提示词模板',
     `sort_order`      INT           NOT NULL DEFAULT 0 COMMENT '排序',
     `create_time`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    KEY               `idx_job_sort` (`job_id`, `sort_order`) COMMENT '按岗位查询维度并按顺序展示'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='岗位评估维度表';
+    UNIQUE KEY `uk_template_dimension` (`template_id`, `dimension_id`),
+    KEY               `idx_template_sort` (`template_id`, `sort_order`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估模板维度表';
 
--- 10. 岗位技能要求表 (必须技能与优选技能及标签)
-CREATE TABLE `job_skill`
+-- 10.2 评估模板技能表
+CREATE TABLE `eval_template_skill`
 (
     `id`              BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '技能ID',
-    `job_id`          BIGINT       NOT NULL COMMENT '关联岗位ID',
+    `template_id`     BIGINT       NOT NULL COMMENT '模板ID',
     `skill_name`      VARCHAR(100) NOT NULL COMMENT '技能名称',
     `skill_type`      TINYINT      NOT NULL COMMENT '技能类型：1必须满足，2优先匹配，3普通技能',
-    `match_label`     VARCHAR(20)           DEFAULT NULL COMMENT '命中标签(优秀/良好/一般，仅type=2有效)',
-    `is_ai_generated` TINYINT      NOT NULL DEFAULT 0 COMMENT '是否AI自动生成',
+    `match_label`     VARCHAR(20)           DEFAULT NULL COMMENT '命中标签',
+    `is_ai_generated` TINYINT      NOT NULL DEFAULT 0 COMMENT '是否AI生成',
     `create_time`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    KEY               `idx_job_type` (`job_id`, `skill_type`) COMMENT '按岗位筛选必须技能或优选技能'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='岗位技能要求表';
+    KEY               `idx_template_type` (`template_id`, `skill_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估模板技能表';
 
 -- 11. 简历基础表 (存储策略模式解耦)
 CREATE TABLE `resume`
@@ -135,18 +168,19 @@ CREATE TABLE `resume`
 CREATE TABLE `resume_job_match`
 (
     `id`                  BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '匹配记录ID',
+    `application_id`      BIGINT        NOT NULL COMMENT '投递记录ID',
     `resume_id`           BIGINT        NOT NULL COMMENT '简历ID',
     `job_id`              BIGINT        NOT NULL COMMENT '岗位ID',
-    `final_score`         DECIMAL(5, 2) NOT NULL DEFAULT 0.00 COMMENT '最终加权匹配得分(0-100)',
+    `final_score`         DECIMAL(5, 2) NOT NULL DEFAULT 0.00 COMMENT '最终得分',
     `final_label`         VARCHAR(20)   NOT NULL DEFAULT '未达标' COMMENT '最终标签',
-    `advantage_comment`    VARCHAR(500) COMMENT '简历对该岗位的整体优点评价(AI生成,精简)',
-    `disadvantage_comment` VARCHAR(500) COMMENT '简历对该岗位的整体缺点评价(AI生成,精简,无缺点时为空字符串)',
-    `is_direct_preferred` TINYINT       NOT NULL DEFAULT 0 COMMENT '是否直接优选命中',
+    `advantage_comment`    VARCHAR(500) COMMENT '整体优点',
+    `disadvantage_comment` VARCHAR(500) COMMENT '整体缺点',
+    `is_direct_preferred` TINYINT       NOT NULL DEFAULT 0 COMMENT '是否直接优选',
     `error_message`       VARCHAR(500)           DEFAULT NULL COMMENT '评估失败时的错误信息',
     `evaluated_at`        DATETIME               DEFAULT NULL COMMENT '评估完成时间',
     `create_time`         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    UNIQUE KEY `uk_resume_job` (`resume_id`, `job_id`) COMMENT '防止同一简历重复适配同一岗位',
-    KEY                   `idx_job_score` (`job_id`, `final_score` DESC) COMMENT '最核心索引：HR查看某岗位简历按匹配度降序(避免filesort)',
+    UNIQUE KEY `uk_application` (`application_id`) COMMENT '一条投递对应一条评估记录',
+    KEY                   `idx_job_score` (`job_id`, `final_score` DESC) COMMENT '按岗位匹配度降序查询',
     KEY                   `idx_job_label` (`job_id`, `final_label`) COMMENT '用于可视化饼图按标签分组统计'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='简历岗位匹配表';
 
@@ -195,7 +229,7 @@ CREATE TABLE `sys_tag`
 (
     `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '标签ID',
     `tag_name`    VARCHAR(50) NOT NULL COMMENT '标签名称',
-    `tag_type`    TINYINT     NOT NULL DEFAULT 1 COMMENT '标签分类：1岗位特性，2福利待遇，3技能加分(与job_skill区分，此处偏向泛标签)',
+    `tag_type`    TINYINT     NOT NULL DEFAULT 1 COMMENT '标签分类：1岗位特性，2福利待遇，3技能加分(与模板技能区分，此处偏向泛标签)',
     `sort_order`  INT         NOT NULL DEFAULT 0 COMMENT '排序',
     `status`      TINYINT     NOT NULL DEFAULT 1 COMMENT '状态：1正常，0停用',
     `color`       VARCHAR(20) NOT NULL DEFAULT 'default' COMMENT '标签颜色',
@@ -205,13 +239,13 @@ CREATE TABLE `sys_tag`
     KEY           `idx_type_status` (`tag_type`, `status`) COMMENT '按分类筛选可用标签'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='标签字典表';
 
-CREATE TABLE `job_position_tag`
+CREATE TABLE `eval_template_tag`
 (
     `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
-    `job_id`      BIGINT   NOT NULL COMMENT '岗位ID',
+    `template_id` BIGINT   NOT NULL COMMENT '模板ID',
     `tag_id`      BIGINT   NOT NULL COMMENT '标签ID',
-    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '关联时间',
-    UNIQUE KEY `uk_job_tag` (`job_id`, `tag_id`) COMMENT '防止重复打标签',
-    KEY           `idx_tag_id` (`tag_id`) COMMENT '用于反向查询带有某标签的所有岗位'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='岗位标签关联表';
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    UNIQUE KEY `uk_template_tag` (`template_id`, `tag_id`) COMMENT '防止重复打标签',
+    KEY           `idx_tag_id` (`tag_id`) COMMENT '用于反向查询引用某标签的模板'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估模板标签关联表';
 

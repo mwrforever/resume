@@ -12,7 +12,8 @@ class ApplicationRepository:
             select(JobApplication).where(
                 JobApplication.user_id == user_id,
                 JobApplication.job_id == job_id,
-                JobApplication.is_deleted == 0
+                JobApplication.is_deleted == 0,
+                JobApplication.status != 6,
             )
         )
         return result.scalar_one_or_none()
@@ -55,8 +56,8 @@ class ApplicationRepository:
         )
         return result.scalar() or 0
 
-    async def create(self, user_id: int, job_id: int, resume_id: int) -> JobApplication:
-        app = JobApplication(user_id=user_id, job_id=job_id, resume_id=resume_id)
+    async def create(self, user_id: int, job_id: int, resume_id: int, job_snapshot: dict) -> JobApplication:
+        app = JobApplication(user_id=user_id, job_id=job_id, resume_id=resume_id, job_snapshot=job_snapshot)
         self.db.add(app)
         await self.db.commit()
         await self.db.refresh(app)

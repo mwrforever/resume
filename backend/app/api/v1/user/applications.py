@@ -3,6 +3,8 @@ from app.services.application_service import ApplicationService
 from app.repositories.application_repo import ApplicationRepository
 from app.repositories.resume_repo import ResumeRepository
 from app.repositories.job_repo import JobRepository
+from app.repositories.eval_template_repo import EvalTemplateRepository
+from app.services.eval_template_service import EvalTemplateService
 from app.schemas.application import ApplyRequest
 from app.api.deps import get_db, get_current_user
 from app.schemas.response import ApiResponse, ApplicationItem, ApplicationDetail, PageData
@@ -14,7 +16,8 @@ def get_service(db=Depends(get_db)) -> ApplicationService:
     return ApplicationService(
         ApplicationRepository(db),
         ResumeRepository(db),
-        JobRepository(db)
+        JobRepository(db),
+        EvalTemplateService(EvalTemplateRepository(db)),
     )
 
 
@@ -45,11 +48,13 @@ async def list_my_applications(
     apps, total = await service.get_user_applications(user_id, skip, page_size)
     items = []
     for a in apps:
-        job = await service.job_repo.get_by_id(a.job_id)
+        snapshot = a.job_snapshot or {}
+        job_snapshot = snapshot.get("job", {})
         items.append({
             "id": a.id,
             "job_id": a.job_id,
-            "job_name": job.name if job else None,
+            "job_name": job_snapshot.get("name"),
+            "job_snapshot": snapshot,
             "resume_id": a.resume_id,
             "status": a.status,
             "status_name": service.get_status_name(a.status),
@@ -87,6 +92,8 @@ async def get_my_application(
     detail = {
         "id": app.id,
         "job_id": app.job_id,
+        "job_name": (app.job_snapshot or {}).get("job", {}).get("name"),
+        "job_snapshot": app.job_snapshot,
         "resume_id": app.resume_id,
         "status": app.status,
         "status_name": service.get_status_name(app.status),

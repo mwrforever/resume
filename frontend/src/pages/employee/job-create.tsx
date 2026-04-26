@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { employeeJobsApi } from '@/api/employee/jobs';
+import { createTemplateFromDraft } from '@/utils/eval-template';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -149,13 +150,18 @@ export default function EmployeeJobCreate() {
     if (!weightOk) { setFormError(`维度权重之和须为 1.00，当前为 ${totalWeight.toFixed(2)}`); return; }
     setSubmitting(true);
     try {
+      const template = await createTemplateFromDraft({
+        templateName: `${name}评估模板`,
+        description,
+        dimensions,
+        skills,
+        tagIds: selectedTagIds,
+      });
       await employeeJobsApi.create({
         name,
         description,
         dept_id: deptId,
-        dimensions,
-        skills,
-        tag_ids: selectedTagIds,
+        template_id: template.id,
       });
       navigate('/employee/jobs');
     } catch (err: any) {

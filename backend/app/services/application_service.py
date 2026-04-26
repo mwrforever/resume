@@ -3,6 +3,7 @@ from app.repositories.resume_repo import ResumeRepository
 from app.repositories.job_repo import JobRepository
 from app.models.job_application import JobApplication
 from app.core.exceptions import NotFoundError, ValidationError
+from app.services.eval_template_service import EvalTemplateService
 
 
 class ApplicationService:
@@ -14,12 +15,20 @@ class ApplicationService:
         3: "面试中",
         4: "已拒绝",
         5: "已录用",
+        6: "已结束",
     }
 
-    def __init__(self, app_repo: ApplicationRepository, resume_repo: ResumeRepository, job_repo: JobRepository):
+    def __init__(
+        self,
+        app_repo: ApplicationRepository,
+        resume_repo: ResumeRepository,
+        job_repo: JobRepository,
+        template_service: EvalTemplateService,
+    ):
         self.app_repo = app_repo
         self.resume_repo = resume_repo
         self.job_repo = job_repo
+        self.template_service = template_service
 
     async def create_application(self, user_id: int, job_id: int, resume_id: int) -> JobApplication:
         """创建投递记录"""
@@ -29,13 +38,27 @@ class ApplicationService:
             raise NotFoundError("岗位不存在")
         if job.status != 1:
             raise ValidationError("岗位已下架")
+        if not job.template_id:
+            raise ValidationError("岗位未绑定评估模板，无法投递")
 
         # 验证简历是否属于当前用户
         resume = await self.resume_repo.get_by_id(resume_id)
         if not resume or resume.user_id != user_id:
             raise NotFoundError("简历不存在")
 
-        return await self.app_repo.create(user_id, job_id, resume_id)
+        existing = await self.app_repo.get_by_user_and_job(user_id, job_id)
+        if existing:
+            raise ValidationError("该岗位已有未结束投递记录")
+        template_detail = await self.template_service.validate_template_available(job.template_id)
+        row = await self.job_repo.get_by_id_with_dept(job_id)
+        dept = row[1] if row else None
+        snapshot = await self.template_service.build_job_snapshot(
+            job,
+            template_detail,
+            dept_name=dept.dept_name if dept else None,
+            dept_code=dept.dept_code if dept else None,
+        )
+        return await self.app_repo.create(user_id, job_id, resume_id, snapshot)
 
     async def get_user_applications(self, user_id: int, skip: int = 0, limit: int = 20) -> tuple[list, int]:
         """获取用户的投递列表"""

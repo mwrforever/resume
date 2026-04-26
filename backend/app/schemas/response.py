@@ -15,6 +15,7 @@ class JobItem(BaseItem):
     id: int
     name: str
     description: Optional[str] = None
+    template_id: Optional[int] = None
     status: int
     dept_name: Optional[str] = None
     dept_code: Optional[str] = None
@@ -27,6 +28,7 @@ class JobDetail(BaseItem):
     id: int
     name: str
     description: Optional[str] = None
+    template_id: Optional[int] = None
     status: int
     create_time: Optional[datetime] = None
     skills: list[str] = []
@@ -50,6 +52,8 @@ class ResumeDetail(ResumeItem):
 class ApplicationItem(BaseItem):
     id: int
     job_id: int
+    job_name: Optional[str] = None
+    job_snapshot: Optional[dict] = None
     resume_id: int
     status: int
     status_name: str
@@ -68,6 +72,7 @@ class EmployeeApplicationItem(BaseItem):
     user_id: int
     job_id: int
     job_name: str = ""
+    job_snapshot: Optional[dict] = None
     resume_id: int
     resume_file_name: Optional[str] = None
     match_id: Optional[int] = None
@@ -78,6 +83,9 @@ class EmployeeApplicationItem(BaseItem):
 
 class EvalResult(BaseItem):
     match_id: int
+    application_id: int
+    resume_id: int
+    job_id: int
     final_score: float
     final_label: str
     advantage_comment: Optional[str] = None

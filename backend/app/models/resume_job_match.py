@@ -7,6 +7,7 @@ class ResumeJobMatch(Base):
     __tablename__ = "resume_job_match"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
+    application_id = Column(BigInteger, nullable=False, comment="投递记录ID")
     resume_id = Column(BigInteger, nullable=False, comment="简历ID")
     job_id = Column(BigInteger, nullable=False, comment="岗位ID")
     final_score = Column(DECIMAL(5, 2), nullable=False, default=0.00, comment="最终得分")

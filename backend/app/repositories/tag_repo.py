@@ -1,6 +1,6 @@
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.job_position_tag import JobPositionTag
+from app.models.eval_template_tag import EvalTemplateTag
 from app.models.sys_tag import SysTag
 
 
@@ -81,6 +81,6 @@ class TagRepository:
 
     async def count_job_associations(self, tag_id: int) -> int:
         result = await self.db.execute(
-            select(func.count(JobPositionTag.id)).where(JobPositionTag.tag_id == tag_id)
+            select(func.count(EvalTemplateTag.id)).where(EvalTemplateTag.tag_id == tag_id)
         )
         return result.scalar() or 0

@@ -71,6 +71,7 @@ export interface Job {
   name: string;
   description?: string;
   dept_id: number;
+  template_id?: number;
   status: number;
   create_time: string;
   resume_count?: number;
@@ -101,6 +102,26 @@ export interface ITag {
   sort_order?: number;
   status?: number;
   job_count?: number;
+}
+
+export interface IEvalTemplateDimension extends IDimension {
+  dimension_id: number;
+}
+
+export interface IEvalTemplateSkill extends ISkill {
+  is_ai_generated?: number;
+}
+
+export interface IEvalTemplate {
+  id: number;
+  template_name: string;
+  description?: string;
+  status: number;
+  job_count?: number;
+  published_job_count?: number;
+  dimensions: IEvalTemplateDimension[];
+  skills: IEvalTemplateSkill[];
+  tags: ITag[];
 }
 
 export interface IAiSuggestDimension {

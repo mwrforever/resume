@@ -4,9 +4,11 @@ from app.api.deps import get_db, get_current_user
 from app.models.job_position import JobPosition
 from app.models.sys_dept import SysDept
 from app.repositories.job_repo import JobRepository
-from app.schemas.job import JobCreate, JobUpdate, DimensionItem, SkillItem, TagItem
-from app.schemas.response import ApiResponse, JobItem, PageData
+from app.repositories.eval_template_repo import EvalTemplateRepository
 from app.services.job_service import JobService
+from app.services.eval_template_service import EvalTemplateService
+from app.schemas.response import ApiResponse, JobItem, PageData
+from app.schemas.job import JobCreate, JobUpdate
 
 router = APIRouter()
 
@@ -15,13 +17,17 @@ def get_job_service(db=Depends(get_db)) -> JobService:
     return JobService(JobRepository(db))
 
 
-async def _build_job_item(job: "JobPosition", dept: "SysDept | None", service: JobService) -> JobItem:
-    item = JobItem.model_validate(job)
-    if dept:
-        item.dept_name = dept.dept_name
-        item.dept_code = dept.dept_code
-    item.resume_count = await service.job_repo.count_applications(job.id)
-    return item
+def get_template_service(db=Depends(get_db)) -> EvalTemplateService:
+    return EvalTemplateService(EvalTemplateRepository(db))
+
+
+async def _build_job_item(job, dept, service: JobService) -> JobItem:
+    data = JobItem.model_validate(job).model_dump()
+    data["dept_name"] = dept.dept_name if dept else None
+    data["dept_code"] = dept.dept_code if dept else None
+    data["resume_count"] = await service.job_repo.count_applications(job.id)
+    data["template_id"] = job.template_id
+    return JobItem.model_validate(data)
 
 
 @router.get("", response_model=ApiResponse[PageData])
@@ -49,6 +55,7 @@ async def list_employee_jobs(
 async def get_job(
     job_id: int,
     service: JobService = Depends(get_job_service),
+    template_service: EvalTemplateService = Depends(get_template_service),
     current_user: dict = Depends(get_current_user)
 ):
     """员工端：获取岗位详情（含维度、技能、标签）"""
@@ -58,13 +65,16 @@ async def get_job(
         raise HTTPException(status_code=404, detail="岗位不存在")
     job, dept = row
     item = await _build_job_item(job, dept, service)
-    dimensions = await service.job_repo.get_dimensions(job_id)
-    skills = await service.job_repo.get_job_skills(job_id)
-    tags = await service.job_repo.get_job_tags(job_id)
     data = item.model_dump()
-    data["dimensions"] = [DimensionItem.model_validate(d).model_dump() for d in dimensions]
-    data["skills"] = [SkillItem.model_validate(s).model_dump() for s in skills]
-    data["tags"] = [TagItem.model_validate(t).model_dump() for t in tags]
+    data["template"] = await template_service.repo.get_template_detail(job.template_id) if job.template_id else None
+    if data["template"]:
+        data["dimensions"] = data["template"]["dimensions"]
+        data["skills"] = data["template"]["skills"]
+        data["tags"] = data["template"]["tags"]
+    else:
+        data["dimensions"] = []
+        data["skills"] = []
+        data["tags"] = []
     return ApiResponse(data=data)
 
 
@@ -81,9 +91,7 @@ async def create_job(
         job.dept_id,
         job.name,
         job.description,
-        dimensions=[d.model_dump() for d in job.dimensions],
-        skills=[s.model_dump() for s in job.skills],
-        tag_ids=job.tag_ids,
+        template_id=job.template_id,
     )
     return ApiResponse(code=200, message="创建成功", data={"id": new_job.id})
 
@@ -93,19 +101,23 @@ async def update_job(
     job_id: int,
     job: JobUpdate,
     service: JobService = Depends(get_job_service),
+    template_service: EvalTemplateService = Depends(get_template_service),
     current_user: dict = Depends(get_current_user)
 ):
     """员工端：编辑岗位"""
     payload = job.model_dump(exclude_unset=True)
-    tag_ids = payload.pop("tag_ids", None)
-    is_status_only = set(payload.keys()) <= {"status"} and tag_ids is None
+    is_status_only = set(payload.keys()) <= {"status"}
+    if payload.get("status") == 1:
+        current_job = await service.get_job_by_id(job_id)
+        if not current_job.template_id:
+            from app.core.exceptions import ValidationError
+            raise ValidationError("岗位发布前必须绑定评估模板")
+        await template_service.validate_template_available(current_job.template_id)
     if not is_status_only:
         await service.ensure_job_editable(job_id)
     if payload:
         await service.update_job(job_id, **payload)
-    if tag_ids is not None:
-        await service.job_repo.set_job_tags(job_id, tag_ids)
-    return ApiResponse(code=200, message="更新成功")
+    return ApiResponse(message="更新成功")
 
 
 @router.delete("/{job_id}", response_model=ApiResponse)

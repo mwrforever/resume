@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from pathlib import Path
 from typing import Any
 
@@ -49,35 +50,47 @@ def _get_resume(session: Session, resume_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def _get_job(session: Session, job_id: int) -> dict[str, Any] | None:
+def _get_application(session: Session, application_id: int) -> dict[str, Any] | None:
     row = session.execute(
-        text("SELECT id, name, description FROM job_position WHERE id = :job_id AND is_deleted = 0"),
-        {"job_id": job_id},
+        text(
+            "SELECT id, resume_id, job_id, job_snapshot FROM job_application "
+            "WHERE id = :application_id AND is_deleted = 0"
+        ),
+        {"application_id": application_id},
     ).mappings().first()
-    return dict(row) if row else None
+    if not row:
+        return None
+    data = dict(row)
+    snapshot = data.get("job_snapshot")
+    if isinstance(snapshot, str):
+        data["job_snapshot"] = json.loads(snapshot)
+    return data
 
 
-def _get_match_id(session: Session, resume_id: int, job_id: int) -> int | None:
+def _get_match_id(session: Session, application_id: int) -> int | None:
     row = session.execute(
         text(
             "SELECT id FROM resume_job_match "
-            "WHERE resume_id = :resume_id AND job_id = :job_id"
+            "WHERE application_id = :application_id"
         ),
-        {"resume_id": resume_id, "job_id": job_id},
+        {"application_id": application_id},
     ).mappings().first()
     return int(row["id"]) if row else None
 
 
-def _get_or_create_match_id(session: Session, resume_id: int, job_id: int) -> int:
-    match_id = _get_match_id(session, resume_id, job_id)
+def _get_or_create_match_id(session: Session, application_id: int, resume_id: int, job_id: int) -> int:
+    match_id = _get_match_id(session, application_id)
     if match_id:
         return match_id
     session.execute(
-        text("INSERT INTO resume_job_match (resume_id, job_id) VALUES (:resume_id, :job_id)"),
-        {"resume_id": resume_id, "job_id": job_id},
+        text(
+            "INSERT INTO resume_job_match (application_id, resume_id, job_id) "
+            "VALUES (:application_id, :resume_id, :job_id)"
+        ),
+        {"application_id": application_id, "resume_id": resume_id, "job_id": job_id},
     )
     session.flush()
-    created_match_id = _get_match_id(session, resume_id, job_id)
+    created_match_id = _get_match_id(session, application_id)
     if not created_match_id:
         raise ValidationError("创建评估匹配记录失败")
     return created_match_id
@@ -88,40 +101,27 @@ def _delete_old_results(session: Session, match_id: int) -> None:
     session.execute(text("DELETE FROM resume_skill_hit WHERE match_id = :match_id"), {"match_id": match_id})
 
 
-def _get_dimensions(session: Session, job_id: int) -> list[dict[str, Any]]:
-    rows = session.execute(
-        text(
-            "SELECT id, dimension_name, weight, prompt_template "
-            "FROM job_eval_dimension WHERE job_id = :job_id ORDER BY sort_order ASC"
-        ),
-        {"job_id": job_id},
-    ).mappings().all()
+def _get_dimensions(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
-            "dimension_id": int(row["id"]),
+            "dimension_id": int(row["dimension_id"]),
             "dimension_name": row["dimension_name"],
             "weight": float(row["weight"]),
             "prompt_template": row["prompt_template"],
         }
-        for row in rows
+        for row in snapshot.get("dimensions", [])
     ]
 
 
-def _get_skills(session: Session, job_id: int) -> list[dict[str, Any]]:
-    rows = session.execute(
-        text(
-            "SELECT id, skill_name, skill_type "
-            "FROM job_skill WHERE job_id = :job_id ORDER BY skill_type ASC"
-        ),
-        {"job_id": job_id},
-    ).mappings().all()
+def _get_skills(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
             "skill_id": int(row["id"]),
             "skill": row["skill_name"],
             "type": int(row["skill_type"]),
         }
-        for row in rows
+        for row in snapshot.get("skills", [])
+        if row.get("id") is not None
     ]
 
 
@@ -281,7 +281,16 @@ def _update_match_error(session: Session, match_id: int, error_message: str) -> 
     )
 
 
-def _evaluate_resume(session: Session, resume_id: int, job_id: int) -> dict[str, Any]:
+def _evaluate_application(session: Session, application_id: int) -> dict[str, Any]:
+    application = _get_application(session, application_id)
+    if not application:
+        raise NotFoundError("投递记录不存在")
+    if not application.get("job_snapshot"):
+        raise ValidationError("投递快照不存在，无法评估")
+
+    resume_id = int(application["resume_id"])
+    job_id = int(application["job_id"])
+    snapshot = application["job_snapshot"]
     resume = _get_resume(session, resume_id)
     if not resume:
         raise NotFoundError("简历不存在或未解析")
@@ -289,18 +298,15 @@ def _evaluate_resume(session: Session, resume_id: int, job_id: int) -> dict[str,
     if not resume_text:
         raise NotFoundError("简历不存在或未解析")
 
-    job = _get_job(session, job_id)
-    if not job:
-        raise NotFoundError("岗位不存在")
-
-    match_id = _get_or_create_match_id(session, resume_id, job_id)
+    job = snapshot.get("job", {})
+    match_id = _get_or_create_match_id(session, application_id, resume_id, job_id)
     _delete_old_results(session, match_id)
 
-    dimensions = _get_dimensions(session, job_id)
+    dimensions = _get_dimensions(snapshot)
     if not dimensions:
-        raise NotFoundError("岗位未配置评估维度，无法评估")
+        raise NotFoundError("投递快照未包含评估维度，无法评估")
 
-    skills = _get_skills(session, job_id)
+    skills = _get_skills(snapshot)
     session.commit()
 
     eval_result = ResumeEvalChain().evaluate(
@@ -356,7 +362,7 @@ def _evaluate_resume(session: Session, resume_id: int, job_id: int) -> dict[str,
     _save_skill_hits(session, match_id, skills, eval_result.get("skill_hits", []))
     session.commit()
 
-    logger.info(f"简历 {resume_id} 评估完成，岗位 {job_id}，得分 {total_weighted_score}")
+    logger.info(f"投递 {application_id} 评估完成，岗位 {job_id}，得分 {total_weighted_score}")
     return {
         "match_id": match_id,
         "final_score": total_weighted_score,
@@ -367,8 +373,8 @@ def _evaluate_resume(session: Session, resume_id: int, job_id: int) -> dict[str,
     }
 
 
-def _sync_eval_logic(resume_ids: list[int], job_id: int) -> dict[str, Any]:
-    logger.info(f"开始评估 {len(resume_ids)} 份简历，岗位 {job_id}")
+def _sync_eval_logic(application_ids: list[int]) -> dict[str, Any]:
+    logger.info(f"开始评估 {len(application_ids)} 条投递")
 
     engine = _create_sync_engine()
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -376,36 +382,36 @@ def _sync_eval_logic(resume_ids: list[int], job_id: int) -> dict[str, Any]:
 
     try:
         with session_factory() as session:
-            for resume_id in resume_ids:
+            for application_id in application_ids:
                 try:
-                    result = _evaluate_resume(session, resume_id, job_id)
+                    result = _evaluate_application(session, application_id)
                     results.append({
-                        "resume_id": resume_id,
+                        "application_id": application_id,
                         "status": "success",
                         "match_id": result.get("match_id"),
                     })
                 except Exception as exc:
                     session.rollback()
-                    match_id = _get_match_id(session, resume_id, job_id)
+                    match_id = _get_match_id(session, application_id)
                     if match_id:
                         _update_match_error(session, match_id, str(exc))
                         session.commit()
-                    logger.error(f"简历 {resume_id} 评估失败: {exc}")
+                    logger.error(f"投递 {application_id} 评估失败: {exc}")
                     results.append({
-                        "resume_id": resume_id,
+                        "application_id": application_id,
                         "status": "failed",
                         "error": str(exc),
                     })
     finally:
         engine.dispose()
 
-    return {"status": "completed", "count": len(resume_ids), "results": results}
+    return {"status": "completed", "count": len(application_ids), "results": results}
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60, ignore_result=True)
-def run_evaluation_task(self, resume_ids: list[int], job_id: int) -> dict[str, Any]:
+def run_evaluation_task(self, application_ids: list[int]) -> dict[str, Any]:
     try:
-        return _sync_eval_logic(resume_ids, job_id)
+        return _sync_eval_logic(application_ids)
     except Exception as exc:
         logger.error(f"批量评估任务失败，准备重试: {exc}")
         raise self.retry(exc=exc)
