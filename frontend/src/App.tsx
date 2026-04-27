@@ -15,10 +15,14 @@ import EmployeeJobCreate from '@/pages/employee/job-create';
 import EmployeeJobEdit from '@/pages/employee/job-edit';
 import EmployeeJobPreview from '@/pages/employee/job-preview';
 import EmployeeTags from '@/pages/employee/tags';
+import EmployeeEvalTemplates from '@/pages/employee/eval-templates';
+import EmployeeEvalDimensions from '@/pages/employee/eval-dimensions';
 import EmployeeResumes from '@/pages/employee/resumes';
 import EmployeeApplications from '@/pages/employee/applications';
 import EmployeeEvaluations from '@/pages/employee/evaluations';
 import EmployeeEvalDetail from '@/pages/employee/eval-detail';
+import EmployeeAccountManagement from '@/pages/employee/account-management';
+import EmployeeDeptManagement from '@/pages/employee/dept-management';
 
 // Shared pages
 import Auth from '@/pages/auth';
@@ -51,10 +55,16 @@ export default function App() {
         <Route path="/employee/jobs/:id/preview" element={<ProtectedRoute userType="employee"><EmployeeJobPreview /></ProtectedRoute>} />
         <Route path="/employee/jobs/:id/edit" element={<ProtectedRoute userType="employee"><EmployeeJobEdit /></ProtectedRoute>} />
         <Route path="/employee/tags" element={<ProtectedRoute userType="employee"><EmployeeTags /></ProtectedRoute>} />
+        <Route path="/employee/eval-templates" element={<ProtectedRoute userType="employee"><EmployeeEvalTemplates /></ProtectedRoute>} />
+        <Route path="/employee/eval-dimensions" element={<ProtectedRoute userType="employee"><EmployeeEvalDimensions /></ProtectedRoute>} />
         <Route path="/employee/resumes" element={<ProtectedRoute userType="employee"><EmployeeResumes /></ProtectedRoute>} />
         <Route path="/employee/applications" element={<ProtectedRoute userType="employee"><EmployeeApplications /></ProtectedRoute>} />
         <Route path="/employee/evaluations" element={<ProtectedRoute userType="employee"><EmployeeEvaluations /></ProtectedRoute>} />
         <Route path="/employee/evaluations/:id" element={<ProtectedRoute userType="employee"><EmployeeEvalDetail /></ProtectedRoute>} />
+        <Route path="/employee/user-management" element={<ProtectedRoute userType="employee"><EmployeeAccountManagement tab="users" /></ProtectedRoute>} />
+        <Route path="/employee/employee-management" element={<ProtectedRoute userType="employee"><EmployeeAccountManagement tab="employees" /></ProtectedRoute>} />
+        <Route path="/employee/dept-management" element={<ProtectedRoute userType="employee"><EmployeeDeptManagement /></ProtectedRoute>} />
+        <Route path="/employee/account-management" element={<Navigate to="/employee/user-management" replace />} />
 
         <Route path="/" element={<Navigate to="/user/jobs" replace />} />
       </Routes>
