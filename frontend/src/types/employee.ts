@@ -25,6 +25,7 @@ export interface MatchDistribution {
 
 // 简历评估状态
 export interface ResumeWithEvaluation {
+  application_id: number;
   resume_id: number;
   file_name: string;
   match_id?: number;

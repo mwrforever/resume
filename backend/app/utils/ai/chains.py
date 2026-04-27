@@ -1,12 +1,15 @@
 import json
 import re
 import logging
+from langchain_core.runnables import RunnableLambda, RunnableParallel
 from app.utils.ai.client import llm_complete
 from app.utils.ai.prompts import (
+    COMPREHENSIVE_EVAL_PROMPT,
+    DIMENSION_EVAL_WITH_SKILLS_PROMPT,
     EVAL_DIMENSION_AI_SUGGEST_PROMPT,
     JOB_AI_SUGGEST_PROMPT,
     JOB_TEMPLATE_AI_SUGGEST_PROMPT,
-    RESUME_EVAL_PROMPT,
+    SKILL_MATCH_PROMPT,
     TEMPLATE_SKILL_AI_SUGGEST_PROMPT,
 )
 
@@ -114,18 +117,133 @@ class TemplateSkillAiSuggestChain:
 
 
 class ResumeEvalChain:
-    """一次性生成简历维度评估、技能命中和综合评价"""
-
     def evaluate(self, resume_text: str, job_name: str, job_description: str, dimensions: list, skills: list) -> dict:
-        prompt = RESUME_EVAL_PROMPT.format(
+        skill_hits = RunnableLambda(lambda _: self._match_skills(resume_text, job_name, job_description, skills)).invoke({})
+        dimension_results = self._evaluate_dimensions(resume_text, job_name, job_description, dimensions, skill_hits)
+        weighted_score = self._calculate_weighted_score(dimension_results, dimensions)
+        comprehensive = RunnableLambda(
+            lambda _: self._evaluate_comprehensive(job_name, job_description, skill_hits, dimension_results, weighted_score)
+        ).invoke({})
+        return {
+            "dimensions": dimension_results,
+            "skill_hits": skill_hits,
+            "weighted_score": weighted_score,
+            "final_score": comprehensive.get("final_score"),
+            "final_label": str(comprehensive.get("final_label") or ""),
+            "advantage_comment": str(comprehensive.get("advantage_comment") or ""),
+            "disadvantage_comment": str(comprehensive.get("disadvantage_comment") or ""),
+        }
+
+    def _match_skills(self, resume_text: str, job_name: str, job_description: str, skills: list) -> list[dict]:
+        prompt = SKILL_MATCH_PROMPT.format(
             job_name=job_name,
             job_description=job_description or "",
-            dimensions=json.dumps(dimensions, ensure_ascii=False),
             skills=json.dumps(skills, ensure_ascii=False),
             resume_text=resume_text,
         )
-        raw = llm_complete(prompt, max_retries=2, timeout=120)
+        result = self._call_json(prompt, timeout=90)
+        hits = result.get("skill_hits")
+        return hits if isinstance(hits, list) else []
+
+    def _evaluate_dimensions(
+        self,
+        resume_text: str,
+        job_name: str,
+        job_description: str,
+        dimensions: list,
+        skill_hits: list[dict],
+    ) -> list[dict]:
+        if not dimensions:
+            return []
+        parallel = RunnableParallel({
+            str(index): RunnableLambda(
+                lambda _, dimension=dimension: self._evaluate_dimension(
+                    resume_text,
+                    job_name,
+                    job_description,
+                    dimension,
+                    skill_hits,
+                )
+            )
+            for index, dimension in enumerate(dimensions)
+        })
+        results = parallel.invoke({})
+        return [results[str(index)] for index in range(len(dimensions))]
+
+    def _evaluate_dimension(
+        self,
+        resume_text: str,
+        job_name: str,
+        job_description: str,
+        dimension: dict,
+        skill_hits: list[dict],
+    ) -> dict:
+        prompt = DIMENSION_EVAL_WITH_SKILLS_PROMPT.format(
+            job_name=job_name,
+            job_description=job_description or "",
+            dimension=json.dumps({
+                "dimension_name": dimension.get("dimension_name"),
+                "weight": dimension.get("weight"),
+            }, ensure_ascii=False),
+            skill_hits=json.dumps(skill_hits, ensure_ascii=False),
+            prompt_template=str(dimension.get("prompt_template") or ""),
+            resume_text=resume_text,
+        )
+        result = self._call_json(prompt, timeout=120)
+        return {
+            "dimension_name": str(result.get("dimension_name") or dimension.get("dimension_name") or ""),
+            "score": self._normalize_score(result.get("score")),
+            "advantage": str(result.get("advantage") or ""),
+            "disadvantage": str(result.get("disadvantage") or ""),
+        }
+
+    def _evaluate_comprehensive(
+        self,
+        job_name: str,
+        job_description: str,
+        skill_hits: list[dict],
+        dimension_results: list[dict],
+        weighted_score: float,
+    ) -> dict:
+        prompt = COMPREHENSIVE_EVAL_PROMPT.format(
+            job_name=job_name,
+            job_description=job_description or "",
+            skill_hits=json.dumps(skill_hits, ensure_ascii=False),
+            dimension_results=json.dumps(dimension_results, ensure_ascii=False),
+            weighted_score=round(weighted_score, 2),
+        )
+        result = self._call_json(prompt, timeout=120)
+        if result.get("final_score") is None:
+            raise ValueError("AI综合评估结果缺少最终分数")
+        return {
+            "final_score": self._normalize_score(result.get("final_score")),
+            "final_label": str(result.get("final_label") or ""),
+            "advantage_comment": str(result.get("advantage_comment") or ""),
+            "disadvantage_comment": str(result.get("disadvantage_comment") or ""),
+        }
+
+    def _calculate_weighted_score(self, dimension_results: list[dict], dimensions: list[dict]) -> float:
+        total_weighted_score = 0.0
+        total_weight = 0.0
+        for result, dimension in zip(dimension_results, dimensions):
+            weight = float(dimension.get("weight") or 0)
+            total_weighted_score += self._normalize_score(result.get("score")) * weight
+            total_weight += weight
+        if total_weight <= 0:
+            return 0.0
+        original_total = sum(float(dimension.get("weight") or 0) for dimension in dimensions)
+        return (total_weighted_score / total_weight) * original_total
+
+    def _call_json(self, prompt: str, timeout: int) -> dict:
+        raw = llm_complete(prompt, max_retries=2, timeout=timeout)
         return self._parse_result(raw)
+
+    def _normalize_score(self, value: object) -> float:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(100.0, score))
 
     def _parse_result(self, result: str) -> dict:
         match = re.search(r'\{.*\}', result, re.DOTALL)

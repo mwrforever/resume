@@ -172,7 +172,7 @@ export default function EmployeeApplications() {
   const handleEvaluate = async (app: Application) => {
     setEvaluatingIds((prev) => new Set(prev).add(app.id));
     try {
-      await employeeEvaluationsApi.batchEvaluate({ resume_ids: [app.resume_id], job_id: app.job_id });
+      await employeeEvaluationsApi.batchEvaluate({ application_ids: [app.id] });
       setSubmittedIds((prev) => new Set(prev).add(app.id));
       setTimeout(() => setSubmittedIds((prev) => { const next = new Set(prev); next.delete(app.id); return next; }), 4000);
       loadApplications(true);
@@ -201,8 +201,7 @@ export default function EmployeeApplications() {
     setBatchSubmitting(true);
     try {
       await employeeEvaluationsApi.batchEvaluate({
-        resume_ids: selectedApps.map((app) => app.resume_id),
-        job_id: selectedJobIds[0],
+        application_ids: selectedApps.map((app) => app.id),
       });
       setSubmittedIds((prev) => {
         const next = new Set(prev);

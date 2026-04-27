@@ -336,37 +336,27 @@ def _evaluate_application(session: Session, application_id: int) -> dict[str, An
     if not completed_results:
         raise ValidationError("AI评估结果缺少有效维度")
 
-    total_weighted_score = 0.0
-    total_weight = 0.0
-    for result, dim in zip(dimension_results, dimensions):
-        if result["is_completed"]:
-            total_weighted_score += result["score"] * dim["weight"]
-            total_weight += dim["weight"]
-
-    if total_weight > 0:
-        original_total = sum(dim["weight"] for dim in dimensions)
-        total_weighted_score = (total_weighted_score / total_weight) * original_total
-
-    label = _get_label(total_weighted_score)
+    final_score = _normalize_score(eval_result.get("final_score"))
+    final_label = str(eval_result.get("final_label") or "") or _get_label(final_score)
     advantage_comment = str(eval_result.get("advantage_comment") or "")
     disadvantage_comment = str(eval_result.get("disadvantage_comment") or "")
 
     _update_match_result(
         session,
         match_id,
-        total_weighted_score,
-        label,
+        final_score,
+        final_label,
         advantage_comment,
         disadvantage_comment,
     )
     _save_skill_hits(session, match_id, skills, eval_result.get("skill_hits", []))
     session.commit()
 
-    logger.info(f"投递 {application_id} 评估完成，岗位 {job_id}，得分 {total_weighted_score}")
+    logger.info(f"投递 {application_id} 评估完成，岗位 {job_id}，得分 {final_score}")
     return {
         "match_id": match_id,
-        "final_score": total_weighted_score,
-        "final_label": label,
+        "final_score": final_score,
+        "final_label": final_label,
         "dimensions": dimension_results,
         "advantage_comment": advantage_comment,
         "disadvantage_comment": disadvantage_comment,

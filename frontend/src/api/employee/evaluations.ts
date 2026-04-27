@@ -1,7 +1,7 @@
 import client from '@/api/client';
 
 export const employeeEvaluationsApi = {
-  batchEvaluate: (data: { resume_ids: number[]; job_id: number }) =>
+  batchEvaluate: (data: { application_ids: number[] }) =>
     client.post('/employee/evaluations/batch', data),
 
   getEvaluation: (matchId: number) =>

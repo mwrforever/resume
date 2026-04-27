@@ -17,7 +17,7 @@ export default function EmployeeEvaluations() {
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [distribution, setDistribution] = useState<MatchDistribution | null>(null);
   const [resumes, setResumes] = useState<ResumeWithEvaluation[]>([]);
-  const [selectedResumeIds, setSelectedResumeIds] = useState<number[]>([]);
+  const [selectedApplicationIds, setSelectedApplicationIds] = useState<number[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -56,8 +56,8 @@ export default function EmployeeEvaluations() {
     loadData();
   }, [selectedJobId]);
 
-  const toggleResume = (id: number) => {
-    setSelectedResumeIds(prev =>
+  const toggleApplication = (id: number) => {
+    setSelectedApplicationIds(prev =>
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
   };
@@ -65,15 +65,14 @@ export default function EmployeeEvaluations() {
   const [submitted, setSubmitted] = useState(false);
 
   const handleBatchEvaluate = async () => {
-    if (!selectedJobId || selectedResumeIds.length === 0) return;
+    if (!selectedJobId || selectedApplicationIds.length === 0) return;
     setSubmitting(true);
     try {
       await employeeEvaluationsApi.batchEvaluate({
-        resume_ids: selectedResumeIds,
-        job_id: selectedJobId,
+        application_ids: selectedApplicationIds,
       });
       setSubmitted(true);
-      setSelectedResumeIds([]);
+      setSelectedApplicationIds([]);
       setTimeout(() => setSubmitted(false), 4000);
       const [distRes, listRes] = await Promise.all([
         employeeAnalyticsApi.getMatchDistribution(selectedJobId),
@@ -88,10 +87,10 @@ export default function EmployeeEvaluations() {
     }
   };
 
-  const allSelected = resumes.length > 0 && resumes.every((r) => selectedResumeIds.includes(r.resume_id));
+  const allSelected = resumes.length > 0 && resumes.every((r) => selectedApplicationIds.includes(r.application_id));
   const toggleAll = () => {
-    if (allSelected) setSelectedResumeIds([]);
-    else setSelectedResumeIds(resumes.map((r) => r.resume_id));
+    if (allSelected) setSelectedApplicationIds([]);
+    else setSelectedApplicationIds(resumes.map((r) => r.application_id));
   };
 
   return (
@@ -140,10 +139,10 @@ export default function EmployeeEvaluations() {
           <Card>
             <CardContent className="p-4">
               <p className="text-xs text-[#64748B] mb-2">已选</p>
-              <p className="text-2xl font-bold tabular-nums text-[#1E293B]">{selectedResumeIds.length}</p>
+              <p className="text-2xl font-bold tabular-nums text-[#1E293B]">{selectedApplicationIds.length}</p>
               <p className="text-xs text-[#64748B] mb-4">份简历</p>
               <Button
-                disabled={!selectedJobId || selectedResumeIds.length === 0 || submitting}
+                disabled={!selectedJobId || selectedApplicationIds.length === 0 || submitting}
                 onClick={handleBatchEvaluate}
                 className="w-full bg-[#2563EB] hover:bg-[#1D4ED8] text-white"
               >
@@ -197,14 +196,14 @@ export default function EmployeeEvaluations() {
                   </tr>
                 ) : (
                   resumes.map((resume) => {
-                    const checked = selectedResumeIds.includes(resume.resume_id);
+                    const checked = selectedApplicationIds.includes(resume.application_id);
                     return (
-                      <tr key={resume.resume_id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors">
+                      <tr key={resume.application_id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors">
                         <td className="px-4 py-3">
                           <input
                             type="checkbox"
                             checked={checked}
-                            onChange={() => toggleResume(resume.resume_id)}
+                            onChange={() => toggleApplication(resume.application_id)}
                             aria-label={`选择简历 ${resume.file_name}`}
                             className="rounded border-[#CBD5E1] accent-[#2563EB]"
                           />
