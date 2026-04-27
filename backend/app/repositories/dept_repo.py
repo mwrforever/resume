@@ -1,4 +1,4 @@
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job_position import JobPosition
@@ -136,9 +136,15 @@ class DeptRepository:
     async def get_children_recursive(self, parent_id: int) -> list[int]:
         """递归获取所有子部门 ID"""
         result = await self.db.execute(
-            select(SysDept.id).where(SysDept.parent_id == parent_id, SysDept.is_deleted == 0)
+            text("""
+                WITH RECURSIVE dept_tree AS (
+                    SELECT id FROM sys_dept WHERE parent_id = :parent_id AND is_deleted = 0
+                    UNION ALL
+                    SELECT d.id FROM sys_dept d JOIN dept_tree dt ON d.parent_id = dt.id
+                    WHERE d.is_deleted = 0
+                )
+                SELECT id FROM dept_tree
+            """),
+            {"parent_id": parent_id}
         )
-        child_ids = list(result.scalars().all())
-        for cid in child_ids[:]:
-            child_ids.extend(await self.get_children_recursive(cid))
-        return child_ids
+        return [row[0] for row in result.fetchall()]
