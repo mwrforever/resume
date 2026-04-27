@@ -255,7 +255,7 @@ function TreeNode({ node, level, selectedParentId, onAddChild, onEdit, onDelete 
       </div>
       {hasChildren && expanded && (
         <div>
-          {node.children!.map(child => (
+          {node.children?.map(child => (
             <TreeNode
               key={child.id}
               node={child}
@@ -281,7 +281,7 @@ interface DeptTreeViewProps {
 }
 
 function DeptTreeView({ treeData, selectedParentId, onAddChild, onEdit, onDelete }: DeptTreeViewProps) {
-  const rootNodes = treeData.filter(n => n.parent_id === 0 || n.parent_id === undefined || n.parent_id === null);
+  const rootNodes = treeData.filter(n => n.parent_id === 0);
 
   return (
     <div className="rounded-lg border border-[#E2E8F0] bg-white">
@@ -362,7 +362,7 @@ export default function DeptManagement() {
       loadTreeData();
     }
     loadDeptList();
-  }, [viewMode, loadTableData, loadTreeData, loadDeptList]);
+  }, [viewMode, loadTableData, loadTreeData]);
 
   useEffect(() => { setPage(1); }, [debouncedSearch, status]);
 
@@ -378,6 +378,9 @@ export default function DeptManagement() {
         await loadTreeData();
       }
       await loadDeptList();
+    } catch (err) {
+      console.error('Failed to delete dept', err);
+      alert('删除失败，请重试');
     } finally {
       setDeleting(false);
     }
