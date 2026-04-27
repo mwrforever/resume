@@ -87,6 +87,16 @@ export interface IDimension {
   sort_order?: number;
 }
 
+export interface IEvalDimension {
+  id: number;
+  dimension_name: string;
+  description?: string;
+  default_prompt_template: string;
+  sort_order: number;
+  status: number;
+  template_count?: number;
+}
+
 export interface ISkill {
   id?: number;
   skill_name: string;
@@ -142,6 +152,24 @@ export interface IAiSuggestResult {
   skills: IAiSuggestSkill[];
 }
 
+export interface IEvalDimensionAiSuggestion {
+  dimension_name: string;
+  description: string;
+  default_prompt_template: string;
+}
+
+export interface IJobTemplateAiSuggestion {
+  template_name: string;
+  description: string;
+  dimensions: Array<{
+    dimension_name: string;
+    description?: string;
+    weight: number;
+    prompt_template: string;
+  }>;
+  skills: IEvalTemplateSkill[];
+}
+
 // 投递记录
 export interface Application {
   id: number;
@@ -152,4 +180,57 @@ export interface Application {
   status: number;
   status_name: string;
   create_time: string;
+}
+
+export interface IManagedUser {
+  id: number;
+  email: string;
+  real_name: string;
+  status: number;
+  create_time?: string;
+  update_time?: string;
+}
+
+export interface IManagedEmployee {
+  id: number;
+  emp_no?: string;
+  real_name: string;
+  email?: string;
+  phone?: string;
+  status: number;
+  create_time?: string;
+  update_time?: string;
+}
+
+export interface IEmployeeImportResult {
+  success_count: number;
+  fail_count: number;
+  errors: Array<{ line: number; message: string }>;
+}
+
+// 部门
+export interface IDeptItem {
+  id: number;
+  parent_id: number;
+  dept_code?: string;
+  dept_name: string;
+  leader_id?: number;
+  leader_name?: string;
+  employee_count: number;
+  sort_order: number;
+  status: number;
+  create_time?: string;
+  update_time?: string;
+}
+
+export interface IDeptImportResult {
+  success_count: number;
+  fail_count: number;
+  errors: Array<{ line: number; message: string }>;
+}
+
+export interface IDeptTreeItem extends IDeptItem {
+  key: number;
+  title: string;
+  children: IDeptTreeItem[];
 }
