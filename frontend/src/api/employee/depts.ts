@@ -15,13 +15,13 @@ export const deptApi = {
     client.get('/employee/depts', { params }),
 
   getDept: (id: number) =>
-    client.get(`/employee/depts/${id}`) as Promise<{ code: number; data: IDeptItem }>,
+    client.get(`/employee/depts/${id}`),
 
   createDept: (data: DeptPayload) =>
-    client.post('/employee/depts', data) as Promise<{ code: number; data: IDeptItem }>,
+    client.post('/employee/depts', data),
 
   updateDept: (id: number, data: Partial<DeptPayload>) =>
-    client.put(`/employee/depts/${id}`, data) as Promise<{ code: number; data: IDeptItem }>,
+    client.put(`/employee/depts/${id}`, data),
 
   deleteDept: (id: number) =>
     client.delete(`/employee/depts/${id}`),
@@ -29,9 +29,9 @@ export const deptApi = {
   importDepts: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    return client.post('/employee/depts/import', formData) as Promise<{ code: number; data: IDeptImportResult }>;
+    return client.post('/employee/depts/import', formData);
   },
 
   getDeptTree: () =>
-    client.get('/employee/depts/tree') as Promise<{ code: number; data: IDeptTreeItem[] }>,
+    client.get('/employee/depts/tree'),
 };
