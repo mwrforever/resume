@@ -11,12 +11,14 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useDebounce } from '@/hooks/use-debounce';
 import type { IDeptItem, IDeptImportResult, IDeptTreeItem } from '@/types/employee';
-import { Info, Loader2, Pencil, Plus, Trash2, Upload, X, ChevronRight, ChevronDown, View, List } from 'lucide-react';
+import { Info, Loader2, Pencil, Plus, Trash2, Upload, X, ChevronRight, ChevronDown, View, List, RefreshCw } from 'lucide-react';
 
 type DialogMode = 'create' | 'edit';
 type ViewMode = 'table' | 'tree';
+type LeaderOption = { id: number; real_name: string };
 
 const DEFAULT_PAGE_SIZE = 10;
+const REFRESH_THROTTLE_MS = 1500;
 
 function getResponseData<T>(res: unknown, fallback: T): T {
   const wrapper = res as { data?: T | { data?: T } };
@@ -41,11 +43,12 @@ interface DeptDialogProps {
   item: IDeptItem | null;
   parentId?: number | null;
   deptList: IDeptItem[];
+  leaderOptions: LeaderOption[];
   onClose: () => void;
   onSuccess: () => void;
 }
 
-function DeptDialog({ mode, item, parentId, deptList, onClose, onSuccess }: DeptDialogProps) {
+function DeptDialog({ mode, item, parentId, deptList, leaderOptions, onClose, onSuccess }: DeptDialogProps) {
   const [form, setForm] = useState({
     dept_code: item?.dept_code ?? '',
     dept_name: item?.dept_name ?? '',
@@ -122,15 +125,29 @@ function DeptDialog({ mode, item, parentId, deptList, onClose, onSuccess }: Dept
               <Input type="number" value={form.sort_order} onChange={e => setForm({ ...form, sort_order: Number(e.target.value) })} />
             </div>
           </div>
-          <div className="space-y-1.5">
-            <Label>状态</Label>
-            <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
-              <SelectTrigger>{form.status === '1' ? '启用' : '禁用'}</SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">启用</SelectItem>
-                <SelectItem value="0">禁用</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label>负责人</Label>
+              <Select value={String(form.leader_id)} onValueChange={(v) => setForm({ ...form, leader_id: Number(v) })}>
+                <SelectTrigger>{leaderOptions.find(item => item.id === form.leader_id)?.real_name ?? '未指定'}</SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">未指定</SelectItem>
+                  {leaderOptions.map(leader => (
+                    <SelectItem key={leader.id} value={String(leader.id)}>{leader.real_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>状态</Label>
+              <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+                <SelectTrigger>{form.status === '1' ? '启用' : '禁用'}</SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">启用</SelectItem>
+                  <SelectItem value="0">禁用</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           {error && <p className="text-sm text-red-500">{error}</p>}
           <div className="flex justify-end gap-2 pt-1">
@@ -140,6 +157,60 @@ function DeptDialog({ mode, item, parentId, deptList, onClose, onSuccess }: Dept
             </Button>
           </div>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface LeaderAssignDialogProps {
+  dept: IDeptItem;
+  leaderOptions: LeaderOption[];
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function LeaderAssignDialog({ dept, leaderOptions, onClose, onSuccess }: LeaderAssignDialogProps) {
+  const [selectedLeaderId, setSelectedLeaderId] = useState(dept.leader_id ?? 0);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await deptApi.updateDept(dept.id, { leader_id: selectedLeaderId || null });
+      onSuccess();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose} containerClassName="max-w-lg">
+      <DialogContent>
+        <div className="mb-4 flex items-center justify-between">
+          <DialogTitle className="mb-0">指定负责人</DialogTitle>
+          <button onClick={onClose} aria-label="关闭" className="text-[#94A3B8] hover:text-[#1E293B] focus-visible:outline-none">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="mb-3 text-sm text-[#64748B]">部门：{dept.dept_name}</div>
+        <div className="max-h-80 overflow-auto rounded-lg border border-[#E2E8F0]">
+          <label className="flex cursor-pointer items-center gap-3 border-b border-[#F1F5F9] px-4 py-3 text-sm hover:bg-[#F8FAFC]">
+            <input type="radio" checked={selectedLeaderId === 0} onChange={() => setSelectedLeaderId(0)} />
+            <span className="text-[#64748B]">未指定负责人</span>
+          </label>
+          {leaderOptions.map(leader => (
+            <label key={leader.id} className="flex cursor-pointer items-center gap-3 border-b border-[#F1F5F9] px-4 py-3 text-sm hover:bg-[#F8FAFC] last:border-b-0">
+              <input type="radio" checked={selectedLeaderId === leader.id} onChange={() => setSelectedLeaderId(leader.id)} />
+              <span className="font-medium text-[#1E293B]">{leader.real_name}</span>
+            </label>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>关闭</Button>
+          <Button type="button" onClick={handleSave} disabled={saving} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white">
+            {saving ? <><Loader2 size={14} className="mr-1.5 animate-spin" />保存中…</> : '保存'}
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -185,10 +256,10 @@ function ImportPanel({ onImported }: ImportPanelProps) {
           导入说明
           <div className="pointer-events-none absolute left-0 top-full z-20 mt-2 hidden w-[360px] rounded-lg border border-[#E2E8F0] bg-white p-3 text-sm text-[#334155] shadow-lg group-hover:block">
             <p className="font-medium text-[#1E293B]">部门批量导入仅支持 CSV 文件</p>
-            <p className="mt-1">必填列：dept_code、dept_name、parent_id、sort_order、status。</p>
-            <p className="mt-1">parent_id 为 0 表示顶级部门，其他为上级部门 ID。</p>
-            <p className="mt-1">status 只能填写 1（启用）或 0（禁用）。</p>
-            <p className="mt-1">CSV 表头：dept_code,dept_name,parent_id,leader_id,sort_order,status。</p>
+            <p className="mt-1">必填列：dept_code、dept_name。</p>
+            <p className="mt-1">parent_code 为空表示顶级部门，填写时必须是已存在或本次导入中的部门编码。</p>
+            <p className="mt-1">leader_name 为空表示无负责人，填写时必须匹配已有员工姓名。</p>
+            <p className="mt-1">CSV 表头：dept_code,dept_name,parent_code,leader_name,sort_order,status。</p>
           </div>
         </div>
       </div>
@@ -206,13 +277,12 @@ function ImportPanel({ onImported }: ImportPanelProps) {
 interface TreeNodeProps {
   node: IDeptTreeItem;
   level: number;
-  selectedParentId: number | null;
   onAddChild: (parentId: number) => void;
   onEdit: (item: IDeptItem) => void;
   onDelete: (item: IDeptItem) => void;
 }
 
-function TreeNode({ node, level, selectedParentId, onAddChild, onEdit, onDelete }: TreeNodeProps) {
+function TreeNode({ node, level, onAddChild, onEdit, onDelete }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children && node.children.length > 0;
 
@@ -260,7 +330,6 @@ function TreeNode({ node, level, selectedParentId, onAddChild, onEdit, onDelete 
               key={child.id}
               node={child}
               level={level + 1}
-              selectedParentId={selectedParentId}
               onAddChild={onAddChild}
               onEdit={onEdit}
               onDelete={onDelete}
@@ -274,13 +343,12 @@ function TreeNode({ node, level, selectedParentId, onAddChild, onEdit, onDelete 
 
 interface DeptTreeViewProps {
   treeData: IDeptTreeItem[];
-  selectedParentId: number | null;
   onAddChild: (parentId: number) => void;
   onEdit: (item: IDeptItem) => void;
   onDelete: (item: IDeptItem) => void;
 }
 
-function DeptTreeView({ treeData, selectedParentId, onAddChild, onEdit, onDelete }: DeptTreeViewProps) {
+function DeptTreeView({ treeData, onAddChild, onEdit, onDelete }: DeptTreeViewProps) {
   const rootNodes = treeData.filter(n => n.parent_id === 0);
 
   return (
@@ -293,7 +361,6 @@ function DeptTreeView({ treeData, selectedParentId, onAddChild, onEdit, onDelete
             key={node.id}
             node={node}
             level={0}
-            selectedParentId={selectedParentId}
             onAddChild={onAddChild}
             onEdit={onEdit}
             onDelete={onDelete}
@@ -308,6 +375,7 @@ export default function DeptManagement() {
   const [depts, setDepts] = useState<IDeptItem[]>([]);
   const [deptTree, setDeptTree] = useState<IDeptTreeItem[]>([]);
   const [deptList, setDeptList] = useState<IDeptItem[]>([]);
+  const [leaderOptions, setLeaderOptions] = useState<LeaderOption[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -316,8 +384,11 @@ export default function DeptManagement() {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [dialogState, setDialogState] = useState<{ mode: DialogMode; item: IDeptItem | null; parentId?: number | null } | null>(null);
+  const [leaderTarget, setLeaderTarget] = useState<IDeptItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<IDeptItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const lastRefreshAtRef = useRef(0);
   const debouncedSearch = useDebounce(search, 350);
 
   const loadTableData = useCallback(async () => {
@@ -355,14 +426,27 @@ export default function DeptManagement() {
     }
   }, []);
 
-  useEffect(() => {
-    if (viewMode === 'table') {
-      loadTableData();
-    } else {
-      loadTreeData();
+  const loadLeaderOptions = useCallback(async () => {
+    try {
+      const res = await deptApi.listLeaderOptions();
+      const data = getResponseData<LeaderOption[]>(res, []);
+      setLeaderOptions(data);
+    } catch (err) {
+      console.error('Failed to load leader options', err);
     }
-    loadDeptList();
-  }, [viewMode, loadTableData, loadTreeData]);
+  }, []);
+
+  const reloadCurrentView = useCallback(async () => {
+    if (viewMode === 'table') {
+      await Promise.all([loadTableData(), loadDeptList(), loadLeaderOptions()]);
+      return;
+    }
+    await Promise.all([loadTreeData(), loadDeptList(), loadLeaderOptions()]);
+  }, [loadDeptList, loadLeaderOptions, loadTableData, loadTreeData, viewMode]);
+
+  useEffect(() => {
+    reloadCurrentView();
+  }, [reloadCurrentView]);
 
   useEffect(() => { setPage(1); }, [debouncedSearch, status]);
 
@@ -372,12 +456,7 @@ export default function DeptManagement() {
     try {
       await deptApi.deleteDept(deleteTarget.id);
       setDeleteTarget(null);
-      if (viewMode === 'table') {
-        await loadTableData();
-      } else {
-        await loadTreeData();
-      }
-      await loadDeptList();
+      await reloadCurrentView();
     } catch (err) {
       console.error('Failed to delete dept', err);
       alert('删除失败，请重试');
@@ -398,12 +477,27 @@ export default function DeptManagement() {
     setDeleteTarget(item);
   };
 
+  const handleRefresh = async () => {
+    const now = Date.now();
+    if (refreshing || now - lastRefreshAtRef.current < REFRESH_THROTTLE_MS) return;
+    lastRefreshAtRef.current = now;
+    setRefreshing(true);
+    try {
+      await reloadCurrentView();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <AdminLayout
       breadcrumbs={[{ label: '部门管理' }]}
       title="部门管理"
       headerAction={
         <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={handleRefresh} disabled={refreshing || loading} className="bg-white">
+            <RefreshCw size={16} className={`mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />刷新
+          </Button>
           <div className="flex rounded-lg border border-[#E2E8F0] bg-white p-0.5">
             <button
               onClick={() => setViewMode('table')}
@@ -434,7 +528,7 @@ export default function DeptManagement() {
             </Select>
           </div>
 
-          <ImportPanel onImported={loadTableData} />
+          <ImportPanel onImported={reloadCurrentView} />
 
           <div className="overflow-hidden rounded-lg border border-[#E2E8F0] bg-white">
             <table className="w-full text-sm">
@@ -460,7 +554,7 @@ export default function DeptManagement() {
                   <tr key={item.id} className="border-b border-[#F1F5F9] transition-colors hover:bg-[#F8FAFC]">
                     <td className="px-4 py-3 text-[#64748B]">{item.dept_code || '-'}</td>
                     <td className="px-4 py-3 font-medium text-[#1E293B]">{item.dept_name}</td>
-                    <td className="px-4 py-3 text-[#64748B]">{deptList.find(d => d.id === item.parent_id)?.dept_name || (item.parent_id === 0 ? '-' : '-')}</td>
+                    <td className="px-4 py-3 text-[#64748B]">{item.parent_name || deptList.find(d => d.id === item.parent_id)?.dept_name || '-'}</td>
                     <td className="px-4 py-3 text-[#64748B]">{item.leader_name || '-'}</td>
                     <td className="px-4 py-3 text-[#64748B]">{item.employee_count}</td>
                     <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
@@ -468,6 +562,9 @@ export default function DeptManagement() {
                       <div className="flex items-center justify-end gap-2">
                         <button onClick={() => handleEdit(item)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[#2563EB] hover:bg-blue-50 hover:underline">
                           <Pencil size={13} />编辑
+                        </button>
+                        <button onClick={() => setLeaderTarget(item)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[#2563EB] hover:bg-blue-50 hover:underline">
+                          负责人
                         </button>
                         <button onClick={() => handleDeleteClick(item)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50 hover:underline">
                           <Trash2 size={13} />删除
@@ -490,7 +587,6 @@ export default function DeptManagement() {
             </div>
             <DeptTreeView
               treeData={deptTree}
-              selectedParentId={dialogState?.parentId ?? null}
               onAddChild={handleAddChild}
               onEdit={handleEdit}
               onDelete={handleDeleteClick}
@@ -505,12 +601,22 @@ export default function DeptManagement() {
           item={dialogState.item}
           parentId={dialogState.parentId}
           deptList={deptList}
+          leaderOptions={leaderOptions}
           onClose={() => setDialogState(null)}
           onSuccess={() => {
             setDialogState(null);
-            loadTableData();
-            loadTreeData();
-            loadDeptList();
+            reloadCurrentView();
+          }}
+        />
+      )}
+      {leaderTarget && (
+        <LeaderAssignDialog
+          dept={leaderTarget}
+          leaderOptions={leaderOptions}
+          onClose={() => setLeaderTarget(null)}
+          onSuccess={() => {
+            setLeaderTarget(null);
+            reloadCurrentView();
           }}
         />
       )}

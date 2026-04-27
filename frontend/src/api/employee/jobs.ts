@@ -7,7 +7,7 @@ export const employeeJobsApi = {
     client.get(`/employee/jobs/${id}`),
   create: (data: {
     name: string;
-    description?: string;
+    description: string;
     dept_id: number;
     template_id?: number | null;
   }) =>

@@ -6,7 +6,7 @@ const getResponseData = <T,>(res: any, fallback: T): T => res?.data?.data ?? res
 interface ICreateTemplateDraft {
   templateName: string;
   description?: string;
-  dimensions: IDimension[];
+  dimensions: Array<IDimension & { description?: string }>;
   skills?: ISkill[];
   tagIds?: number[];
 }
@@ -16,6 +16,7 @@ export async function createTemplateFromDraft(draft: ICreateTemplateDraft): Prom
     draft.dimensions.map((dimension, index) =>
       employeeEvalTemplatesApi.createDimension({
         dimension_name: dimension.dimension_name,
+        description: dimension.description,
         default_prompt_template: dimension.prompt_template || undefined,
         sort_order: dimension.sort_order ?? index,
         status: 1,

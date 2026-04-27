@@ -40,6 +40,14 @@ async def get_dept_tree(
     return ApiResponse(data=data)
 
 
+@router.get("/leader-options", response_model=ApiResponse)
+async def list_leader_options(
+    service: DeptService = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse:
+    return ApiResponse(data=await service.list_leader_options())
+
+
 @router.post("/import", response_model=ApiResponse[DeptImportResult])
 async def import_depts(
     file: UploadFile = File(...),

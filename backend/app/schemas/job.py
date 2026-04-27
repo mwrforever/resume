@@ -33,7 +33,7 @@ class TagUpdate(BaseModel):
 
 class JobCreate(BaseModel):
     name: str
-    description: Optional[str] = None
+    description: str
     dept_id: int
     template_id: Optional[int] = None
 

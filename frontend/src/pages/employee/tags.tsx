@@ -15,15 +15,24 @@ import type { ITag } from '@/types/employee';
 
 const TAG_TYPE_LABEL: Record<number, string> = { 1: '岗位特性', 2: '福利待遇', 3: '技能加分' };
 const TAG_COLOR_OPTIONS = [
-  { value: 'default', label: '默认' },
-  { value: 'blue', label: '蓝色' },
-  { value: 'green', label: '绿色' },
-  { value: 'amber', label: '琥珀色' },
-  { value: 'red', label: '红色' },
-  { value: 'purple', label: '紫色' },
+  { value: 'default', label: '默认', className: 'border-[#CBD5E1] bg-[#F8FAFC] text-[#475569]' },
+  { value: 'blue', label: '蓝色', className: 'border-blue-200 bg-blue-50 text-blue-700' },
+  { value: 'green', label: '绿色', className: 'border-green-200 bg-green-50 text-green-700' },
+  { value: 'amber', label: '琥珀色', className: 'border-amber-200 bg-amber-50 text-amber-700' },
+  { value: 'red', label: '红色', className: 'border-red-200 bg-red-50 text-red-700' },
+  { value: 'purple', label: '紫色', className: 'border-purple-200 bg-purple-50 text-purple-700' },
 ];
 const DEFAULT_PAGE_SIZE = 10;
 const getResponseData = <T,>(res: any, fallback: T): T => res?.data?.data ?? res?.data ?? fallback;
+
+function TagColorBadge({ color }: { color: string }) {
+  const option = TAG_COLOR_OPTIONS.find(item => item.value === color) ?? TAG_COLOR_OPTIONS[0];
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${option.className}`}>
+      {option.label}
+    </span>
+  );
+}
 
 interface TagDialogProps {
   mode: 'create' | 'edit' | 'view';
@@ -113,10 +122,12 @@ function TagDialog({ mode, tag, onClose, onSuccess }: TagDialogProps) {
             <div className="space-y-1.5">
               <Label>颜色</Label>
               <Select value={color} onValueChange={(value) => { if (!readonly) setColor(value); }}>
-                <SelectTrigger className={readonly ? 'pointer-events-none opacity-60' : undefined}><SelectValue /></SelectTrigger>
+                <SelectTrigger className={readonly ? 'pointer-events-none opacity-60' : undefined}><TagColorBadge color={color} /></SelectTrigger>
                 <SelectContent>
                   {TAG_COLOR_OPTIONS.map(option => (
-                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    <SelectItem key={option.value} value={option.value}>
+                      <TagColorBadge color={option.value} />
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -243,7 +254,7 @@ export default function EmployeeTags() {
                   <td className="px-4 py-3 font-medium text-[#1E293B]"><TagsIcon size={14} className="mr-1.5 inline text-[#94A3B8]" />{tag.tag_name}</td>
                   <td className="px-4 py-3 text-[#64748B]">{TAG_TYPE_LABEL[tag.tag_type] ?? `类型${tag.tag_type}`}</td>
                   <td className="px-4 py-3">{tag.status === 1 ? <Badge className="bg-green-100 text-green-700 border-green-200">正常</Badge> : <Badge className="bg-[#F1F5F9] text-[#64748B] border-[#E2E8F0]">停用</Badge>}</td>
-                  <td className="px-4 py-3 text-[#64748B]">{tag.color}</td>
+                  <td className="px-4 py-3"><TagColorBadge color={tag.color} /></td>
                   <td className="px-4 py-3 text-[#64748B] tabular-nums">{tag.sort_order ?? 0}</td>
                   <td className="px-4 py-3 text-[#64748B] tabular-nums">{tag.job_count ?? 0}</td>
                   <td className="px-4 py-3">

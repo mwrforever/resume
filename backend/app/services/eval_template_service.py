@@ -1,7 +1,10 @@
+import asyncio
 from datetime import datetime
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.repositories.eval_template_repo import EvalTemplateRepository
+from app.schemas.eval_template import EvalDimensionAiSuggestRequest, JobTemplateAiSuggestRequest, TemplateSkillAiSuggestRequest
+from app.utils.ai.chains import EvalDimensionAiSuggestChain, JobTemplateAiSuggestChain, TemplateSkillAiSuggestChain
 
 
 class EvalTemplateService:
@@ -36,6 +39,81 @@ class EvalTemplateService:
             sort_order=body.sort_order,
             status=body.status,
         )
+
+    async def suggest_dimension(self, body: EvalDimensionAiSuggestRequest) -> dict[str, str]:
+        result = await asyncio.to_thread(
+            EvalDimensionAiSuggestChain().suggest,
+            body.job_name,
+            body.job_description or "",
+        )
+        if not result.get("dimension_name"):
+            raise ValidationError("AI 未返回维度建议，请补充岗位信息后重试")
+        return result
+
+    async def suggest_template_skills(self, body: TemplateSkillAiSuggestRequest) -> dict:
+        dimensions = [item.model_dump() for item in body.dimensions if item.dimension_name.strip()]
+        if not dimensions:
+            raise ValidationError("请先选择评估维度")
+        result = await asyncio.to_thread(TemplateSkillAiSuggestChain().suggest, dimensions)
+        skills = []
+        for item in result.get("skills", []):
+            skill_name = str(item.get("skill_name") or "").strip()
+            if not skill_name:
+                continue
+            skill_type = item.get("skill_type") if item.get("skill_type") in [1, 2, 3] else 3
+            skills.append({
+                "skill_name": skill_name,
+                "skill_type": skill_type,
+                "match_label": str(item.get("match_label") or "").strip() or None,
+                "is_ai_generated": 1,
+            })
+        if not skills:
+            raise ValidationError("AI 未返回技能建议，请调整维度后重试")
+        return {"skills": skills}
+
+    async def suggest_job_template(self, body: JobTemplateAiSuggestRequest) -> dict:
+        if not body.job_name.strip():
+            raise ValidationError("请先填写岗位名称")
+        result = await asyncio.to_thread(
+            JobTemplateAiSuggestChain().suggest,
+            body.job_name,
+            body.job_description or "",
+        )
+        dimensions = []
+        for item in result.get("dimensions", []):
+            dimension_name = str(item.get("dimension_name") or "").strip()
+            if not dimension_name:
+                continue
+            dimensions.append({
+                "dimension_name": dimension_name,
+                "description": str(item.get("description") or "").strip(),
+                "weight": float(item.get("weight") or 0),
+                "prompt_template": str(item.get("prompt_template") or "").strip(),
+            })
+        self.validate_template_detail(dimensions)
+        skills = []
+        for item in result.get("skills", []):
+            skill_name = str(item.get("skill_name") or item.get("skill") or "").strip()
+            if not skill_name:
+                continue
+            skill_type = item.get("skill_type") if item.get("skill_type") in [1, 2, 3] else item.get("type")
+            skill_type = skill_type if skill_type in [1, 2, 3] else 3
+            skills.append({
+                "skill_name": skill_name,
+                "skill_type": skill_type,
+                "match_label": str(item.get("match_label") or item.get("reason") or "").strip() or None,
+                "is_ai_generated": 1,
+            })
+        if not result.get("template_name"):
+            raise ValidationError("AI 未返回模板建议，请补充岗位信息后重试")
+        if not skills:
+            raise ValidationError("AI 未返回技能建议，请补充岗位信息后重试")
+        return {
+            "template_name": result.get("template_name"),
+            "description": result.get("description") or "",
+            "dimensions": dimensions,
+            "skills": skills,
+        }
 
     async def update_dimension(self, dimension_id: int, body) -> object:
         dimension = await self.repo.get_dimension(dimension_id)

@@ -73,3 +73,10 @@ md
 # Worktrees
 .worktrees/
 worktrees/
+backend/.env
+backend/litellm_uuid.txt
+windsurf/
+findings.md
+progress.md
+skills/
+task_plan.md

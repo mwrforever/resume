@@ -3,7 +3,15 @@ from fastapi import APIRouter, Depends, Query
 from app.api.deps import get_current_user, get_db
 from app.core.exceptions import NotFoundError
 from app.repositories.eval_template_repo import EvalTemplateRepository
-from app.schemas.eval_template import EvalTemplateCreate, EvalTemplateItem, EvalTemplateUpdate
+from app.schemas.eval_template import (
+    EvalTemplateCreate,
+    EvalTemplateItem,
+    EvalTemplateUpdate,
+    JobTemplateAiSuggestRequest,
+    JobTemplateAiSuggestResponse,
+    TemplateSkillAiSuggestRequest,
+    TemplateSkillAiSuggestResponse,
+)
 from app.schemas.response import ApiResponse, PageData
 from app.services.eval_template_service import EvalTemplateService
 
@@ -37,6 +45,26 @@ async def list_templates(
     total = await service.repo.count_templates(status=status, search=search)
     items = [await build_template_item(service, template.id) for template in templates]
     return ApiResponse(data=PageData(total=total, items=items))
+
+
+@router.post("/skills/ai/suggest", response_model=ApiResponse[TemplateSkillAiSuggestResponse])
+async def suggest_template_skills(
+    body: TemplateSkillAiSuggestRequest,
+    service: EvalTemplateService = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse[TemplateSkillAiSuggestResponse]:
+    result = await service.suggest_template_skills(body)
+    return ApiResponse(data=TemplateSkillAiSuggestResponse(**result))
+
+
+@router.post("/ai/suggest", response_model=ApiResponse[JobTemplateAiSuggestResponse])
+async def suggest_job_template(
+    body: JobTemplateAiSuggestRequest,
+    service: EvalTemplateService = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse[JobTemplateAiSuggestResponse]:
+    result = await service.suggest_job_template(body)
+    return ApiResponse(data=JobTemplateAiSuggestResponse(**result))
 
 
 @router.get("/{template_id}", response_model=ApiResponse[EvalTemplateItem])

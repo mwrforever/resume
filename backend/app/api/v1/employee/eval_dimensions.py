@@ -2,7 +2,13 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_current_user, get_db
 from app.repositories.eval_template_repo import EvalTemplateRepository
-from app.schemas.eval_template import EvalDimensionCreate, EvalDimensionItem, EvalDimensionUpdate
+from app.schemas.eval_template import (
+    EvalDimensionAiSuggestRequest,
+    EvalDimensionAiSuggestResponse,
+    EvalDimensionCreate,
+    EvalDimensionItem,
+    EvalDimensionUpdate,
+)
 from app.schemas.response import ApiResponse, PageData
 from app.services.eval_template_service import EvalTemplateService
 
@@ -31,6 +37,16 @@ async def list_dimensions(
         item["template_count"] = await service.repo.count_dimension_templates(dimension.id)
         items.append(item)
     return ApiResponse(data=PageData(total=total, items=items))
+
+
+@router.post("/ai/suggest", response_model=ApiResponse[EvalDimensionAiSuggestResponse])
+async def suggest_dimension(
+    body: EvalDimensionAiSuggestRequest,
+    service: EvalTemplateService = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse[EvalDimensionAiSuggestResponse]:
+    result = await service.suggest_dimension(body)
+    return ApiResponse(data=EvalDimensionAiSuggestResponse(**result))
 
 
 @router.get("/{dimension_id}", response_model=ApiResponse[EvalDimensionItem])

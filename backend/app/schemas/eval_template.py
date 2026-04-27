@@ -31,6 +31,17 @@ class EvalDimensionItem(BaseModel):
         from_attributes = True
 
 
+class EvalDimensionAiSuggestRequest(BaseModel):
+    job_name: str
+    job_description: str = ""
+
+
+class EvalDimensionAiSuggestResponse(BaseModel):
+    dimension_name: str
+    description: str = ""
+    default_prompt_template: str = ""
+
+
 class TemplateDimensionCreate(BaseModel):
     dimension_id: int
     weight: float
@@ -60,6 +71,39 @@ class TemplateSkillItem(BaseModel):
     skill_type: int
     match_label: Optional[str] = None
     is_ai_generated: int = 0
+
+
+class TemplateSkillAiSuggestDimension(BaseModel):
+    dimension_name: str
+    weight: float = 0
+    prompt_template: str = ""
+
+
+class TemplateSkillAiSuggestRequest(BaseModel):
+    dimensions: list[TemplateSkillAiSuggestDimension]
+
+
+class TemplateSkillAiSuggestResponse(BaseModel):
+    skills: list[TemplateSkillItem] = []
+
+
+class JobTemplateAiSuggestRequest(BaseModel):
+    job_name: str
+    job_description: str = ""
+
+
+class JobTemplateAiSuggestDimension(BaseModel):
+    dimension_name: str
+    description: str = ""
+    weight: float = 0
+    prompt_template: str = ""
+
+
+class JobTemplateAiSuggestResponse(BaseModel):
+    template_name: str
+    description: str = ""
+    dimensions: list[JobTemplateAiSuggestDimension] = []
+    skills: list[TemplateSkillItem] = []
 
 
 class TemplateTagItem(BaseModel):

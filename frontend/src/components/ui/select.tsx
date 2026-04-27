@@ -28,7 +28,23 @@ interface SelectProps {
 
 function Select({ value, onValueChange, children }: SelectProps) {
   const [open, setOpen] = React.useState(false);
-  const [selectedLabel, setSelectedLabel] = React.useState('');
+  const selectedLabel = React.useMemo(() => {
+    let label = '';
+    const visit = (nodes: React.ReactNode) => {
+      React.Children.forEach(nodes, (child) => {
+        if (!React.isValidElement(child) || label) return;
+        const props = child.props as { value?: string; children?: React.ReactNode };
+        if (props.value === value) {
+          label = typeof props.children === 'string' ? props.children : '';
+          return;
+        }
+        if (props.children) visit(props.children);
+      });
+    };
+    visit(children);
+    return label;
+  }, [children, value]);
+  const setSelectedLabel = React.useCallback((_label: string) => {}, []);
 
   return (
     <SelectContext.Provider value={{ value, onValueChange, open, setOpen, selectedLabel, setSelectedLabel }}>

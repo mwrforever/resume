@@ -1,5 +1,5 @@
 import client from '@/api/client';
-import type { IDeptItem, IDeptImportResult, IDeptTreeItem } from '@/types/employee';
+import type { IDeptItem } from '@/types/employee';
 
 export interface DeptListParams {
   page?: number;
@@ -8,7 +8,7 @@ export interface DeptListParams {
   search?: string;
 }
 
-export type DeptPayload = Omit<IDeptItem, 'id' | 'create_time' | 'update_time' | 'leader_name' | 'employee_count'>;
+export type DeptPayload = Omit<IDeptItem, 'id' | 'create_time' | 'update_time' | 'parent_name' | 'leader_id' | 'leader_name' | 'employee_count'> & { leader_id?: number | null };
 
 export const deptApi = {
   listDepts: (params?: DeptListParams) =>
@@ -34,4 +34,7 @@ export const deptApi = {
 
   getDeptTree: () =>
     client.get('/employee/depts/tree'),
+
+  listLeaderOptions: () =>
+    client.get('/employee/depts/leader-options'),
 };

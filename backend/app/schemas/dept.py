@@ -7,7 +7,8 @@ from pydantic import BaseModel
 class DeptItem(BaseModel):
     id: int
     parent_id: int = 0
-    dept_code: Optional[str] = None
+    parent_name: Optional[str] = None
+    dept_code: str
     dept_name: str
     leader_id: Optional[int] = None
     leader_name: Optional[str] = None
@@ -23,7 +24,7 @@ class DeptItem(BaseModel):
 
 class DeptCreate(BaseModel):
     parent_id: int = 0
-    dept_code: Optional[str] = None
+    dept_code: str
     dept_name: str
     leader_id: Optional[int] = None
     sort_order: int = 0

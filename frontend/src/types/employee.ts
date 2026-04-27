@@ -197,9 +197,18 @@ export interface IManagedEmployee {
   real_name: string;
   email?: string;
   phone?: string;
+  dept_id: number;
+  dept_name?: string;
+  depts?: IManagedEmployeeDept[];
   status: number;
   create_time?: string;
   update_time?: string;
+}
+
+export interface IManagedEmployeeDept {
+  dept_id: number;
+  dept_name: string;
+  is_primary: number;
 }
 
 export interface IEmployeeImportResult {
@@ -212,7 +221,8 @@ export interface IEmployeeImportResult {
 export interface IDeptItem {
   id: number;
   parent_id: number;
-  dept_code?: string;
+  parent_name?: string;
+  dept_code: string;
   dept_name: string;
   leader_id?: number;
   leader_name?: string;
