@@ -21,6 +21,17 @@ class DeptService:
         depts = await self.repo.list_active()
         children_map: dict[int, list[dict]] = defaultdict(list)
 
+        # 收集所有 leader_id 并获取 leader_name
+        leader_ids = {d.leader_id for d in depts if d.leader_id}
+        leader_names: dict[int, str] = {}
+        if leader_ids:
+            from app.repositories.employee_repo import EmployeeRepository
+            emp_repo = EmployeeRepository(self.repo.db)
+            for emp_id in leader_ids:
+                emp = await emp_repo.get_by_id(emp_id)
+                if emp:
+                    leader_names[emp_id] = emp.real_name
+
         # First pass: build children_map
         for d in depts:
             children_map[d.parent_id or 0].append({
@@ -30,6 +41,7 @@ class DeptService:
                 "dept_code": d.dept_code,
                 "parent_id": d.parent_id or 0,
                 "leader_id": d.leader_id,
+                "leader_name": leader_names.get(d.leader_id),
                 "status": d.status,
                 "sort_order": d.sort_order,
                 "children": [],
