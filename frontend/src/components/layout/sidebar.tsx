@@ -2,16 +2,22 @@ import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Briefcase, FileText,
-  Send, ChevronLeft, ChevronRight, Tags,
+  Send, ChevronLeft, ChevronRight, Tags, UserRound, Users, ClipboardList, Layers3,
+  Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
   { href: '/employee/dashboard', icon: LayoutDashboard, label: '工作台' },
   { href: '/employee/jobs', icon: Briefcase, label: '岗位管理' },
+  { href: '/employee/eval-templates', icon: ClipboardList, label: '模板管理' },
+  { href: '/employee/eval-dimensions', icon: Layers3, label: '维度管理' },
   { href: '/employee/tags', icon: Tags, label: '标签管理' },
   { href: '/employee/resumes', icon: FileText, label: '简历库' },
   { href: '/employee/applications', icon: Send, label: '投递管理' },
+  { href: '/employee/user-management', icon: UserRound, label: '用户管理' },
+  { href: '/employee/employee-management', icon: Users, label: '员工管理' },
+  { href: '/employee/dept-management', icon: Building2, label: '部门管理' },
 ];
 
 export function Sidebar() {
