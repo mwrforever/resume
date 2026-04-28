@@ -1,9 +1,10 @@
 import os
 
 from celery import Celery
-from app.core.config import get_settings
+from app.core.config import configure_logging, get_settings
 
 settings = get_settings()
+configure_logging(settings)
 os.environ["CELERY_BROKER_URL"] = settings.celery_broker_url
 os.environ.pop("CELERY_RESULT_BACKEND", None)
 

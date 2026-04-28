@@ -165,6 +165,7 @@ class EvalRepository:
                 ResumeJobMatch.id.label("match_id"),
                 ResumeJobMatch.final_score,
                 ResumeJobMatch.final_label,
+                ResumeJobMatch.error_message,
             )
             .join(Resume, Resume.id == JobApplication.resume_id)
             .outerjoin(ResumeJobMatch, ResumeJobMatch.application_id == JobApplication.id)
@@ -181,7 +182,7 @@ class EvalRepository:
                 "match_id": row.match_id,
                 "final_score": float(row.final_score) if row.final_score is not None else None,
                 "final_label": row.final_label or "待评估",
-                "status": "completed" if row.match_id else "pending",
+                "status": "failed" if row.error_message else ("completed" if row.match_id else "pending"),
             }
             for row in result.all()
         ]

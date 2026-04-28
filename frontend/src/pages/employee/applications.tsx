@@ -3,11 +3,13 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { Pagination } from '@/components/common/pagination';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DepartmentMultiSelect } from '@/components/employee/department-multi-select';
 import { employeeApplicationsApi } from '@/api/employee/applications';
 import { employeeEvaluationsApi } from '@/api/employee/evaluations';
 import { employeeJobsApi } from '@/api/employee/jobs';
+import { deptApi } from '@/api/employee/depts';
 import { useThrottleCallback } from '@/hooks/use-debounce';
-import type { Job } from '@/types/employee';
+import type { IDeptItem, Job } from '@/types/employee';
 import { BarChart2, ChevronDown, Eye, Loader2, RefreshCw, X, Zap } from 'lucide-react';
 
 const DEFAULT_PAGE_SIZE = 10;
@@ -106,10 +108,13 @@ export default function EmployeeApplications() {
   const [selectedAppIds, setSelectedAppIds] = useState<number[]>([]);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [depts, setDepts] = useState<IDeptItem[]>([]);
   const [jobFilterOpen, setJobFilterOpen] = useState(false);
+  const [deptFilterOpen, setDeptFilterOpen] = useState(false);
 
   const filterStatus = searchParams.get('status') ?? '';
   const filterJobIds = searchParams.getAll('job_ids').map(Number).filter(Boolean);
+  const filterDeptIds = searchParams.getAll('dept_ids').map(Number).filter(Boolean);
   const page = Number(searchParams.get('page') ?? '1');
   const pageSize = Number(searchParams.get('page_size') ?? String(DEFAULT_PAGE_SIZE));
 
@@ -120,6 +125,7 @@ export default function EmployeeApplications() {
       const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
       if (filterStatus) params.set('status', filterStatus);
       filterJobIds.forEach((id) => params.append('job_ids', String(id)));
+      filterDeptIds.forEach((id) => params.append('dept_ids', String(id)));
       const res = await employeeApplicationsApi.list(params);
       setApplications(res.data.items || []);
       setTotal(res.data.total ?? 0);
@@ -130,7 +136,7 @@ export default function EmployeeApplications() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [filterStatus, filterJobIds.join(','), page, pageSize]);
+  }, [filterStatus, filterJobIds.join(','), filterDeptIds.join(','), page, pageSize]);
 
   useEffect(() => { loadApplications(); }, [loadApplications]);
 
@@ -138,6 +144,9 @@ export default function EmployeeApplications() {
     employeeJobsApi.list({ page: 1, page_size: 100 })
       .then((res) => setJobs(res.data.items || []))
       .catch((error) => console.error('Failed to load jobs:', error));
+    deptApi.listDepts()
+      .then((res) => setDepts(res.data || []))
+      .catch((error) => console.error('Failed to load depts:', error));
   }, []);
 
   const setPage = (p: number) => {
@@ -238,6 +247,14 @@ export default function EmployeeApplications() {
     setFilterJobIds(filterJobIds.includes(jobId) ? filterJobIds.filter((id) => id !== jobId) : [...filterJobIds, jobId]);
   };
 
+  const setFilterDeptIds = (deptIds: number[]) => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('dept_ids');
+    deptIds.forEach((id) => next.append('dept_ids', String(id)));
+    next.delete('page');
+    setSearchParams(next);
+  };
+
   return (
     <AdminLayout breadcrumbs={[{ label: '投递管理' }]} title="投递管理">
       {/* Toolbar */}
@@ -261,6 +278,15 @@ export default function EmployeeApplications() {
             ))}
           </SelectContent>
         </Select>
+        <DepartmentMultiSelect
+          depts={depts}
+          selectedIds={filterDeptIds}
+          onChange={setFilterDeptIds}
+          open={deptFilterOpen}
+          onOpenChange={setDeptFilterOpen}
+          placeholder="按部门筛选"
+          className="w-full max-w-xs"
+        />
         <div className="relative w-full max-w-md">
           <div
             tabIndex={0}
@@ -420,7 +446,7 @@ export default function EmployeeApplications() {
                             disabled={isEvaluating}
                             className="inline-flex items-center gap-1 text-xs text-[#2563EB] hover:underline px-2 py-1 rounded hover:bg-blue-50 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
                           >
-                            {isEvaluating ? <><Loader2 size={13} className="animate-spin" aria-hidden="true" />评估中</> : 'AI评估'}
+                            {isEvaluating ? <><Loader2 size={13} className="animate-spin" aria-hidden="true" />评估中</> : app.match_id ? '重新评估' : 'AI评估'}
                           </button>
                         )}
                         {app.match_id && (

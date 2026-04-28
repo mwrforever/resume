@@ -4,29 +4,39 @@ import { AdminLayout } from '@/components/layout/admin-layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DepartmentMultiSelect } from '@/components/employee/department-multi-select';
 import { MatchPieChart } from '@/components/common/match-pie-chart';
 import { MatchBadge } from '@/components/common/match-badge';
 import { employeeJobsApi } from '@/api/employee/jobs';
 import { employeeEvaluationsApi } from '@/api/employee/evaluations';
 import { employeeAnalyticsApi } from '@/api/employee/analytics';
-import { MatchDistribution, ResumeWithEvaluation, Job } from '@/types/employee';
+import { deptApi } from '@/api/employee/depts';
+import { MatchDistribution, ResumeWithEvaluation, Job, IDeptItem } from '@/types/employee';
 import { Loader2 } from 'lucide-react';
 
 export default function EmployeeEvaluations() {
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [depts, setDepts] = useState<IDeptItem[]>([]);
+  const [selectedDeptIds, setSelectedDeptIds] = useState<number[]>([]);
+  const [deptFilterOpen, setDeptFilterOpen] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [distribution, setDistribution] = useState<MatchDistribution | null>(null);
   const [resumes, setResumes] = useState<ResumeWithEvaluation[]>([]);
   const [selectedApplicationIds, setSelectedApplicationIds] = useState<number[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [evaluatingApplicationIds, setEvaluatingApplicationIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
 
   // 加载岗位列表
   useEffect(() => {
     const loadJobs = async () => {
       try {
-        const res = await employeeJobsApi.list();
-        setJobs(res.data.items || []);
+        const [jobRes, deptRes] = await Promise.all([
+          employeeJobsApi.list({ page: 1, page_size: 100 }),
+          deptApi.listDepts(),
+        ]);
+        setJobs(jobRes.data.items || []);
+        setDepts(deptRes.data || []);
       } catch (error) {
         console.error('Failed to load jobs:', error);
       }
@@ -87,7 +97,43 @@ export default function EmployeeEvaluations() {
     }
   };
 
+  const handleEvaluateOne = async (applicationId: number) => {
+    if (!selectedJobId || evaluatingApplicationIds.has(applicationId)) return;
+    setEvaluatingApplicationIds((prev) => new Set(prev).add(applicationId));
+    try {
+      await employeeEvaluationsApi.batchEvaluate({
+        application_ids: [applicationId],
+      });
+      setSubmitted(true);
+      setTimeout(() => setSubmitted(false), 4000);
+      const [distRes, listRes] = await Promise.all([
+        employeeAnalyticsApi.getMatchDistribution(selectedJobId),
+        employeeAnalyticsApi.getJobResumeList(selectedJobId),
+      ]);
+      setDistribution(distRes.data);
+      setResumes(listRes.data.items || []);
+    } catch (error) {
+      console.error('Failed to submit:', error);
+    } finally {
+      setEvaluatingApplicationIds((prev) => {
+        const next = new Set(prev);
+        next.delete(applicationId);
+        return next;
+      });
+    }
+  };
+
   const allSelected = resumes.length > 0 && resumes.every((r) => selectedApplicationIds.includes(r.application_id));
+  const filteredJobs = selectedDeptIds.length === 0 ? jobs : jobs.filter((job) => selectedDeptIds.includes(job.dept_id));
+  const handleDeptFilterChange = (deptIds: number[]) => {
+    setSelectedDeptIds(deptIds);
+    if (selectedJobId && !jobs.some((job) => job.id === selectedJobId && (deptIds.length === 0 || deptIds.includes(job.dept_id)))) {
+      setSelectedJobId(null);
+      setDistribution(null);
+      setResumes([]);
+      setSelectedApplicationIds([]);
+    }
+  };
   const toggleAll = () => {
     if (allSelected) setSelectedApplicationIds([]);
     else setSelectedApplicationIds(resumes.map((r) => r.application_id));
@@ -109,14 +155,23 @@ export default function EmployeeEvaluations() {
               <CardTitle className="text-sm">选择目标岗位</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
+              <DepartmentMultiSelect
+                depts={depts}
+                selectedIds={selectedDeptIds}
+                onChange={handleDeptFilterChange}
+                open={deptFilterOpen}
+                onOpenChange={setDeptFilterOpen}
+                placeholder="按部门筛选"
+                className="mb-3"
+              />
               <Select value={selectedJobId ? String(selectedJobId) : ''} onValueChange={(v) => setSelectedJobId(Number(v))}>
                 <SelectTrigger>
                   <SelectValue placeholder="请选择岗位" />
                 </SelectTrigger>
                 <SelectContent>
-                  {jobs.map((job) => (
+                  {filteredJobs.map((job) => (
                     <SelectItem key={job.id} value={String(job.id)}>
-                      {job.name}
+                      {job.name}{job.dept_name ? `（${job.dept_name}）` : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -197,6 +252,7 @@ export default function EmployeeEvaluations() {
                 ) : (
                   resumes.map((resume) => {
                     const checked = selectedApplicationIds.includes(resume.application_id);
+                    const isEvaluating = evaluatingApplicationIds.has(resume.application_id);
                     return (
                       <tr key={resume.application_id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors">
                         <td className="px-4 py-3">
@@ -229,14 +285,27 @@ export default function EmployeeEvaluations() {
                             : <span className="text-xs text-[#94A3B8]">待评估</span>}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {resume.status === 'completed' && resume.match_id && (
-                            <Link
-                              to={`/employee/evaluations/${resume.match_id}`}
-                              className="text-xs text-[#2563EB] hover:underline focus-visible:outline-none focus-visible:underline"
+                          <div className="flex items-center justify-end gap-2">
+                            {resume.status === 'completed' && resume.match_id && (
+                              <Link
+                                to={`/employee/evaluations/${resume.match_id}`}
+                                className="text-xs text-[#2563EB] hover:underline focus-visible:outline-none focus-visible:underline"
+                              >
+                                查看详情
+                              </Link>
+                            )}
+                            <button
+                              onClick={() => handleEvaluateOne(resume.application_id)}
+                              disabled={isEvaluating || submitting}
+                              className="text-xs text-[#2563EB] hover:underline disabled:opacity-50 focus-visible:outline-none focus-visible:underline"
                             >
-                              查看详情
-                            </Link>
-                          )}
+                              {isEvaluating
+                                ? '提交中…'
+                                : resume.match_id
+                                ? '重新评估'
+                                : 'AI评估'}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );

@@ -1,7 +1,7 @@
 import json
 import re
 import logging
-from langchain_core.runnables import RunnableLambda, RunnableParallel
+from concurrent.futures import ThreadPoolExecutor
 from app.utils.ai.client import llm_complete
 from app.utils.ai.prompts import (
     COMPREHENSIVE_EVAL_PROMPT,
@@ -118,12 +118,10 @@ class TemplateSkillAiSuggestChain:
 
 class ResumeEvalChain:
     def evaluate(self, resume_text: str, job_name: str, job_description: str, dimensions: list, skills: list) -> dict:
-        skill_hits = RunnableLambda(lambda _: self._match_skills(resume_text, job_name, job_description, skills)).invoke({})
+        skill_hits = self._match_skills(resume_text, job_name, job_description, skills)
         dimension_results = self._evaluate_dimensions(resume_text, job_name, job_description, dimensions, skill_hits)
         weighted_score = self._calculate_weighted_score(dimension_results, dimensions)
-        comprehensive = RunnableLambda(
-            lambda _: self._evaluate_comprehensive(job_name, job_description, skill_hits, dimension_results, weighted_score)
-        ).invoke({})
+        comprehensive = self._evaluate_comprehensive(job_name, job_description, skill_hits, dimension_results, weighted_score)
         return {
             "dimensions": dimension_results,
             "skill_hits": skill_hits,
@@ -155,20 +153,18 @@ class ResumeEvalChain:
     ) -> list[dict]:
         if not dimensions:
             return []
-        parallel = RunnableParallel({
-            str(index): RunnableLambda(
-                lambda _, dimension=dimension: self._evaluate_dimension(
+        max_workers = min(len(dimensions), 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return list(executor.map(
+                lambda dimension: self._evaluate_dimension(
                     resume_text,
                     job_name,
                     job_description,
                     dimension,
                     skill_hits,
-                )
-            )
-            for index, dimension in enumerate(dimensions)
-        })
-        results = parallel.invoke({})
-        return [results[str(index)] for index in range(len(dimensions))]
+                ),
+                dimensions,
+            ))
 
     def _evaluate_dimension(
         self,
@@ -178,6 +174,13 @@ class ResumeEvalChain:
         dimension: dict,
         skill_hits: list[dict],
     ) -> dict:
+        prompt_template = self._render_dimension_template(
+            str(dimension.get("prompt_template") or ""),
+            resume_text,
+            job_name,
+            job_description,
+            skill_hits,
+        )
         prompt = DIMENSION_EVAL_WITH_SKILLS_PROMPT.format(
             job_name=job_name,
             job_description=job_description or "",
@@ -186,7 +189,7 @@ class ResumeEvalChain:
                 "weight": dimension.get("weight"),
             }, ensure_ascii=False),
             skill_hits=json.dumps(skill_hits, ensure_ascii=False),
-            prompt_template=str(dimension.get("prompt_template") or ""),
+            prompt_template=prompt_template,
             resume_text=resume_text,
         )
         result = self._call_json(prompt, timeout=120)
@@ -196,6 +199,24 @@ class ResumeEvalChain:
             "advantage": str(result.get("advantage") or ""),
             "disadvantage": str(result.get("disadvantage") or ""),
         }
+
+    def _render_dimension_template(
+        self,
+        prompt_template: str,
+        resume_text: str,
+        job_name: str,
+        job_description: str,
+        skill_hits: list[dict],
+    ) -> str:
+        try:
+            return prompt_template.format(
+                resume_text=resume_text,
+                job_name=job_name,
+                job_description=job_description or "",
+                skill_hits=json.dumps(skill_hits, ensure_ascii=False),
+            )
+        except (KeyError, ValueError, IndexError):
+            return prompt_template
 
     def _evaluate_comprehensive(
         self,

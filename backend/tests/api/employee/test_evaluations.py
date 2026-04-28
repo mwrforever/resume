@@ -8,9 +8,26 @@ from httpx import AsyncClient
 @pytest.mark.asyncio
 async def test_batch_evaluation_triggers_for_applications(
     client: AsyncClient,
-    employee_headers: dict
+    employee_headers: dict,
+    monkeypatch: pytest.MonkeyPatch
 ):
     """Test that batch evaluation triggers evaluation for specified applications"""
+    from app.main import app
+    from app.api.v1.employee import evaluations
+
+    validated_ids = []
+    dispatched_args = []
+
+    class FakeEvalService:
+        async def validate_batch_applications(self, application_ids: list[int]) -> None:
+            validated_ids.extend(application_ids)
+
+    def fake_apply_async(args: tuple, ignore_result: bool) -> None:
+        dispatched_args.append((args, ignore_result))
+
+    app.dependency_overrides[evaluations.get_service] = lambda: FakeEvalService()
+    monkeypatch.setattr(evaluations.run_evaluation_task, "apply_async", fake_apply_async)
+
     # Submit batch evaluation request
     response = await client.post(
         "/api/v1/employee/evaluations/batch",
@@ -22,6 +39,8 @@ async def test_batch_evaluation_triggers_for_applications(
     assert data["code"] == 200
     assert "count" in data["data"]
     assert data["data"]["count"] == 3
+    assert validated_ids == [1, 2, 3]
+    assert dispatched_args == [(([1, 2, 3],), True)]
 
 
 @pytest.mark.asyncio
@@ -30,34 +49,46 @@ async def test_get_evaluation_detail_returns_result(
     employee_headers: dict
 ):
     """Test that getting evaluation detail returns evaluation result"""
-    # Get evaluation detail (assuming match_id=1 exists or will return proper error)
+    from app.main import app
+    from app.api.v1.employee import evaluations
+
+    class FakeEvalService:
+        async def get_evaluation_detail(self, match_id: int) -> dict:
+            return {
+                "match_id": match_id,
+                "application_id": 10,
+                "resume_id": 20,
+                "job_id": 30,
+                "final_score": 88.0,
+                "final_label": "良好",
+                "advantage_comment": "优势",
+                "disadvantage_comment": "",
+                "dimensions": [],
+                "skill_hits": [],
+            }
+
+    app.dependency_overrides[evaluations.get_service] = lambda: FakeEvalService()
+
     response = await client.get(
         "/api/v1/employee/evaluations/1",
         headers=employee_headers
     )
-    # Should return 200 with evaluation data OR 404 if no evaluation exists
-    assert response.status_code in [200, 404]
-    if response.status_code == 200:
-        data = response.json()
-        assert data["code"] == 200
-        assert "data" in data
-        # Verify response structure if data exists
-        if data["data"]:
-            assert "match_id" in data["data"]
-            assert "final_score" in data["data"]
+    assert response.status_code == 200
+    data = response.json()
+    assert data["code"] == 200
+    assert data["data"]["match_id"] == 1
+    assert data["data"]["application_id"] == 10
+    assert data["data"]["final_score"] == 88.0
 
 
 @pytest.mark.asyncio
 async def test_evaluations_require_auth(client: AsyncClient):
     """Test that evaluation endpoints require authentication"""
-    # Batch evaluation without auth - returns 422 for missing required header
     response = await client.post(
         "/api/v1/employee/evaluations/batch",
         json={"application_ids": [1]}
     )
-    # FastAPI returns 422 for missing required Header parameter
-    assert response.status_code == 422
+    assert response.status_code == 401
 
-    # Get evaluation detail without auth - returns 422 for missing required header
     response = await client.get("/api/v1/employee/evaluations/1")
-    assert response.status_code == 422
+    assert response.status_code == 401

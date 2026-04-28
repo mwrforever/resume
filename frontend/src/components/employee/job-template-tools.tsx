@@ -22,7 +22,7 @@ interface TemplatePreviewData {
 
 interface JobTemplatePreviewProps {
   template: TemplatePreviewData | null;
-  onPreviewPrompt: (title: string, content: string) => void;
+  onPreviewPrompt: (title: string, content: string, dimensionIndex: number) => void;
 }
 
 export function JobTemplatePreview({ template, onPreviewPrompt }: JobTemplatePreviewProps) {
@@ -47,7 +47,7 @@ export function JobTemplatePreview({ template, onPreviewPrompt }: JobTemplatePre
                 <span className="text-sm font-medium text-[#1E293B]">{dimension.dimension_name}</span>
                 <span className="ml-2 text-xs text-[#64748B]">权重 {Number(dimension.weight || 0).toFixed(2)}</span>
               </div>
-              <Button type="button" variant="outline" size="sm" onClick={() => onPreviewPrompt(`${dimension.dimension_name}提示词预览`, dimension.prompt_template)} disabled={!dimension.prompt_template?.trim()}>
+              <Button type="button" variant="outline" size="sm" onClick={() => onPreviewPrompt(`${dimension.dimension_name}提示词预览`, dimension.prompt_template, index)} disabled={!dimension.prompt_template?.trim()}>
                 <Eye size={14} className="mr-1" />预览
               </Button>
             </div>
@@ -157,7 +157,7 @@ export function AiTemplateDialog({ open, jobName, jobDescription, tags, onClose,
   const abortRef = useRef<AbortController | null>(null);
   const [suggestion, setSuggestion] = useState<IJobTemplateAiSuggestion | null>(null);
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
-  const [previewPrompt, setPreviewPrompt] = useState<{ title: string; content: string } | null>(null);
+  const [previewPrompt, setPreviewPrompt] = useState<{ title: string; content: string; dimensionIndex?: number } | null>(null);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -204,6 +204,19 @@ export function AiTemplateDialog({ open, jobName, jobDescription, tags, onClose,
     setSelectedTagIds(prev => prev.includes(tagId) ? prev.filter(id => id !== tagId) : [...prev, tagId]);
   };
 
+  const updatePreviewPrompt = (content: string) => {
+    if (previewPrompt?.dimensionIndex === undefined) return;
+    const dimensionIndex = previewPrompt.dimensionIndex;
+    setSuggestion(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        dimensions: prev.dimensions.map((dimension, index) => index === dimensionIndex ? { ...dimension, prompt_template: content } : dimension),
+      };
+    });
+    setPreviewPrompt({ ...previewPrompt, content });
+  };
+
   const handleApply = async () => {
     if (!suggestion) return;
     setSaving(true);
@@ -242,7 +255,7 @@ export function AiTemplateDialog({ open, jobName, jobDescription, tags, onClose,
         {generating && <p className="py-10 text-center text-sm text-[#94A3B8]"><Loader2 size={16} className="mr-2 inline animate-spin" />AI 生成中…</p>}
         {suggestion && (
           <div className="space-y-4">
-            <JobTemplatePreview template={{ ...suggestion, tags: selectedTags }} onPreviewPrompt={(title, content) => setPreviewPrompt({ title, content })} />
+            <JobTemplatePreview template={{ ...suggestion, tags: selectedTags }} onPreviewPrompt={(title, content, dimensionIndex) => setPreviewPrompt({ title, content, dimensionIndex })} />
             <section className="rounded-lg border border-[#E2E8F0] p-4">
               <h3 className="mb-3 text-sm font-semibold text-[#1E293B]">岗位标签</h3>
               {tags.length === 0 ? <p className="text-sm text-[#94A3B8]">暂无可用标签</p> : (
@@ -267,7 +280,14 @@ export function AiTemplateDialog({ open, jobName, jobDescription, tags, onClose,
             {saving ? <><Loader2 size={14} className="mr-1.5 animate-spin" />保存中…</> : <><Sparkles size={14} className="mr-1.5" />应用并保存模板</>}
           </Button>
         </div>
-        <MarkdownPreviewDialog open={!!previewPrompt} title={previewPrompt?.title ?? '提示词预览'} content={previewPrompt?.content ?? ''} onClose={() => setPreviewPrompt(null)} />
+        <MarkdownPreviewDialog
+          open={!!previewPrompt}
+          title={previewPrompt?.title ?? '提示词预览'}
+          content={previewPrompt?.content ?? ''}
+          editable={previewPrompt?.dimensionIndex !== undefined}
+          onClose={() => setPreviewPrompt(null)}
+          onSave={updatePreviewPrompt}
+        />
       </DialogContent>
     </Dialog>
   );

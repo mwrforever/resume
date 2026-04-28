@@ -94,13 +94,14 @@ JOB_TEMPLATE_AI_SUGGEST_PROMPT = """
 1. dimensions生成3-5个，权重之和必须精确等于1.0，使用两位小数
 2. skills生成6-10个，skill_type只能为1、2、3；1=必须满足，2=优先匹配，3=普通技能
 3. 每个prompt_template必须是Markdown层级格式，不得写成一段话
-4. 每个prompt_template必须包含以下一级标题，顺序不得改变：# 角色、# 背景、# 职责、# 输入、# 评分要求、# 输出要求
-5. 每个prompt_template的# 输入部分必须包含{{resume_text}}和{{job_name}}两个占位符
+4. 每个prompt_template必须包含以下一级标题，顺序不得改变：# 角色、# 评估边界、# 输入、# 证据规则、# 评分要求、# 输出要求
+5. 每个prompt_template的# 输入部分必须包含{{resume_text}}、{{job_name}}、{{job_description}}、{{skill_hits}}四个占位符
 6. 每个prompt_template必须围绕当前dimension_name写具体评估职责，不得生成通用空泛模板
-7. 每个prompt_template必须要求模型仅基于简历原文评分，证据不足时必须写"简历未体现"
-8. 每个prompt_template的# 输出要求必须要求只输出严格JSON对象，不输出Markdown、解释、前后缀或代码块
-9. 每个prompt_template的输出JSON必须严格为：{{"score": <0-100整数>, "advantage": "<基于简历证据的优势，无则返回无>", "disadvantage": "<基于岗位差距的不足，无则返回空字符串>"}}
-10. 不得生成标签字段
+7. 每个prompt_template必须说明技能匹配结果只作为辅助证据，最终评分仍以简历原文和岗位要求为准
+8. 每个prompt_template必须要求模型仅基于简历原文、岗位信息和已命中技能证据评分，证据不足时必须写"简历未体现"
+9. 每个prompt_template的# 输出要求必须要求只输出严格JSON对象，不输出Markdown、解释、前后缀或代码块
+10. 每个prompt_template的输出JSON必须严格为：{{"dimension_name": "<维度名称>", "score": <0-100整数>, "advantage": "<基于简历证据和技能命中的优势，无则返回无>", "disadvantage": "<基于岗位差距的不足，无则返回空字符串>"}}
+11. 不得生成标签字段
 """
 
 EVAL_DIMENSION_AI_SUGGEST_PROMPT = """
@@ -129,29 +130,32 @@ EVAL_DIMENSION_AI_SUGGEST_PROMPT = """
 1. dimension_name必须具体明确，不得使用"综合能力"这类泛化名称
 2. description不得超过80字
 3. default_prompt_template必须是Markdown层级格式，不得写成一段话
-4. default_prompt_template必须包含以下一级标题，顺序不得改变：# 角色、# 背景、# 职责、# 输入、# 评分要求、# 输出要求
-5. default_prompt_template的# 输入部分必须包含{{resume_text}}和{{job_name}}两个占位符
+4. default_prompt_template必须包含以下一级标题，顺序不得改变：# 角色、# 评估边界、# 输入、# 证据规则、# 评分要求、# 输出要求
+5. default_prompt_template的# 输入部分必须包含{{resume_text}}、{{job_name}}、{{job_description}}、{{skill_hits}}四个占位符
 6. default_prompt_template必须围绕当前dimension_name写具体评估职责，不得生成通用空泛模板
-7. default_prompt_template必须要求模型仅基于简历原文评分，证据不足时必须写"简历未体现"
-8. default_prompt_template的# 输出要求必须要求只输出严格JSON对象，不输出Markdown、解释、前后缀或代码块
-9. default_prompt_template的输出JSON必须严格为：{{"score": <0-100整数>, "advantage": "<基于简历证据的优势，无则返回无>", "disadvantage": "<基于岗位差距的不足，无则返回空字符串>"}}
-10. default_prompt_template不得超过1200字
+7. default_prompt_template必须说明技能匹配结果只作为辅助证据，最终评分仍以简历原文和岗位要求为准
+8. default_prompt_template必须要求模型仅基于简历原文、岗位信息和已命中技能证据评分，证据不足时必须写"简历未体现"
+9. default_prompt_template的# 输出要求必须要求只输出严格JSON对象，不输出Markdown、解释、前后缀或代码块
+10. default_prompt_template的输出JSON必须严格为：{{"dimension_name": "<维度名称>", "score": <0-100整数>, "advantage": "<基于简历证据和技能命中的优势，无则返回无>", "disadvantage": "<基于岗位差距的不足，无则返回空字符串>"}}
+11. default_prompt_template不得超过1200字
 
 ## default_prompt_template结构示例
 # 角色
 你是企业招聘场景下的简历评估专家，负责评估候选人在【维度名称】上的匹配程度。
 
-# 背景
-本次评估用于辅助招聘人员判断候选人与岗位要求的匹配情况，必须保证结论可追溯、可审计。
-
-# 职责
-1. 仅围绕【维度名称】评估候选人的相关能力
-2. 从简历原文中提取证据，不得推断未出现的信息
-3. 对照岗位名称判断候选人与岗位要求的差距
+# 评估边界
+本模板只定义【维度名称】单个维度的评分规则，技能匹配结果只作为辅助证据，最终评分仍以简历原文和岗位要求为准。
 
 # 输入
 - 岗位名称：{{job_name}}
+- 岗位描述：{{job_description}}
+- 技能匹配结果：{{skill_hits}}
 - 简历原文：{{resume_text}}
+
+# 证据规则
+1. 优势必须来自简历原文或已命中的技能证据
+2. 不得把未命中的技能当作候选人优势
+3. 简历未体现关键证据时必须写"简历未体现"
 
 # 评分要求
 1. 分数必须为0-100整数
@@ -160,7 +164,7 @@ EVAL_DIMENSION_AI_SUGGEST_PROMPT = """
 4. 禁止使用不确定或弱判断表达
 
 # 输出要求
-只输出严格JSON对象：{{"score": <0-100整数>, "advantage": "<基于简历证据的优势，无则返回无>", "disadvantage": "<基于岗位差距的不足，无则返回空字符串>"}}
+只输出严格JSON对象：{{"dimension_name": "维度名称", "score": <0-100整数>, "advantage": "<基于简历证据和技能命中的优势，无则返回无>", "disadvantage": "<基于岗位差距的不足，无则返回空字符串>"}}
 """
 
 TEMPLATE_SKILL_AI_SUGGEST_PROMPT = """

@@ -125,7 +125,7 @@ def _get_skills(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _parse_resume_text(session: Session, resume: dict[str, Any]) -> str:
+def _parse_resume_text(resume: dict[str, Any]) -> str:
     settings = get_settings()
     file_path = Path(str(resume["file_path"]))
     if not file_path.is_absolute():
@@ -136,17 +136,10 @@ def _parse_resume_text(session: Session, resume: dict[str, Any]) -> str:
     if not file_path.exists():
         raise NotFoundError("简历文件不存在")
     raw_text = extract_resume_text(file_path)
-    if raw_text:
-        session.execute(
-            text("UPDATE resume SET raw_text = :raw_text WHERE id = :resume_id"),
-            {"resume_id": resume["id"], "raw_text": raw_text},
-        )
     return raw_text
 
 
-def _save_dimension_results(
-    session: Session,
-    match_id: int,
+def _build_dimension_results(
     dimensions: list[dict[str, Any]],
     ai_dimensions: list[Any],
 ) -> list[dict[str, Any]]:
@@ -164,25 +157,8 @@ def _save_dimension_results(
 
         if item is None:
             error_message = "AI评估结果缺少该维度"
-            session.execute(
-                text(
-                    "INSERT INTO resume_eval_detail "
-                    "(match_id, dimension_id, dimension_score, dimension_advantage, "
-                    "dimension_disadvantage, is_completed, error_message) "
-                    "VALUES (:match_id, :dimension_id, :score, :advantage, "
-                    ":disadvantage, :is_completed, :error_message)"
-                ),
-                {
-                    "match_id": match_id,
-                    "dimension_id": dim["dimension_id"],
-                    "score": 0.0,
-                    "advantage": "",
-                    "disadvantage": "",
-                    "is_completed": 0,
-                    "error_message": error_message,
-                },
-            )
             dimension_results.append({
+                "dimension_id": dim["dimension_id"],
                 "dimension_name": dim["dimension_name"],
                 "score": 0.0,
                 "advantage": "",
@@ -195,25 +171,8 @@ def _save_dimension_results(
         score = _normalize_score(item.get("score"))
         advantage = str(item.get("advantage") or "")
         disadvantage = str(item.get("disadvantage") or "")
-        session.execute(
-            text(
-                "INSERT INTO resume_eval_detail "
-                "(match_id, dimension_id, dimension_score, dimension_advantage, "
-                "dimension_disadvantage, is_completed, error_message) "
-                "VALUES (:match_id, :dimension_id, :score, :advantage, "
-                ":disadvantage, :is_completed, :error_message)"
-            ),
-            {
-                "match_id": match_id,
-                "dimension_id": dim["dimension_id"],
-                "score": score,
-                "advantage": advantage,
-                "disadvantage": disadvantage,
-                "is_completed": 1,
-                "error_message": None,
-            },
-        )
         dimension_results.append({
+            "dimension_id": dim["dimension_id"],
             "dimension_name": dim["dimension_name"],
             "score": score,
             "advantage": advantage,
@@ -224,17 +183,69 @@ def _save_dimension_results(
     return dimension_results
 
 
-def _save_skill_hits(session: Session, match_id: int, skills: list[dict[str, Any]], ai_hits: list[Any]) -> None:
+def _build_skill_hits(skills: list[dict[str, Any]], ai_hits: list[Any]) -> list[dict[str, Any]]:
     hit_by_name = {
         str(item.get("skill", "")).strip(): item
         for item in ai_hits
         if isinstance(item, dict)
     }
+    skill_hits = []
 
     for skill in skills:
         item = hit_by_name.get(str(skill["skill"]).strip())
         is_hit = bool(item and item.get("is_hit"))
         hit_context = str(item.get("hit_context") or "") if item else ""
+        skill_hits.append({
+            "skill_id": skill["skill_id"],
+            "is_hit": 1 if is_hit else 0,
+            "hit_context": hit_context,
+        })
+    return skill_hits
+
+
+def _save_evaluation_results(
+    session: Session,
+    application_id: int,
+    resume_id: int,
+    job_id: int,
+    raw_text: str,
+    dimension_results: list[dict[str, Any]],
+    skill_hits: list[dict[str, Any]],
+    final_score: float,
+    final_label: str,
+    advantage_comment: str,
+    disadvantage_comment: str,
+) -> int:
+    match_id = _get_or_create_match_id(session, application_id, resume_id, job_id)
+    _delete_old_results(session, match_id)
+
+    if raw_text:
+        session.execute(
+            text("UPDATE resume SET raw_text = :raw_text WHERE id = :resume_id"),
+            {"resume_id": resume_id, "raw_text": raw_text},
+        )
+
+    for item in dimension_results:
+        session.execute(
+            text(
+                "INSERT INTO resume_eval_detail "
+                "(match_id, dimension_id, dimension_score, dimension_advantage, "
+                "dimension_disadvantage, is_completed, error_message) "
+                "VALUES (:match_id, :dimension_id, :score, :advantage, "
+                ":disadvantage, :is_completed, :error_message)"
+            ),
+            {
+                "match_id": match_id,
+                "dimension_id": item["dimension_id"],
+                "score": item["score"],
+                "advantage": item["advantage"],
+                "disadvantage": item["disadvantage"],
+                "is_completed": 1 if item["is_completed"] else 0,
+                "error_message": item.get("error_message"),
+            },
+        )
+
+    for hit in skill_hits:
         session.execute(
             text(
                 "INSERT INTO resume_skill_hit "
@@ -243,11 +254,22 @@ def _save_skill_hits(session: Session, match_id: int, skills: list[dict[str, Any
             ),
             {
                 "match_id": match_id,
-                "skill_id": skill["skill_id"],
-                "is_hit": 1 if is_hit else 0,
-                "hit_context": hit_context,
+                "skill_id": hit["skill_id"],
+                "is_hit": hit["is_hit"],
+                "hit_context": hit["hit_context"],
             },
         )
+
+    _update_match_result(
+        session,
+        match_id,
+        final_score,
+        final_label,
+        advantage_comment,
+        disadvantage_comment,
+    )
+    session.commit()
+    return match_id
 
 
 def _update_match_result(
@@ -274,14 +296,7 @@ def _update_match_result(
     )
 
 
-def _update_match_error(session: Session, match_id: int, error_message: str) -> None:
-    session.execute(
-        text("UPDATE resume_job_match SET error_message = :error_message WHERE id = :match_id"),
-        {"match_id": match_id, "error_message": error_message[:500]},
-    )
-
-
-def _evaluate_application(session: Session, application_id: int) -> dict[str, Any]:
+def _load_evaluation_context(session: Session, application_id: int) -> dict[str, Any]:
     application = _get_application(session, application_id)
     if not application:
         raise NotFoundError("投递记录不存在")
@@ -294,20 +309,41 @@ def _evaluate_application(session: Session, application_id: int) -> dict[str, An
     resume = _get_resume(session, resume_id)
     if not resume:
         raise NotFoundError("简历不存在或未解析")
-    resume_text = str(resume.get("raw_text") or "") or _parse_resume_text(session, resume)
-    if not resume_text:
-        raise NotFoundError("简历不存在或未解析")
 
     job = snapshot.get("job", {})
-    match_id = _get_or_create_match_id(session, application_id, resume_id, job_id)
-    _delete_old_results(session, match_id)
-
     dimensions = _get_dimensions(snapshot)
     if not dimensions:
         raise NotFoundError("投递快照未包含评估维度，无法评估")
 
     skills = _get_skills(snapshot)
-    session.commit()
+    return {
+        "application_id": application_id,
+        "resume_id": resume_id,
+        "job_id": job_id,
+        "resume": resume,
+        "job": job,
+        "dimensions": dimensions,
+        "skills": skills,
+    }
+
+
+def _evaluate_application(context: dict[str, Any]) -> dict[str, Any]:
+    application_id = int(context["application_id"])
+    resume_id = int(context["resume_id"])
+    job_id = int(context["job_id"])
+    resume = context["resume"]
+    job = context["job"]
+    dimensions = context["dimensions"]
+    skills = context["skills"]
+
+    existing_resume_text = str(resume.get("raw_text") or "")
+    parsed_resume_text = ""
+    resume_text = existing_resume_text
+    if not resume_text:
+        parsed_resume_text = _parse_resume_text(resume)
+        resume_text = parsed_resume_text
+    if not resume_text:
+        raise NotFoundError("简历不存在或未解析")
 
     eval_result = ResumeEvalChain().evaluate(
         resume_text,
@@ -324,13 +360,10 @@ def _evaluate_application(session: Session, application_id: int) -> dict[str, An
         [{"skill": skill["skill"], "type": skill["type"]} for skill in skills],
     )
 
-    dimension_results = _save_dimension_results(
-        session,
-        match_id,
+    dimension_results = _build_dimension_results(
         dimensions,
         eval_result.get("dimensions", []),
     )
-    session.commit()
 
     completed_results = [item for item in dimension_results if item["is_completed"]]
     if not completed_results:
@@ -341,23 +374,16 @@ def _evaluate_application(session: Session, application_id: int) -> dict[str, An
     advantage_comment = str(eval_result.get("advantage_comment") or "")
     disadvantage_comment = str(eval_result.get("disadvantage_comment") or "")
 
-    _update_match_result(
-        session,
-        match_id,
-        final_score,
-        final_label,
-        advantage_comment,
-        disadvantage_comment,
-    )
-    _save_skill_hits(session, match_id, skills, eval_result.get("skill_hits", []))
-    session.commit()
-
-    logger.info(f"投递 {application_id} 评估完成，岗位 {job_id}，得分 {final_score}")
+    skill_hits = _build_skill_hits(skills, eval_result.get("skill_hits", []))
     return {
-        "match_id": match_id,
+        "application_id": application_id,
+        "resume_id": resume_id,
+        "job_id": job_id,
+        "parsed_resume_text": parsed_resume_text,
         "final_score": final_score,
         "final_label": final_label,
         "dimensions": dimension_results,
+        "skill_hits": skill_hits,
         "advantage_comment": advantage_comment,
         "disadvantage_comment": disadvantage_comment,
     }
@@ -371,27 +397,41 @@ def _sync_eval_logic(application_ids: list[int]) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
 
     try:
-        with session_factory() as session:
-            for application_id in application_ids:
-                try:
-                    result = _evaluate_application(session, application_id)
-                    results.append({
-                        "application_id": application_id,
-                        "status": "success",
-                        "match_id": result.get("match_id"),
-                    })
-                except Exception as exc:
+        for application_id in application_ids:
+            try:
+                with session_factory() as session:
+                    context = _load_evaluation_context(session, application_id)
                     session.rollback()
-                    match_id = _get_match_id(session, application_id)
-                    if match_id:
-                        _update_match_error(session, match_id, str(exc))
-                        session.commit()
-                    logger.error(f"投递 {application_id} 评估失败: {exc}")
-                    results.append({
-                        "application_id": application_id,
-                        "status": "failed",
-                        "error": str(exc),
-                    })
+
+                result = _evaluate_application(context)
+
+                with session_factory() as session:
+                    match_id = _save_evaluation_results(
+                        session,
+                        int(result["application_id"]),
+                        int(result["resume_id"]),
+                        int(result["job_id"]),
+                        str(result.get("parsed_resume_text") or ""),
+                        result["dimensions"],
+                        result["skill_hits"],
+                        float(result["final_score"]),
+                        str(result["final_label"]),
+                        str(result.get("advantage_comment") or ""),
+                        str(result.get("disadvantage_comment") or ""),
+                    )
+                logger.info(f"投递 {application_id} 评估完成，得分 {result['final_score']}")
+                results.append({
+                    "application_id": application_id,
+                    "status": "success",
+                    "match_id": match_id,
+                })
+            except Exception as exc:
+                logger.error(f"投递 {application_id} 评估失败: {exc}")
+                results.append({
+                    "application_id": application_id,
+                    "status": "failed",
+                    "error": str(exc),
+                })
     finally:
         engine.dispose()
 

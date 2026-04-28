@@ -12,6 +12,15 @@ class EvalService:
         self.job_repo = job_repo
         self.app_repo = ApplicationRepository(eval_repo.db)
 
+    async def validate_batch_applications(self, application_ids: list[int]) -> None:
+        if not application_ids:
+            raise ValidationError("请选择需要评估的投递")
+        unique_ids = list(dict.fromkeys(application_ids))
+        existing_ids = await self.app_repo.get_existing_ids(unique_ids)
+        missing_ids = [application_id for application_id in unique_ids if application_id not in existing_ids]
+        if missing_ids:
+            raise NotFoundError(f"投递记录不存在: {','.join(str(application_id) for application_id in missing_ids)}")
+
     async def get_evaluation_detail(self, match_id: int) -> dict:
         """获取评估详情"""
         match = await self.eval_repo.get_match_by_id(match_id)
