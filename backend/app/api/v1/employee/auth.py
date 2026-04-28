@@ -23,7 +23,7 @@ def get_redis_client():
         host=settings.REDIS_HOST,
         port=settings.REDIS_PORT,
         db=settings.REDIS_DB,
-        password=settings.REDIS_PASSWORD or None,
+        password=settings.redis_password or None,
         decode_responses=True
     )
 

@@ -113,7 +113,7 @@ async def send_verification_email(to_email: str, code: str) -> bool:
             hostname=settings.SMTP_HOST,
             port=settings.SMTP_PORT,
             username=settings.SMTP_USER,
-            password=settings.SMTP_PASSWORD,
+            password=settings.smtp_password,
             use_tls=True,
             timeout=30,
         )

@@ -1,0 +1,44 @@
+[project]
+name = "resume-platform-backend"
+version = "0.1.0"
+description = "FastAPI backend for the resume platform"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.109.2",
+    "starlette==0.36.3",
+    "uvicorn[standard]==0.27.1",
+    "pydantic==2.7.4",
+    "pydantic-settings==2.1.0",
+    "python-jose[cryptography]==3.3.0",
+    "passlib[bcrypt]==1.7.4",
+    "python-multipart==0.0.9",
+    "aiomysql==0.2.0",
+    "PyMySQL==1.1.0",
+    "SQLAlchemy==2.0.25",
+    "redis==5.0.1",
+    "aiosmtplib==3.0.1",
+    "celery==5.3.6",
+    "litellm==1.10.0",
+    "langchain>=0.1.6",
+    "langchain-core>=0.1.22",
+    "python-docx==1.1.0",
+    "PyPDF2==3.0.1",
+    "aiofiles==23.2.1",
+    "email-validator==2.1.0.post1",
+    "httpx==0.26.0",
+    "bcrypt==4.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.4",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "celery_app*"]

@@ -38,7 +38,7 @@ def llm_complete(prompt: str, model: str = None, max_retries: int = 3, timeout: 
             response = litellm.completion(
                 model=target_model,
                 messages=[{"role": "user", "content": prompt}],
-                api_key=settings.OPENAI_API_KEY,
+                api_key=settings.openai_api_key,
                 api_base=settings.OPENAI_API_BASE,
                 timeout=timeout,
                 extra_body={"enable_thinking": False},

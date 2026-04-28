@@ -12,7 +12,7 @@ from app.core.config import get_settings
 
 
 settings = get_settings()
-TEST_DATABASE_URL = f"mysql+aiomysql://{settings.DB_USER}:{settings.DB_PASSWORD}@{settings.DB_HOST}:{settings.DB_PORT}/resume_test"
+TEST_DATABASE_URL = f"mysql+aiomysql://{settings.DB_USER}:{settings.db_password}@{settings.DB_HOST}:{settings.DB_PORT}/resume_test"
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -80,7 +80,7 @@ def redis_client():
         host=settings.REDIS_HOST,
         port=settings.REDIS_PORT,
         db=settings.REDIS_DB,
-        password=settings.REDIS_PASSWORD or None,
+        password=settings.redis_password or None,
         decode_responses=True
     )
     yield client
