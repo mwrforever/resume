@@ -293,7 +293,7 @@ export default function EmployeeEvalDetail() {
                       <CartesianGrid stroke="#E2E8F0" horizontal={false} />
                       <XAxis type="number" domain={[0, 100]} tickLine={false} axisLine={false} tick={{ fill: '#64748B', fontSize: 12 }} />
                       <YAxis dataKey="name" type="category" width={80} tickLine={false} axisLine={false} tick={{ fill: '#64748B', fontSize: 12 }} />
-                      <Tooltip formatter={(value: number) => [`${value} 分`, '得分']} cursor={{ fill: '#F8FAFC' }} />
+                      <Tooltip formatter={(value) => [`${value ?? 0} 分`, '得分']} cursor={{ fill: '#F8FAFC' }} />
                       <Bar dataKey="score" radius={[0, 8, 8, 0]} barSize={14}>
                         {dimensionChartData.map((dimension) => (
                           <Cell key={dimension.name} fill={getDimensionColor(dimension.score)} />

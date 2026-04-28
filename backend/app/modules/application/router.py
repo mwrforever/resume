@@ -11,8 +11,8 @@ from app.modules.eval_template.service import EvalTemplateService
 from app.modules.evaluation.repository import EvalRepository
 from app.modules.job.repository import JobRepository
 from app.modules.resume.repository import ResumeRepository
-from app.schemas.application import ApplyRequest
-from app.schemas.response import ApiResponse, ApplicationDetail, EmployeeApplicationItem, PageData
+from app.schemas.vo.request.application_request import ApplyRequest
+from app.schemas.vo.response.application_response import ApiResponse, ApplicationDetail, EmployeeApplicationItem, PageData
 
 employee_router = APIRouter()
 user_router = APIRouter()

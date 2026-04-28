@@ -126,10 +126,11 @@ function SelectContent({ children, className }: SelectContentProps) {
       <div onClick={() => setOpen(false)}>
         {React.Children.map(children, (child) => {
           if (React.isValidElement(child)) {
-            return React.cloneElement(child as React.ReactElement<{ onSelect: () => void }>, {
+            const item = child as React.ReactElement<SelectItemProps>;
+            return React.cloneElement(item, {
               onSelect: () => {
-                onValueChange(child.props.value);
-                const label = typeof child.props.children === 'string' ? child.props.children : '';
+                onValueChange(item.props.value);
+                const label = typeof item.props.children === 'string' ? item.props.children : '';
                 setSelectedLabel(label);
                 setOpen(false);
               },

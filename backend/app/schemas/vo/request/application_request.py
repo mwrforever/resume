@@ -1,3 +1,6 @@
-from app.schemas.application import ApplyRequest
+from pydantic import BaseModel
 
-__all__ = ["ApplyRequest"]
+
+class ApplyRequest(BaseModel):
+    job_id: int
+    resume_id: int

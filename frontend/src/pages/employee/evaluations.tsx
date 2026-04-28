@@ -31,14 +31,16 @@ export default function EmployeeEvaluations() {
   useEffect(() => {
     const loadJobs = async () => {
       try {
-        const [jobRes, deptRes] = await Promise.all([
-          employeeJobsApi.list({ page: 1, page_size: 100 }),
-          deptApi.listDepts(),
-        ]);
+        const jobRes = await employeeJobsApi.list({ page: 1, page_size: 100 });
         setJobs(jobRes.data.items || []);
-        setDepts(deptRes.data || []);
       } catch (error) {
         console.error('Failed to load jobs:', error);
+      }
+      try {
+        const deptRes = await deptApi.listDepts();
+        setDepts(deptRes.data || []);
+      } catch (error) {
+        console.error('Failed to load departments:', error);
       }
     };
     loadJobs();

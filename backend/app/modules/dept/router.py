@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.modules.dept.repository import DeptRepository
-from app.schemas.dept import DeptCreate, DeptImportResult, DeptItem, DeptUpdate
-from app.schemas.response import ApiResponse, PageData
+from app.schemas.vo.request.dept_request import DeptCreate, DeptUpdate
+from app.schemas.vo.response.dept_response import ApiResponse, DeptImportResult, DeptItem, PageData
 from app.modules.dept.service import DeptService
 
 router = APIRouter()

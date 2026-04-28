@@ -4,21 +4,24 @@ from app.api.deps import get_current_user, get_db
 from app.core.exceptions import NotFoundError
 from app.modules.eval_template.repository import EvalTemplateRepository
 from app.modules.eval_template.service import EvalTemplateService
-from app.schemas.eval_template import (
+from app.schemas.vo.request.eval_template_request import (
     EvalDimensionAiSuggestRequest,
-    EvalDimensionAiSuggestResponse,
     EvalDimensionCreate,
-    EvalDimensionItem,
     EvalDimensionUpdate,
     EvalTemplateCreate,
-    EvalTemplateItem,
     EvalTemplateUpdate,
     JobTemplateAiSuggestRequest,
-    JobTemplateAiSuggestResponse,
     TemplateSkillAiSuggestRequest,
+)
+from app.schemas.vo.response.eval_template_response import (
+    ApiResponse,
+    EvalDimensionAiSuggestResponse,
+    EvalDimensionItem,
+    EvalTemplateItem,
+    JobTemplateAiSuggestResponse,
+    PageData,
     TemplateSkillAiSuggestResponse,
 )
-from app.schemas.response import ApiResponse, PageData
 
 dimension_router = APIRouter()
 template_router = APIRouter()

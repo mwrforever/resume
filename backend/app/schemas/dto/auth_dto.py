@@ -1,3 +1,9 @@
-from app.schemas.auth import TokenResponse
+from pydantic import BaseModel
 
-__all__ = ["TokenResponse"]
+
+class TokenDTO(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user_type: str
+    user_id: int

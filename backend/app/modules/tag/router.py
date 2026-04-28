@@ -1,9 +1,9 @@
 ﻿from fastapi import APIRouter, Depends, Query
 from app.modules.tag.repository import TagRepository
-from app.schemas.job import TagCreate, TagItem, TagUpdate
+from app.schemas.vo.request.tag_request import TagCreate, TagUpdate
+from app.schemas.vo.response.tag_response import ApiResponse, PageData, TagItem
 from app.api.deps import get_db, get_current_user
 from app.core.exceptions import NotFoundError, ValidationError
-from app.schemas.response import ApiResponse, PageData
 from typing import Optional
 
 router = APIRouter()

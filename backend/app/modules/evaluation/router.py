@@ -1,23 +1,17 @@
 import logging
-from typing import List
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 
 from app.api.deps import get_current_user, get_db
 from app.modules.evaluation.repository import EvalRepository, JobRepository, ResumeRepository
 from app.modules.evaluation.service import EvalService
-from app.schemas.response import ApiResponse, EvalResult
+from app.schemas.vo.request.evaluation_request import BatchEvalRequest
+from app.schemas.vo.response.evaluation_response import ApiResponse, EvalResult
 from celery_app.tasks.eval_task import run_evaluation_task
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
-
-
-class BatchEvalRequest(BaseModel):
-    application_ids: List[int]
-
 
 def get_service(db=Depends(get_db)) -> EvalService:
     return EvalService(

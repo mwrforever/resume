@@ -42,9 +42,9 @@ const mockJobs = [
 ];
 
 const mockResumes = [
-  { resume_id: 1, file_name: 'resume_frontend.pdf', status: 'pending' },
-  { resume_id: 2, file_name: 'resume_backend.pdf', status: 'pending' },
-  { resume_id: 3, file_name: 'resume_fullstack.pdf', status: 'pending' },
+  { application_id: 1, resume_id: 1, file_name: 'resume_frontend.pdf', status: 'pending' },
+  { application_id: 2, resume_id: 2, file_name: 'resume_backend.pdf', status: 'pending' },
+  { application_id: 3, resume_id: 3, file_name: 'resume_fullstack.pdf', status: 'pending' },
 ];
 
 describe('EmployeeEvaluations Page', () => {

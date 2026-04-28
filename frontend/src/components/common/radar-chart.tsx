@@ -25,7 +25,7 @@ export function EvaluationRadarChart({ data }: RadarChartProps) {
           tickCount={5}
           axisLine={false}
         />
-        <Tooltip formatter={(value: number) => [`${value} 分`, '得分']} />
+        <Tooltip formatter={(value) => [`${value ?? 0} 分`, '得分']} />
         <Radar
           name="得分"
           dataKey="score"

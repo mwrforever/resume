@@ -10,7 +10,8 @@ from app.core.config import get_settings
 from app.core.security import create_access_token, create_refresh_token, decode_token, get_password_hash
 from app.modules.employee_auth.repository import EmployeeRepository, UserRepository
 from app.modules.employee_auth.service import AuthService
-from app.schemas.auth import EmployeeLoginRequest, EmployeeRegisterRequest, SendCodeRequest, TokenResponse
+from app.schemas.vo.request.employee_auth_request import EmployeeLoginRequest, EmployeeRegisterRequest, RefreshTokenRequest, SendCodeRequest
+from app.schemas.vo.response.employee_auth_response import TokenResponse
 from app.utils.email.email_service import send_verification_email
 
 router = APIRouter()
@@ -131,15 +132,11 @@ async def login(
 
 @router.post("/refresh")
 async def refresh_token(
-    req: dict[str, Any],
+    req: RefreshTokenRequest,
     service: AuthService = Depends(get_auth_service)
 ) -> dict[str, Any]:
-    refresh_token_val = req.get("refresh_token")
-    if not refresh_token_val:
-        raise HTTPException(status_code=400, detail="refresh_token不能为空")
-
     try:
-        payload = decode_token(refresh_token_val)
+        payload = decode_token(req.refresh_token)
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="无效的refresh token")
 

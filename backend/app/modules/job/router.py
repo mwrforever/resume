@@ -10,8 +10,8 @@ from app.modules.eval_template.repository import EvalTemplateRepository
 from app.modules.eval_template.service import EvalTemplateService
 from app.modules.job.repository import JobRepository
 from app.modules.job.service import JobService
-from app.schemas.job import AiSuggestRequest, AiSuggestResponse, JobCreate, JobUpdate
-from app.schemas.response import ApiResponse, JobDetail, JobItem, PageData
+from app.schemas.vo.request.job_request import AiSuggestRequest, JobCreate, JobUpdate
+from app.schemas.vo.response.job_response import ApiResponse, AiSuggestResponse, JobDetail, JobItem, PageData
 from app.utils.ai.chains import JobAiSuggestChain
 
 employee_ai_router = APIRouter()

@@ -1,3 +1,11 @@
-from app.schemas.response import ApiResponse
+from typing import Generic, Optional, TypeVar
 
-__all__ = ["ApiResponse"]
+from pydantic import BaseModel
+
+T = TypeVar("T")
+
+
+class ApiResponse(BaseModel, Generic[T]):
+    code: int = 200
+    message: str = "success"
+    data: Optional[T] = None

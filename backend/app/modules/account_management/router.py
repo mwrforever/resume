@@ -6,15 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.modules.account_management.repository import DeptRepository, EmployeeRepository, UserRepository
 from app.modules.account_management.service import AccountManagementService
-from app.schemas.account_management import (
+from app.schemas.vo.request.account_management_request import (
     ManagedEmployeeCreate,
-    ManagedEmployeeItem,
     ManagedEmployeeUpdate,
     ManagedUserCreate,
-    ManagedUserItem,
     ManagedUserUpdate,
 )
-from app.schemas.response import ApiResponse, PageData
+from app.schemas.vo.response.account_management_response import ApiResponse, ManagedEmployeeItem, ManagedUserItem, PageData
 
 router = APIRouter()
 

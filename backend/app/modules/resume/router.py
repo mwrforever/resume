@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.core.exceptions import BizError
 from app.modules.resume.repository import ResumeRepository
 from app.modules.resume.service import ResumeService
-from app.schemas.response import ApiResponse, PageData, ResumeDetail, ResumeItem
+from app.schemas.vo.response.resume_response import ApiResponse, PageData, ResumeDetail, ResumeItem
 
 employee_router = APIRouter()
 user_router = APIRouter()

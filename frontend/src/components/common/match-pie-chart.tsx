@@ -46,7 +46,10 @@ export function MatchPieChart({ data }: MatchPieChartProps) {
         <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 28, bottom: 4, left: 4 }}>
           <XAxis type="number" domain={[0, 100]} hide />
           <YAxis dataKey="name" type="category" width={48} tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: '#64748B' }} />
-          <Tooltip formatter={(value: number, _name: string, item) => [`${item.payload.count}份（${value}%）`, item.payload.name]} />
+          <Tooltip formatter={(value, _name, item) => {
+            const payload = item.payload as { count: number; name: string };
+            return [`${payload.count}份（${value ?? 0}%）`, payload.name];
+          }} />
           <Bar dataKey="percentage" radius={[0, 6, 6, 0]} barSize={18} background={{ fill: '#F1F5F9', radius: 6 }}>
             {chartData.map((entry) => (
               <Cell key={entry.name} fill={entry.color} />

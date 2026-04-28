@@ -80,7 +80,7 @@ describe('UserMyApplications Page', () => {
       });
     });
 
-    it('test_click_application_shows_detail', async () => {
+    it('test_application_detail_entry_removed', async () => {
       vi.mocked(userApplicationsApi.list).mockResolvedValue({
         data: { items: mockApplications, total: 2 }
       } as any);
@@ -92,9 +92,9 @@ describe('UserMyApplications Page', () => {
       );
 
       await waitFor(() => {
-        const detailButtons = screen.getAllByRole('button', { name: /查看详情/i });
-        expect(detailButtons[0]).toBeInTheDocument();
+        expect(screen.getByText('岗位 ID: 101')).toBeInTheDocument();
       });
+      expect(screen.queryByRole('button', { name: /查看详情/i })).not.toBeInTheDocument();
     });
   });
 });

@@ -5,6 +5,44 @@ import pytest
 from httpx import AsyncClient
 
 
+async def create_published_job(client: AsyncClient, employee_headers: dict, name: str) -> int:
+    dimension_resp = await client.post(
+        "/api/v1/employee/eval-dimensions",
+        json={"dimension_name": f"{name} Dimension", "default_prompt_template": "Evaluate {resume_text} for {job_name}", "status": 1},
+        headers=employee_headers,
+    )
+    dimension_id = dimension_resp.json()["data"]["id"]
+
+    template_resp = await client.post(
+        "/api/v1/employee/eval-templates",
+        json={
+            "template_name": f"{name} Template",
+            "description": "Test template",
+            "status": 1,
+            "dimensions": [{"dimension_id": dimension_id, "weight": 1.0, "prompt_template": "Evaluate {resume_text} for {job_name}"}],
+            "skills": [],
+            "tag_ids": [],
+        },
+        headers=employee_headers,
+    )
+    template_id = template_resp.json()["data"]["id"]
+
+    job_resp = await client.post(
+        "/api/v1/employee/jobs",
+        json={"dept_id": 1, "template_id": template_id, "name": name, "description": "Test"},
+        headers=employee_headers,
+    )
+    job_id = job_resp.json()["data"]["id"]
+
+    publish_resp = await client.put(
+        f"/api/v1/employee/jobs/{job_id}",
+        json={"status": 1},
+        headers=employee_headers,
+    )
+    assert publish_resp.status_code == 200
+    return job_id
+
+
 @pytest.mark.asyncio
 async def test_list_applications_filters_by_job_id(
     client: AsyncClient,
@@ -12,13 +50,7 @@ async def test_list_applications_filters_by_job_id(
     user_headers: dict
 ):
     """Test that listing applications filters by job_id"""
-    # Create a job as employee
-    job_resp = await client.post(
-        "/api/v1/employee/jobs",
-        json={"dept_id": 1, "name": "Filter Test Job", "description": "Test"},
-        headers=employee_headers
-    )
-    job_id = job_resp.json()["data"]["id"]
+    job_id = await create_published_job(client, employee_headers, "Filter Test Job")
 
     # User applies to the job
     await client.post(
@@ -48,13 +80,7 @@ async def test_update_application_status_changes_state(
     user_headers: dict
 ):
     """Test that updating application status changes the state"""
-    # Create a job as employee
-    job_resp = await client.post(
-        "/api/v1/employee/jobs",
-        json={"dept_id": 1, "name": "Status Test Job", "description": "Test"},
-        headers=employee_headers
-    )
-    job_id = job_resp.json()["data"]["id"]
+    job_id = await create_published_job(client, employee_headers, "Status Test Job")
 
     # User applies to the job
     app_resp = await client.post(

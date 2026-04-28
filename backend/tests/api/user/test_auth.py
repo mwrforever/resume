@@ -82,9 +82,9 @@ class TestUserRegister:
         )
         assert response.status_code == 200
         data = response.json()
-        assert "access_token" in data
-        assert "refresh_token" in data
-        assert data["user_type"] == "user"
+        assert "access_token" in data["data"]
+        assert "refresh_token" in data["data"]
+        assert data["data"]["user_type"] == "user"
 
     @pytest.mark.asyncio
     async def test_register_validates_verification_code(self, client, unique_email):
@@ -313,8 +313,8 @@ class TestUserRefresh:
                 "real_name": "Test User"
             }
         )
-        refresh_token = register_response.json()["refresh_token"]
-        original_access_token = register_response.json()["access_token"]
+        refresh_token = register_response.json()["data"]["refresh_token"]
+        original_access_token = register_response.json()["data"]["access_token"]
 
         # Wait a moment to ensure token timestamps differ
         time.sleep(1)

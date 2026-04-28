@@ -36,7 +36,6 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
     REDIS_PASSWORD: SecretStr = SecretStr("")
 
-    LITELLM_PROVIDER: str = "openai"
     OPENAI_API_KEY: SecretStr
     OPENAI_API_BASE: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-4-turbo-preview"
