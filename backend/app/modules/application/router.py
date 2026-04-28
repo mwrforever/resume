@@ -3,7 +3,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import get_current_user, get_db
+from app.core.deps import get_current_user, get_db
 from app.modules.application.repository import ApplicationRepository
 from app.modules.application.service import ApplicationService
 from app.modules.eval_template.repository import EvalTemplateRepository

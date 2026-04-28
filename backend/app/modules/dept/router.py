@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.core.deps import get_current_user, get_db
 from app.modules.dept.repository import DeptRepository
 from app.schemas.vo.request.dept_request import DeptCreate, DeptUpdate
 from app.schemas.vo.response.dept_response import ApiResponse, DeptImportResult, DeptItem, PageData

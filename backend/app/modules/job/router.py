@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import get_current_user, get_current_user_optional, get_db
+from app.core.deps import get_current_user, get_current_user_optional, get_db
 from app.core.exceptions import ValidationError
 from app.modules.application.repository import ApplicationRepository
 from app.modules.eval_template.repository import EvalTemplateRepository

@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
-from app.api.deps import get_current_user, get_db
+from app.core.deps import get_current_user, get_db
 from app.core.config import get_settings
 from app.core.exceptions import BizError
 from app.modules.resume.repository import ResumeRepository

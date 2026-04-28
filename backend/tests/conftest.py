@@ -38,7 +38,7 @@ async def _ensure_test_schema(engine) -> None:
 @pytest_asyncio.fixture(scope="function")
 async def client():
     """Create async test client with proper cleanup"""
-    from app.api.deps import get_db
+    from app.core.deps import get_db
 
     engine = create_async_engine(TEST_DATABASE_URL, echo=False, pool_pre_ping=True, pool_size=5, max_overflow=0)
     await _ensure_test_schema(engine)

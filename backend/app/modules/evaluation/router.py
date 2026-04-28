@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import get_current_user, get_db
+from app.core.deps import get_current_user, get_db
 from app.modules.evaluation.repository import EvalRepository, JobRepository, ResumeRepository
 from app.modules.evaluation.service import EvalService
 from app.schemas.vo.request.evaluation_request import BatchEvalRequest

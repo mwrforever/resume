@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import get_current_user, get_db
+from app.core.deps import get_current_user, get_db
 from app.modules.analytics.repository import EvalRepository, JobRepository, ResumeRepository
 from app.schemas.vo.response.analytics_response import ApiResponse
 

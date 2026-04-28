@@ -5,7 +5,7 @@ import redis
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.core.deps import get_current_user, get_db
 from app.core.config import get_settings
 from app.core.security import create_access_token, create_refresh_token, decode_token, get_password_hash
 from app.modules.user_auth.repository import EmployeeRepository, UserRepository

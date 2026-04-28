@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import get_current_user, get_db
+from app.core.deps import get_current_user, get_db
 from app.core.exceptions import NotFoundError
 from app.modules.eval_template.repository import EvalTemplateRepository
 from app.modules.eval_template.service import EvalTemplateService

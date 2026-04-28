@@ -13,7 +13,7 @@ async def test_batch_evaluation_triggers_for_applications(
 ):
     """Test that batch evaluation triggers evaluation for specified applications"""
     from app.main import app
-    from app.api.v1.employee import evaluations
+    from app.modules.evaluation import router as evaluations
 
     validated_ids = []
     dispatched_args = []
@@ -50,7 +50,7 @@ async def test_get_evaluation_detail_returns_result(
 ):
     """Test that getting evaluation detail returns evaluation result"""
     from app.main import app
-    from app.api.v1.employee import evaluations
+    from app.modules.evaluation import router as evaluations
 
     class FakeEvalService:
         async def get_evaluation_detail(self, match_id: int) -> dict:

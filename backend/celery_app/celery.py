@@ -1,24 +1,20 @@
-import os
-
 from celery import Celery
 from app.core.config import configure_logging, get_settings
 
 settings = get_settings()
 configure_logging(settings)
-os.environ["CELERY_BROKER_URL"] = settings.celery_broker_url
-os.environ.pop("CELERY_RESULT_BACKEND", None)
 
 
 celery_app = Celery(
     "resume_platform",
     broker=settings.celery_broker_url,
-    backend=None,
+    backend=settings.celery_result_backend,
     include=["celery_app.tasks.eval_task"]
 )
 
 celery_app.conf.update(
     broker_url=settings.celery_broker_url,
-    result_backend=None,
+    result_backend=settings.celery_result_backend,
     task_ignore_result=True,
     task_serializer="json",
     accept_content=["json"],
