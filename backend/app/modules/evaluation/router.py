@@ -7,7 +7,7 @@ from app.modules.evaluation.repository import EvalRepository, JobRepository, Res
 from app.modules.evaluation.service import EvalService
 from app.schemas.vo.request.evaluation_request import BatchEvalRequest
 from app.schemas.vo.response.evaluation_response import ApiResponse, EvalResult
-from celery_app.tasks.eval_task import run_evaluation_task
+from app.infrastructure.celery.eval_task import run_evaluation_task
 
 router = APIRouter()
 

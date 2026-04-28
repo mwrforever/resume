@@ -13,7 +13,7 @@ from app.core.config import BASE_DIR, get_settings
 from app.core.exceptions import NotFoundError, ValidationError
 from app.utils.ai.chains import ResumeEvalChain
 from app.utils.resume_parser import extract_resume_text
-from celery_app.celery import celery_app
+from app.infrastructure.celery.app import celery_app
 
 logger = logging.getLogger(__name__)
 
