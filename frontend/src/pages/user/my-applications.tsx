@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Briefcase, CalendarDays, RotateCcw } from 'lucide-react';
+import { Briefcase, CalendarDays, RotateCcw } from 'lucide-react';
 import { userApplicationsApi } from '@/api/user/applications';
 import { Button } from '@/components/ui/button';
 import { EmptyState, PageSkeleton, SectionCard, StatusPill } from '@/components/user/user-ui';
@@ -117,12 +117,6 @@ export default function UserMyApplications() {
                       撤回
                     </Button>
                   )}
-                  <Link to={`/user/my-applications/${app.id}`}>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      查看详情
-                      <ArrowRight className="h-4 w-4" aria-hidden="true" />
-                    </Button>
-                  </Link>
                 </div>
               </div>
             </SectionCard>

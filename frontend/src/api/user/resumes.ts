@@ -15,16 +15,12 @@ export interface ResumeUploadResult {
 }
 
 export const userResumesApi = {
+  list: () => client.get('/user/resumes') as unknown as Promise<{ code: number; message: string; data: { total: number; items: UserResume[] } }>,
   upload: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
     return client.post('/user/resumes', formData) as unknown as Promise<{ code: number; message: string; data: ResumeUploadResult }>;
   },
-
-  list: () => client.get('/user/resumes') as unknown as Promise<{ code: number; message: string; data: { total: number; items: UserResume[] } }>,
-
-  get: (id: number) => client.get(`/user/resumes/${id}`),
-
   delete: (id: number) => client.delete(`/user/resumes/${id}`),
 };
 

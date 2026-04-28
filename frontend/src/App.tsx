@@ -6,7 +6,6 @@ import UserJobs from '@/pages/user/jobs';
 import UserJobDetail from '@/pages/user/job-detail';
 import UserMyResumes from '@/pages/user/my-resumes';
 import UserMyApplications from '@/pages/user/my-applications';
-import UserApplicationDetail from '@/pages/user/application-detail';
 
 // Employee pages
 import EmployeeDashboard from '@/pages/employee/dashboard';
@@ -44,7 +43,6 @@ export default function App() {
         <Route path="/user/jobs/:id" element={<ProtectedRoute userType="user"><UserJobDetail /></ProtectedRoute>} />
         <Route path="/user/my-resumes" element={<ProtectedRoute userType="user"><UserMyResumes /></ProtectedRoute>} />
         <Route path="/user/my-applications" element={<ProtectedRoute userType="user"><UserMyApplications /></ProtectedRoute>} />
-        <Route path="/user/my-applications/:id" element={<ProtectedRoute userType="user"><UserApplicationDetail /></ProtectedRoute>} />
 
         {/* Employee Routes */}
         <Route path="/employee/login" element={<Auth />} />

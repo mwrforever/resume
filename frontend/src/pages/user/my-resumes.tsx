@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { CalendarDays, Eye, FileText, Mail, Trash2, Upload, UserRound } from 'lucide-react';
 import { userAuthApi } from '@/api/user/auth';
 import { userResumesApi } from '@/api/user/resumes';
@@ -6,10 +6,6 @@ import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/store/auth';
 import { EmptyState, PageSkeleton, SectionCard, StatusPill } from '@/components/user/user-ui';
 import { UserShell } from '@/components/user/user-shell';
-
-const ResumePreviewDialog = lazy(() =>
-  import('@/components/common/resume-preview-dialog').then((module) => ({ default: module.ResumePreviewDialog }))
-);
 
 interface UserInfo {
   id: number;
@@ -25,6 +21,11 @@ interface Resume {
   status: number;
   create_time: string;
 }
+
+const ResumePreviewDialog = lazy(async () => {
+  const module = await import('@/components/common/resume-preview-dialog');
+  return { default: module.ResumePreviewDialog };
+});
 
 export default function UserProfile() {
   const { userId } = useAuthStore();

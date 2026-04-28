@@ -1,13 +1,17 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { CheckCircle2, ClipboardCheck, Eye, FileText, Trash2 } from 'lucide-react';
 import { userJobsApi } from '@/api/user/jobs';
 import { userApplicationsApi } from '@/api/user/applications';
-import { resumePreviewApi } from '@/api/user/resumes';
 import { Button } from '@/components/ui/button';
 import { ResumeSelectorDialog } from '@/components/resume-selector-dialog';
-import { EmptyState, PageSkeleton, ResumePreviewModal, SectionCard, SkillPill, StatusPill } from '@/components/user/user-ui';
+import { EmptyState, PageSkeleton, SectionCard, SkillPill, StatusPill } from '@/components/user/user-ui';
 import { UserShell } from '@/components/user/user-shell';
+
+const ResumePreviewDialog = lazy(async () => {
+  const module = await import('@/components/common/resume-preview-dialog');
+  return { default: module.ResumePreviewDialog };
+});
 
 interface Job {
   id: number;
@@ -45,8 +49,9 @@ function ResumeAttachmentCard({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <Button variant="ghost" size="sm" onClick={onPreview} aria-label="预览简历">
+        <Button variant="outline" size="sm" onClick={onPreview} aria-label="预览简历" className="gap-1.5">
           <Eye className="h-4 w-4" aria-hidden="true" />
+          预览
         </Button>
         {onRemove ? (
           <Button variant="ghost" size="sm" onClick={onRemove} aria-label="移除简历" className="text-muted-foreground hover:text-destructive">
@@ -66,8 +71,7 @@ export default function UserJobDetail() {
   const [applying, setApplying] = useState(false);
   const [attachedResume, setAttachedResume] = useState<UploadedResume | null>(null);
   const [appliedResume, setAppliedResume] = useState<UploadedResume | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
+  const [previewResume, setPreviewResume] = useState<UploadedResume | null>(null);
   const [showResumeDialog, setShowResumeDialog] = useState(false);
 
   useEffect(() => {
@@ -106,15 +110,12 @@ export default function UserJobDetail() {
     });
   };
 
-  const handlePreview = (resume: UploadedResume) => {
-    if (!resume.file_path) return;
-    const url = resumePreviewApi.getUrl(resume.file_path);
-    setPreviewUrl(url);
-    setShowPreview(true);
-  };
-
   const handleRemoveResume = () => {
     setAttachedResume(null);
+  };
+
+  const handlePreview = (resume: UploadedResume) => {
+    setPreviewResume(resume);
   };
 
   const handleApply = async () => {
@@ -160,7 +161,17 @@ export default function UserJobDetail() {
         </StatusPill>
       }
     >
-      <ResumePreviewModal open={showPreview} url={previewUrl} onClose={() => setShowPreview(false)} />
+      {previewResume && (
+        <Suspense fallback={null}>
+          <ResumePreviewDialog
+            resumeId={previewResume.id}
+            fileName={previewResume.file_name}
+            fileUrl={`/api/v1/user/resumes/${previewResume.id}/file`}
+            open={!!previewResume}
+            onClose={() => setPreviewResume(null)}
+          />
+        </Suspense>
+      )}
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">

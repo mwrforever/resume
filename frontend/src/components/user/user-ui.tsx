@@ -1,6 +1,5 @@
 import { ReactNode } from 'react';
-import { FileText, Search, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface EmptyStateProps {
@@ -8,12 +7,6 @@ interface EmptyStateProps {
   description: string;
   icon?: ReactNode;
   action?: ReactNode;
-}
-
-interface ResumePreviewModalProps {
-  open: boolean;
-  url: string | null;
-  onClose: () => void;
 }
 
 interface SectionCardProps {
@@ -74,32 +67,6 @@ export function StatusPill({ children, className }: { children: ReactNode; class
     <span className={cn('inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums', className)}>
       {children}
     </span>
-  );
-}
-
-export function ResumePreviewModal({ open, url, onClose }: ResumePreviewModalProps) {
-  if (!open || !url) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-3 backdrop-blur-sm sm:p-6" role="dialog" aria-modal="true" aria-labelledby="resume-preview-title">
-      <div className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent/10 text-accent" aria-hidden="true">
-              <FileText className="h-5 w-5" />
-            </div>
-            <div className="min-w-0">
-              <h2 id="resume-preview-title" className="font-semibold text-foreground">简历预览</h2>
-              <p className="text-xs text-muted-foreground">查看当前选择的附件简历</p>
-            </div>
-          </div>
-          <Button variant="ghost" size="sm" onClick={onClose} aria-label="关闭简历预览">
-            <X className="h-4 w-4" aria-hidden="true" />
-          </Button>
-        </div>
-        <iframe src={url} className="min-h-0 flex-1 bg-muted" title="简历预览" />
-      </div>
-    </div>
   );
 }
 
