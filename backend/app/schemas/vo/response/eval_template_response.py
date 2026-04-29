@@ -1,8 +1,8 @@
-from typing import Any, Generic, Optional, TypeVar
+from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-T = TypeVar("T")
+from app.schemas.common import ApiResponse, PageData
 
 
 class EvalDimensionItem(BaseModel):
@@ -14,8 +14,7 @@ class EvalDimensionItem(BaseModel):
     status: int = 1
     template_count: int = 0
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class EvalDimensionAiSuggestResponse(BaseModel):
@@ -77,16 +76,5 @@ class EvalTemplateItem(BaseModel):
     skills: list[TemplateSkillItem] = []
     tags: list[TemplateTagItem] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
-
-class PageData(BaseModel):
-    total: int
-    items: list[Any]
-
-
-class ApiResponse(BaseModel, Generic[T]):
-    code: int = 200
-    message: str = "success"
-    data: Optional[T] = None

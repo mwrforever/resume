@@ -4,7 +4,7 @@ import time
 
 from langchain_openai import ChatOpenAI
 
-from app.core.config import get_settings
+from app.infrastructure.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

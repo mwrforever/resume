@@ -4,9 +4,10 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
-from app.core.deps import get_current_user, get_db
-from app.core.config import get_settings
-from app.core.exceptions import BizError
+from app.infrastructure.client.deps import get_current_user
+from app.infrastructure.client import get_db
+from app.infrastructure.config import get_settings
+from app.infrastructure.exception import BizError
 from app.modules.resume.repository import ResumeRepository
 from app.modules.resume.service import ResumeService
 from app.schemas.vo.response.resume_response import ApiResponse, PageData, ResumeDetail, ResumeItem
@@ -111,10 +112,11 @@ async def delete_resume(
 async def list_resumes(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    search: str = Query(None),
     repo: ResumeRepository = Depends(get_repo),
 ):
     """获取简历列表（员工端）"""
-    rows, total = await repo.list_all((page - 1) * page_size, page_size)
+    rows, total = await repo.list_all((page - 1) * page_size, page_size, search)
     items = []
     for resume, user in rows:
         item = ResumeItem.model_validate(resume)

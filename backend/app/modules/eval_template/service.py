@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime
 
-from app.core.exceptions import NotFoundError, ValidationError
+from app.infrastructure.exception import NotFoundError, ValidationError
 from app.modules.eval_template.repository import EvalTemplateRepository
 from app.schemas.vo.request.eval_template_request import EvalDimensionAiSuggestRequest, JobTemplateAiSuggestRequest, TemplateSkillAiSuggestRequest
 from app.utils.ai.chains import EvalDimensionAiSuggestChain, JobTemplateAiSuggestChain, TemplateSkillAiSuggestChain

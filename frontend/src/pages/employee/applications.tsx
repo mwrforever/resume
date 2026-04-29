@@ -2,15 +2,17 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { Pagination } from '@/components/common/pagination';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DepartmentMultiSelect } from '@/components/employee/department-multi-select';
 import { employeeApplicationsApi } from '@/api/employee/applications';
 import { employeeEvaluationsApi } from '@/api/employee/evaluations';
 import { employeeJobsApi } from '@/api/employee/jobs';
 import { deptApi } from '@/api/employee/depts';
-import { useThrottleCallback } from '@/hooks/use-debounce';
+import { useDebounce, useThrottleCallback } from '@/hooks/use-debounce';
 import type { IDeptItem, Job } from '@/types/employee';
-import { BarChart2, ChevronDown, Eye, Loader2, RefreshCw, X, Zap } from 'lucide-react';
+import { BarChart2, ChevronDown, Eye, Loader2, RefreshCw, RotateCcw, Search, X, Zap } from 'lucide-react';
 
 const DEFAULT_PAGE_SIZE = 10;
 const ResumePreviewDialog = lazy(async () => {
@@ -21,6 +23,7 @@ const ResumePreviewDialog = lazy(async () => {
 interface Application {
   id: number;
   user_id: number;
+  user_real_name?: string;
   job_id: number;
   job_name: string;
   resume_id: number;
@@ -109,14 +112,29 @@ export default function EmployeeApplications() {
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [depts, setDepts] = useState<IDeptItem[]>([]);
-  const [jobFilterOpen, setJobFilterOpen] = useState(false);
   const [deptFilterOpen, setDeptFilterOpen] = useState(false);
+
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('search') ?? '');
+  const debouncedSearch = useDebounce(searchInput, 400);
+  const [jobDialogOpen, setJobDialogOpen] = useState(false);
 
   const filterStatus = searchParams.get('status') ?? '';
   const filterJobIds = searchParams.getAll('job_ids').map(Number).filter(Boolean);
   const filterDeptIds = searchParams.getAll('dept_ids').map(Number).filter(Boolean);
+  const filterSearch = searchParams.get('search') ?? '';
   const page = Number(searchParams.get('page') ?? '1');
   const pageSize = Number(searchParams.get('page_size') ?? String(DEFAULT_PAGE_SIZE));
+
+  // Sync debounced search to URL
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (debouncedSearch) next.set('search', debouncedSearch);
+    else next.delete('search');
+    if (next.get('search') !== filterSearch) {
+      next.delete('page');
+      setSearchParams(next);
+    }
+  }, [debouncedSearch]);
 
   const loadApplications = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -126,6 +144,7 @@ export default function EmployeeApplications() {
       if (filterStatus) params.set('status', filterStatus);
       filterJobIds.forEach((id) => params.append('job_ids', String(id)));
       filterDeptIds.forEach((id) => params.append('dept_ids', String(id)));
+      if (filterSearch) params.set('search', filterSearch);
       const res = await employeeApplicationsApi.list(params);
       setApplications(res.data.items || []);
       setTotal(res.data.total ?? 0);
@@ -136,7 +155,7 @@ export default function EmployeeApplications() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [filterStatus, filterJobIds.join(','), filterDeptIds.join(','), page, pageSize]);
+  }, [filterStatus, filterJobIds.join(','), filterDeptIds.join(','), filterSearch, page, pageSize]);
 
   useEffect(() => { loadApplications(); }, [loadApplications]);
 
@@ -255,6 +274,16 @@ export default function EmployeeApplications() {
     setSearchParams(next);
   };
 
+  const handleResetFilters = () => {
+    setSearchInput('');
+    const next = new URLSearchParams();
+    next.set('page', '1');
+    next.set('page_size', String(pageSize));
+    setSearchParams(next);
+  };
+
+  const hasActiveFilters = filterStatus || filterJobIds.length > 0 || filterDeptIds.length > 0 || filterSearch;
+
   return (
     <AdminLayout breadcrumbs={[{ label: '投递管理' }]} title="投递管理">
       {/* Toolbar */}
@@ -278,6 +307,85 @@ export default function EmployeeApplications() {
             ))}
           </SelectContent>
         </Select>
+
+        {/* Job filter — Dialog style */}
+        <div className="w-full max-w-xs">
+          <button
+            type="button"
+            onClick={() => setJobDialogOpen(true)}
+            className="min-h-9 w-full rounded-md border border-[#E2E8F0] bg-white px-3 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+          >
+            {filterJobIds.length === 0 ? (
+              <span className="text-[#94A3B8] leading-6">按岗位筛选</span>
+            ) : (
+              <span className="flex flex-wrap gap-1.5">
+                {selectedFilterJobs.map((job) => (
+                  <span key={job.id} className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-0.5 text-xs text-[#2563EB]">
+                    {job.name}
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(event) => { event.stopPropagation(); toggleFilterJob(job.id); }}
+                      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); toggleFilterJob(job.id); } }}
+                      className="rounded hover:bg-blue-100"
+                      aria-label={`移除岗位 ${job.name}`}
+                    >
+                      <X size={12} aria-hidden="true" />
+                    </span>
+                  </span>
+                ))}
+              </span>
+            )}
+          </button>
+
+          <Dialog open={jobDialogOpen} onOpenChange={setJobDialogOpen}>
+            <DialogContent>
+              <div className="mb-4 flex items-center justify-between">
+                <DialogTitle className="mb-0">选择岗位</DialogTitle>
+                <button
+                  type="button"
+                  onClick={() => setJobDialogOpen(false)}
+                  aria-label="关闭岗位选择"
+                  className="text-[#94A3B8] hover:text-[#1E293B] focus-visible:outline-none"
+                >
+                  <X size={18} aria-hidden="true" />
+                </button>
+              </div>
+              <div className="max-h-80 overflow-auto rounded-lg border border-[#E2E8F0]">
+                {jobs.length === 0 ? (
+                  <p className="px-4 py-8 text-center text-sm text-[#94A3B8]">暂无岗位</p>
+                ) : (
+                  jobs.map((job) => {
+                    const checked = filterJobIds.includes(job.id);
+                    return (
+                      <label key={job.id} className="flex cursor-pointer items-center gap-3 border-b border-[#F1F5F9] px-4 py-3 text-sm hover:bg-[#F8FAFC] last:border-b-0">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleFilterJob(job.id)}
+                          className="rounded border-[#CBD5E1] accent-[#2563EB]"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[#1E293B]">{job.name}</span>
+                          {job.dept_name && <span className="block truncate text-xs text-[#94A3B8]">{job.dept_name}</span>}
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              <div className="mt-5 flex justify-between gap-3">
+                <Button type="button" variant="outline" onClick={() => setFilterJobIds([])} disabled={filterJobIds.length === 0}>
+                  清空
+                </Button>
+                <Button type="button" onClick={() => setJobDialogOpen(false)} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white">
+                  确定
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+
         <DepartmentMultiSelect
           depts={depts}
           selectedIds={filterDeptIds}
@@ -287,59 +395,31 @@ export default function EmployeeApplications() {
           placeholder="按部门筛选"
           className="w-full max-w-xs"
         />
-        <div className="relative w-full max-w-md">
-          <div
-            tabIndex={0}
-            onFocus={() => setJobFilterOpen(true)}
-            className="min-h-9 w-full rounded-md border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm focus-within:ring-2 focus-within:ring-[#2563EB] focus-within:outline-none"
-          >
-            {selectedFilterJobs.length === 0 ? (
-              <span className="text-[#94A3B8] leading-6">按岗位筛选</span>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {selectedFilterJobs.map((job) => (
-                  <span key={job.id} className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-0.5 text-xs text-[#2563EB]">
-                    {job.name}
-                    <button
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => toggleFilterJob(job.id)}
-                      className="rounded hover:bg-blue-100"
-                      aria-label={`移除岗位 ${job.name}`}
-                    >
-                      <X size={12} aria-hidden="true" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          {jobFilterOpen && (
-            <>
-              <div className="fixed inset-0 z-[90]" onMouseDown={() => setJobFilterOpen(false)} aria-hidden="true" />
-              <div className="absolute left-0 top-full z-[100] mt-1 max-h-72 w-full overflow-auto rounded-lg border border-[#E2E8F0] bg-white py-1 shadow-lg">
-                {jobs.length === 0 ? (
-                  <p className="px-3 py-2 text-sm text-[#94A3B8]">暂无岗位</p>
-                ) : (
-                  jobs.map((job) => {
-                    const checked = filterJobIds.includes(job.id);
-                    return (
-                      <label key={job.id} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-[#1E293B] hover:bg-[#F8FAFC]">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleFilterJob(job.id)}
-                          className="rounded border-[#CBD5E1] accent-[#2563EB]"
-                        />
-                        <span className="truncate">{job.name}</span>
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-            </>
-          )}
+
+        {/* Search input */}
+        <div className="relative w-full max-w-xs">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" aria-hidden="true" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="搜索简历或用户姓名"
+            className="h-9 w-full rounded-md border border-[#E2E8F0] bg-white pl-8 pr-3 text-sm placeholder:text-[#94A3B8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+          />
         </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleResetFilters}
+          disabled={!hasActiveFilters}
+          className="h-9 text-[#64748B]"
+        >
+          <RotateCcw size={14} className="mr-1" aria-hidden="true" />
+          重置
+        </Button>
+
         <button
           onClick={handleRefresh}
           disabled={refreshing}
@@ -418,7 +498,7 @@ export default function EmployeeApplications() {
                         className="rounded border-[#CBD5E1] accent-[#2563EB]"
                       />
                     </td>
-                    <td className="px-4 py-3 text-[#64748B] tabular-nums">用户 {app.user_id}</td>
+                    <td className="px-4 py-3 font-medium text-[#1E293B]">{app.user_real_name || `用户 ${app.user_id}`}</td>
                     <td className="px-4 py-3 font-medium text-[#1E293B]">{app.job_name}</td>
                     <td className="px-4 py-3 text-[#64748B] max-w-[180px]">
                       <span className="truncate block">{app.resume_file_name ?? `简历 #${app.resume_id}`}</span>

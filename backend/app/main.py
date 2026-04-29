@@ -6,8 +6,8 @@ import pydantic
 import redis
 import sqlalchemy
 
-from app.config.settings import configure_logging, get_settings
-from app.core.container import create_app
+from app.infrastructure.config.settings import configure_logging, get_settings
+from app.container import create_app
 
 settings = get_settings()
 configure_logging(settings)

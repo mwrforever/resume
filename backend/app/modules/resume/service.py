@@ -7,7 +7,7 @@ from app.modules.resume.repository import ResumeRepository
 from app.models.resume import Resume
 from app.utils.storage.registry import StorageRegistry
 from app.utils.resume_parser import extract_resume_text
-from app.core.exceptions import NotFoundError, ValidationError
+from app.infrastructure.exception import NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
 

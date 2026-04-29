@@ -1,9 +1,9 @@
-import inspect
 from typing import List
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.deps import get_current_user, get_db
+from app.infrastructure.client.deps import get_current_user
+from app.infrastructure.client import get_db
 from app.modules.application.repository import ApplicationRepository
 from app.modules.application.service import ApplicationService
 from app.modules.eval_template.repository import EvalTemplateRepository
@@ -16,20 +16,6 @@ from app.schemas.vo.response.application_response import ApiResponse, Applicatio
 
 employee_router = APIRouter()
 user_router = APIRouter()
-
-STATUS_NAMES = {
-    0: "待评估",
-    1: "待处理",
-    2: "已查看",
-    3: "面试中",
-    4: "已拒绝",
-    5: "已录用",
-    6: "已结束",
-}
-
-
-def _supports_dept_filter(func) -> bool:
-    return "dept_ids" in inspect.signature(func).parameters
 
 
 def get_service(db=Depends(get_db)) -> ApplicationService:
@@ -129,6 +115,7 @@ async def list_applications(
     job_ids: List[int] = Query(None),
     dept_ids: List[int] = Query(None),
     status: int = Query(None),
+    search: str = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     service: ApplicationService = Depends(get_service),
@@ -138,32 +125,29 @@ async def list_applications(
     """获取投递列表（员工端）"""
     skip = (page - 1) * page_size
     filter_job_ids = job_ids or ([job_id] if job_id else None)
-    if _supports_dept_filter(service.app_repo.get_all):
-        applications = await service.app_repo.get_all(skip, page_size, status, filter_job_ids, dept_ids)
-        total = await service.app_repo.get_all_count(status, filter_job_ids, dept_ids)
-    else:
-        applications = await service.app_repo.get_all(skip, page_size, status, filter_job_ids)
-        total = await service.app_repo.get_all_count(status, filter_job_ids)
+    app_rows = await service.app_repo.get_all(skip, page_size, status, filter_job_ids, dept_ids, search)
+    total = await service.app_repo.get_all_count(status, filter_job_ids, dept_ids, search)
 
-    resume_file_names = await service.resume_repo.get_file_names_batch([application.resume_id for application in applications])
+    resume_file_names = await service.resume_repo.get_file_names_batch([row[0].resume_id for row in app_rows])
     eval_repo = EvalRepository(db)
-    match_map = await eval_repo.get_matches_by_application_ids([application.id for application in applications])
+    match_map = await eval_repo.get_matches_by_application_ids([row[0].id for row in app_rows])
 
     items = [
         EmployeeApplicationItem(
-            id=application.id,
-            user_id=application.user_id,
-            job_id=application.job_id,
-            job_name=(application.job_snapshot or {}).get("job", {}).get("name", ""),
-            job_snapshot=application.job_snapshot,
-            resume_id=application.resume_id,
-            resume_file_name=resume_file_names.get(application.resume_id),
-            match_id=match_map.get(application.id),
-            status=application.status,
-            status_name=STATUS_NAMES.get(application.status, "未知"),
-            create_time=application.create_time,
+            id=app.id,
+            user_id=app.user_id,
+            user_real_name=user_name,
+            job_id=app.job_id,
+            job_name=(app.job_snapshot or {}).get("job", {}).get("name", ""),
+            job_snapshot=app.job_snapshot,
+            resume_id=app.resume_id,
+            resume_file_name=resume_file_names.get(app.resume_id),
+            match_id=match_map.get(app.id),
+            status=app.status,
+            status_name=service.get_status_name(app.status),
+            create_time=app.create_time,
         )
-        for application in applications
+        for app, user_name in app_rows
     ]
 
     return ApiResponse(

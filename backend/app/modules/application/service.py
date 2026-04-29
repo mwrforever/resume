@@ -1,8 +1,8 @@
 from app.modules.application.repository import ApplicationRepository
-from app.modules.application.repository import ResumeRepository
-from app.modules.application.repository import JobRepository
+from app.modules.resume.repository import ResumeRepository
+from app.modules.job.repository import JobRepository
 from app.models.job_application import JobApplication
-from app.core.exceptions import NotFoundError, ValidationError
+from app.infrastructure.exception import NotFoundError, ValidationError
 from app.modules.eval_template.service import EvalTemplateService
 
 

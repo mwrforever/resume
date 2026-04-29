@@ -3,7 +3,7 @@ from pathlib import Path
 from docx import Document
 from PyPDF2 import PdfReader
 
-from app.core.exceptions import ValidationError
+from app.infrastructure.exception import ValidationError
 
 
 def extract_resume_text(file_path: Path) -> str:

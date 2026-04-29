@@ -2,7 +2,7 @@
 Employee Auth API Tests
 
 Tests for:
-- POST /api/v1/employee/auth/send-code
+- POST /api/v1/verification/send-code
 - POST /api/v1/employee/auth/register
 - POST /api/v1/employee/auth/login
 - POST /api/v1/employee/auth/refresh
@@ -12,13 +12,13 @@ import time
 
 
 class TestEmployeeSendCode:
-    """Tests for POST /api/v1/employee/auth/send-code"""
+    """Tests for POST /api/v1/verification/send-code"""
 
     @pytest.mark.asyncio
     async def test_send_code_returns_200_and_stores_in_redis(self, client, unique_email, redis_client):
         """Send code should return 200 and store code in Redis."""
         response = await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         assert response.status_code == 200
@@ -38,14 +38,14 @@ class TestEmployeeSendCode:
         """Send code should reject rapid repeat requests (60s cooldown)."""
         # First request should succeed
         response1 = await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         assert response1.status_code == 200
 
         # Second request within cooldown should fail
         response2 = await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         assert response2.status_code == 429
@@ -61,7 +61,7 @@ class TestEmployeeRegister:
         """Register should create employee and return tokens."""
         # First send code to get valid verification
         send_response = await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         assert send_response.status_code == 200
@@ -109,7 +109,7 @@ class TestEmployeeRegister:
         """Register should prevent duplicate email registration."""
         # First send code and register
         await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         key = f"verify_code:{unique_email}:employee"
@@ -131,7 +131,7 @@ class TestEmployeeRegister:
         await asyncio.sleep(61)  # Wait for cooldown to expire
         unique_emp_no_2 = f"EMP{int(time.time() % 1000000):06d}"
         response2 = await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         code2 = redis_client.get(key)
@@ -154,7 +154,7 @@ class TestEmployeeRegister:
         """Register should prevent duplicate employee number registration."""
         # First send code and register
         await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         key = f"verify_code:{unique_email}:employee"
@@ -174,7 +174,7 @@ class TestEmployeeRegister:
         # Try to register again with same emp_no but different email
         unique_email_2 = f"test_{int(time.time() * 1000000 + 1)}@example.com"
         response2 = await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email_2, "user_type": "employee"}
         )
         code2 = redis_client.get(f"verify_code:{unique_email_2}:employee")
@@ -201,7 +201,7 @@ class TestEmployeeLogin:
         """Login with password should return tokens when credentials are valid."""
         # First register
         await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         key = f"verify_code:{unique_email}:employee"
@@ -238,7 +238,7 @@ class TestEmployeeLogin:
         """Login with password should reject wrong password."""
         # First register
         await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         key = f"verify_code:{unique_email}:employee"
@@ -272,7 +272,7 @@ class TestEmployeeLogin:
         """Login with code should return token when code is valid."""
         # First register
         await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         key = f"verify_code:{unique_email}:employee"
@@ -312,7 +312,7 @@ class TestEmployeeLogin:
         """Login with code should reject wrong code."""
         # First register
         await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         key = f"verify_code:{unique_email}:employee"
@@ -350,7 +350,7 @@ class TestEmployeeRefresh:
         """Refresh should issue new tokens when refresh token is valid."""
         # First register
         await client.post(
-            "/api/v1/employee/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "employee"}
         )
         key = f"verify_code:{unique_email}:employee"

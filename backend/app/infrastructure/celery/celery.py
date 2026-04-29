@@ -1,5 +1,5 @@
 from celery import Celery
-from app.core.config import configure_logging, get_settings
+from app.infrastructure.config import configure_logging, get_settings
 
 settings = get_settings()
 configure_logging(settings)

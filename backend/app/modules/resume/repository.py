@@ -63,19 +63,29 @@ class ResumeRepository:
         )
         return result.scalar() or 0
 
-    async def list_all(self, skip: int = 0, limit: int = 20) -> tuple[list[tuple[Resume, SysUser | None]], int]:
-        """获取所有简历（员工端，含上传者姓名）"""
-        from sqlalchemy import func
+    async def list_all(self, skip: int = 0, limit: int = 20, search: str = None) -> tuple[list[tuple[Resume, SysUser | None]], int]:
+        """获取所有简历（员工端，含上传者姓名，支持按文件名/上传者姓名搜索）"""
+        from sqlalchemy import func, or_
+
+        base_q = select(Resume, SysUser).outerjoin(
+            SysUser, (SysUser.id == Resume.user_id) & (SysUser.is_deleted == 0)
+        ).where(Resume.is_deleted == 0)
+        count_q = select(func.count(Resume.id)).where(Resume.is_deleted == 0)
+
+        if search:
+            base_q = base_q.where(
+                or_(Resume.file_name.ilike(f"%{search}%"), SysUser.real_name.ilike(f"%{search}%"))
+            )
+            count_q = count_q.outerjoin(
+                SysUser, (SysUser.id == Resume.user_id) & (SysUser.is_deleted == 0)
+            ).where(
+                or_(Resume.file_name.ilike(f"%{search}%"), SysUser.real_name.ilike(f"%{search}%"))
+            )
+
         items_result = await self.db.execute(
-            select(Resume, SysUser)
-            .outerjoin(SysUser, (SysUser.id == Resume.user_id) & (SysUser.is_deleted == 0))
-            .where(Resume.is_deleted == 0)
-            .order_by(Resume.create_time.desc())
-            .offset(skip).limit(limit)
+            base_q.order_by(Resume.create_time.desc()).offset(skip).limit(limit)
         )
-        count_result = await self.db.execute(
-            select(func.count(Resume.id)).where(Resume.is_deleted == 0)
-        )
+        count_result = await self.db.execute(count_q)
         return items_result.all(), count_result.scalar() or 0
 
     async def get_file_names_batch(self, resume_ids: list[int]) -> dict[int, str]:

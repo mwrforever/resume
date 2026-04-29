@@ -2,12 +2,15 @@ import logging
 
 from fastapi import APIRouter, Depends
 
-from app.core.deps import get_current_user, get_db
-from app.modules.evaluation.repository import EvalRepository, JobRepository, ResumeRepository
+from app.infrastructure.client.deps import get_current_user
+from app.infrastructure.client import get_db
+from app.modules.evaluation.repository import EvalRepository
+from app.modules.job.repository import JobRepository
+from app.modules.resume.repository import ResumeRepository
 from app.modules.evaluation.service import EvalService
 from app.schemas.vo.request.evaluation_request import BatchEvalRequest
 from app.schemas.vo.response.evaluation_response import ApiResponse, EvalResult
-from app.infrastructure.celery.eval_task import run_evaluation_task
+from app.infrastructure.celery.task.eval_task import run_evaluation_task
 
 router = APIRouter()
 

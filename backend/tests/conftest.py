@@ -1,6 +1,5 @@
 import pytest
 import pytest_asyncio
-import asyncio
 import time
 import redis
 from httpx import AsyncClient, ASGITransport
@@ -8,8 +7,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from app.main import app
 from app.models import Base
-from app.core.security import create_access_token
-from app.core.config import get_settings
+from app.utils.security import create_access_token
+from app.infrastructure.config import get_settings
 
 
 settings = get_settings()
@@ -38,7 +37,7 @@ async def _ensure_test_schema(engine) -> None:
 @pytest_asyncio.fixture(scope="function")
 async def client():
     """Create async test client with proper cleanup"""
-    from app.core.deps import get_db
+    from app.infrastructure.client import get_db
 
     engine = create_async_engine(TEST_DATABASE_URL, echo=False, pool_pre_ping=True, pool_size=5, max_overflow=0)
     await _ensure_test_schema(engine)
@@ -59,44 +58,37 @@ async def client():
 
 
 @pytest.fixture
-def user_token():
-    """Create a valid user token"""
+def user_token() -> str:
     return create_access_token(data={"sub": "1", "type": "user"})
 
 
 @pytest.fixture
-def employee_token():
-    """Create a valid employee token"""
+def employee_token() -> str:
     return create_access_token(data={"sub": "1", "type": "employee"})
 
 
 @pytest.fixture
-def user_headers(user_token):
-    """Headers with user token"""
+def user_headers(user_token: str) -> dict:
     return {"Authorization": f"Bearer {user_token}"}
 
 
 @pytest.fixture
-def employee_headers(employee_token):
-    """Headers with employee token"""
+def employee_headers(employee_token: str) -> dict:
     return {"Authorization": f"Bearer {employee_token}"}
 
 
 @pytest.fixture
-def employee2_token():
-    """Create token for second employee (for isolation tests)"""
+def employee2_token() -> str:
     return create_access_token(data={"sub": "2", "type": "employee"})
 
 
 @pytest.fixture
-def employee2_headers(employee2_token):
-    """Headers with second employee token"""
+def employee2_headers(employee2_token: str) -> dict:
     return {"Authorization": f"Bearer {employee2_token}"}
 
 
 @pytest.fixture(scope="function")
-def redis_client():
-    """Create a Redis client for tests with cleanup."""
+def redis_client() -> redis.Redis:
     client = redis.Redis(
         host=settings.REDIS_HOST,
         port=settings.REDIS_PORT,
@@ -113,12 +105,10 @@ def redis_client():
 
 
 @pytest.fixture(scope="function")
-def unique_email():
-    """Generate a unique email for each test."""
+def unique_email() -> str:
     return f"test_{int(time.time() * 1000000)}@example.com"
 
 
 @pytest.fixture(scope="function")
-def unique_emp_no():
-    """Generate a unique employee number for each test."""
+def unique_emp_no() -> str:
     return f"EMP{int(time.time() * 1000000)}"

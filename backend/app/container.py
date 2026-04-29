@@ -1,17 +1,16 @@
-import os
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 
-from app.config.settings import Settings
-from app.core.exceptions import register_exception_handlers
-from app.modules.account_management.router import router as account_management_router
+from app.infrastructure.config.settings import Settings
+from app.infrastructure.exception import register_exception_handlers
 from app.modules.analytics.router import router as analytics_router
 from app.modules.application.router import employee_router as employee_applications_router
 from app.modules.application.router import user_router as user_applications_router
 from app.modules.dept.router import router as depts_router
-from app.modules.employee_auth.router import router as employee_auth_router
+from app.modules.employee.router import employee_manage_router, router as employee_auth_router
 from app.modules.eval_template.router import dimension_router as eval_dimensions_router
 from app.modules.eval_template.router import template_router as eval_templates_router
 from app.modules.evaluation.router import router as evaluations_router
@@ -22,12 +21,11 @@ from app.modules.resume.router import employee_router as employee_resumes_router
 from app.modules.resume.router import user_router as user_resumes_router
 from app.modules.system.router import create_system_router
 from app.modules.tag.router import router as tags_router
-from app.modules.user_auth.router import router as user_auth_router
+from app.modules.user.verification_router import router as verification_router
+from app.modules.user.router import router as user_auth_router, user_manage_router
 
 
 class ApplicationContainer:
-    instance_strategy = "Scoped"
-
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
@@ -49,6 +47,7 @@ class ApplicationContainer:
         )
 
     def _register_routers(self, app: FastAPI) -> None:
+        app.include_router(verification_router, prefix="/api/v1/verification", tags=["verification"])
         app.include_router(user_auth_router, prefix="/api/v1/user/auth", tags=["user-auth"])
         app.include_router(employee_auth_router, prefix="/api/v1/employee/auth", tags=["employee-auth"])
         app.include_router(user_resumes_router, prefix="/api/v1/user/resumes", tags=["user-resumes"])
@@ -64,13 +63,14 @@ class ApplicationContainer:
         app.include_router(evaluations_router, prefix="/api/v1/employee/evaluations", tags=["employee-evaluations"])
         app.include_router(employee_resumes_router, prefix="/api/v1/employee/resumes", tags=["employee-resumes"])
         app.include_router(analytics_router, prefix="/api/v1/employee/analytics", tags=["employee-analytics"])
-        app.include_router(account_management_router, prefix="/api/v1/employee/account-management", tags=["employee-account-management"])
+        app.include_router(user_manage_router, prefix="/api/v1/employee/account-management", tags=["employee-account-management"])
+        app.include_router(employee_manage_router, prefix="/api/v1/employee/account-management", tags=["employee-account-management"])
         app.include_router(create_system_router(self.settings))
 
     def _mount_static_files(self, app: FastAPI) -> None:
-        storage_path = os.path.abspath(self.settings.LOCAL_STORAGE_PATH)
-        if os.path.exists(storage_path):
-            app.mount("/files", StaticFiles(directory=storage_path), name="files")
+        storage_path = Path(self.settings.LOCAL_STORAGE_PATH).resolve()
+        if storage_path.exists():
+            app.mount("/files", StaticFiles(directory=str(storage_path)), name="files")
 
 
 def create_app(settings: Settings) -> FastAPI:

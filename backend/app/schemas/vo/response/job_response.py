@@ -1,14 +1,13 @@
 from datetime import datetime
-from typing import Any, Generic, Optional, TypeVar
+from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-T = TypeVar("T")
+from app.schemas.common import ApiResponse, PageData
 
 
 class BaseItem(BaseModel):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TagItem(BaseModel):
@@ -19,8 +18,7 @@ class TagItem(BaseModel):
     status: int = 1
     color: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class JobItem(BaseItem):
@@ -57,8 +55,7 @@ class JobResponse(BaseModel):
     status: int
     create_time: Optional[str]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SkillSuggestItem(BaseModel):
@@ -78,13 +75,3 @@ class AiSuggestResponse(BaseModel):
     dimensions: list[AiSuggestDimension]
     skills: list[SkillSuggestItem]
 
-
-class PageData(BaseModel):
-    total: int
-    items: list[Any]
-
-
-class ApiResponse(BaseModel, Generic[T]):
-    code: int = 200
-    message: str = "success"
-    data: Optional[T] = None

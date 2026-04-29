@@ -3,7 +3,7 @@ import io
 from collections import defaultdict
 from typing import Any
 
-from app.core.exceptions import NotFoundError, ValidationError
+from app.infrastructure.exception import NotFoundError, ValidationError
 from app.modules.dept.repository import DeptRepository
 from app.schemas.vo.request.dept_request import DeptCreate, DeptUpdate
 from app.schemas.vo.response.dept_response import DeptItem

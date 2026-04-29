@@ -1,6 +1,6 @@
 from app.modules.job.repository import JobRepository
 from app.models.job_position import JobPosition
-from app.core.exceptions import NotFoundError, ValidationError
+from app.infrastructure.exception import NotFoundError, ValidationError
 
 
 class JobService:

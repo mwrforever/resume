@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta
-
 from fastapi import APIRouter, Depends, Query
 
-from app.core.deps import get_current_user, get_db
-from app.modules.analytics.repository import EvalRepository, JobRepository, ResumeRepository
+from app.infrastructure.client import get_db
+from app.modules.evaluation.repository import EvalRepository
+from app.modules.job.repository import JobRepository
+from app.modules.resume.repository import ResumeRepository
 from app.schemas.vo.response.analytics_response import ApiResponse
 
 router = APIRouter()
@@ -20,29 +20,13 @@ def get_repos(db=Depends(get_db)):
 @router.get("/dashboard", response_model=ApiResponse)
 async def get_dashboard_stats(
     repos=Depends(get_repos),
-    current_user: dict = Depends(get_current_user)
 ):
     """获取工作台统计数据"""
-    # 在招岗位数
     job_count = await repos["job"].count_active()
-
-    # 简历总数
     resume_count = await repos["resume"].count_all()
-
-    # 待评估数（评估完成的简历但无匹配记录的）
     pending_count = await repos["eval"].count_pending_evaluations()
-
-    # 平均匹配率
     avg_score = await repos["eval"].get_avg_match_score()
-
-    # 最近动态（模拟数据，实际应从活动日志表查询）
-    now = datetime.now()
-    recent_activities = [
-        {"id": 1, "type": "application", "text": "张三投递了 前端工程师 岗位", "time": (now - timedelta(minutes=10)).isoformat()},
-        {"id": 2, "type": "evaluation", "text": "李四完成了 AI评估", "time": (now - timedelta(minutes=30)).isoformat()},
-        {"id": 3, "type": "resume_upload", "text": "王五上传了新简历", "time": (now - timedelta(hours=1)).isoformat()},
-        {"id": 4, "type": "evaluation", "text": "系统完成了 5 份简历评估", "time": (now - timedelta(hours=2)).isoformat()},
-    ]
+    recent_activities = await repos["eval"].get_recent_activities(10)
 
     return ApiResponse(data={
         "job_count": job_count,
@@ -57,7 +41,6 @@ async def get_dashboard_stats(
 async def get_match_distribution(
     job_id: int,
     repos=Depends(get_repos),
-    current_user: dict = Depends(get_current_user)
 ):
     """获取岗位匹配度分布（饼图数据）"""
     distribution = await repos["eval"].get_match_distribution(job_id)
@@ -70,7 +53,6 @@ async def get_job_resume_list(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     repos=Depends(get_repos),
-    current_user: dict = Depends(get_current_user)
 ):
     """获取岗位下的简历列表（按匹配度降序）"""
     resumes, total = await repos["eval"].get_applications_by_job(job_id, (page-1)*page_size, page_size)

@@ -1,7 +1,7 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import bcrypt
 from jose import JWTError, jwt
-from .config import get_settings
+from app.infrastructure.config import get_settings
 
 settings = get_settings()
 MAX_BCRYPT_PASSWORD_BYTES = 72
@@ -27,14 +27,14 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire, "type": "access"})
     return jwt.encode(to_encode, settings.secret_key, algorithm="HS256")
 
 
 def create_refresh_token(data: dict) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     to_encode.update({"exp": expire, "type": "refresh"})
     return jwt.encode(to_encode, settings.secret_key, algorithm="HS256")
 

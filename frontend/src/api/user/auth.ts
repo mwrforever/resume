@@ -16,7 +16,7 @@ export type AuthResult = AuthTokens | ApiEnvelope<AuthTokens>;
 
 export const userAuthApi = {
   sendCode: (email: string) =>
-    client.post('/user/auth/send-code', { email, user_type: 'user' }) as unknown as Promise<ApiEnvelope<null>>,
+    client.post('/verification/send-code', { email, user_type: 'user' }) as unknown as Promise<ApiEnvelope<null>>,
 
   register: (data: { email: string; password: string; code: string; real_name: string }) =>
     client.post('/user/auth/register', data) as unknown as Promise<AuthResult>,

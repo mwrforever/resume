@@ -1,8 +1,8 @@
 from app.modules.evaluation.repository import EvalRepository
-from app.modules.evaluation.repository import ResumeRepository
-from app.modules.evaluation.repository import JobRepository
-from app.modules.evaluation.repository import ApplicationRepository
-from app.core.exceptions import NotFoundError, ValidationError
+from app.modules.resume.repository import ResumeRepository
+from app.modules.job.repository import JobRepository
+from app.modules.application.repository import ApplicationRepository
+from app.infrastructure.exception import NotFoundError, ValidationError
 
 
 class EvalService:

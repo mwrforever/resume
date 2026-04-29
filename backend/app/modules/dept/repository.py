@@ -1,7 +1,12 @@
 from typing import Any
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.inspection import Inspectable
 from sqlalchemy.orm import aliased
+from sqlalchemy.sql._typing import _HasClauseElement
+from sqlalchemy.sql.elements import SQLCoreOperations
+from sqlalchemy.sql.roles import ColumnsClauseRole, TypedColumnsClauseRole
+
 from app.models.job_position import JobPosition
 from app.models.sys_dept import SysDept
 from app.models.sys_dept_employee import SysDeptEmployee
@@ -26,7 +31,8 @@ class DeptRepository:
         limit: int = 20,
         status: int = None,
         search: str = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str | SQLCoreOperations[Any] | TypedColumnsClauseRole[Any] | ColumnsClauseRole | type | Inspectable[
+        _HasClauseElement[Any]], Any]]:
         query = self._stats_query()
         query = self._apply_filters(query, status=status, search=search)
         result = await self.db.execute(query.order_by(SysDept.sort_order.asc(), SysDept.id.desc()).offset(skip).limit(limit))

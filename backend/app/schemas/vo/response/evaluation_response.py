@@ -1,13 +1,12 @@
-from typing import Any, Generic, Optional, TypeVar
+from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-T = TypeVar("T")
+from app.schemas.common import ApiResponse, PageData
 
 
 class BaseItem(BaseModel):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class EvalResult(BaseItem):
@@ -23,12 +22,3 @@ class EvalResult(BaseItem):
     skill_hits: list[dict]
 
 
-class PageData(BaseModel):
-    total: int
-    items: list[Any]
-
-
-class ApiResponse(BaseModel, Generic[T]):
-    code: int = 200
-    message: str = "success"
-    data: Optional[T] = None

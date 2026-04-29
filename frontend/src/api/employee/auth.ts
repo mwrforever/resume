@@ -3,7 +3,7 @@ import type { ApiEnvelope, AuthResult } from '@/api/user/auth';
 
 export const employeeAuthApi = {
   sendCode: (email: string) =>
-    client.post('/employee/auth/send-code', { email, user_type: 'employee' }) as unknown as Promise<ApiEnvelope<null>>,
+    client.post('/verification/send-code', { email, user_type: 'employee' }) as unknown as Promise<ApiEnvelope<null>>,
 
   register: (data: { emp_no: string; email: string; password: string; code: string; real_name: string; dept_id?: number }) =>
     client.post('/employee/auth/register', data) as unknown as Promise<AuthResult>,

@@ -1,9 +1,9 @@
 from datetime import datetime
-from typing import Any, Generic, Optional, TypeVar
+from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-T = TypeVar("T")
+from app.schemas.common import ApiResponse, PageData
 
 
 class DeptItem(BaseModel):
@@ -20,8 +20,7 @@ class DeptItem(BaseModel):
     create_time: Optional[datetime] = None
     update_time: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DeptImportError(BaseModel):
@@ -34,13 +33,3 @@ class DeptImportResult(BaseModel):
     fail_count: int
     errors: list[DeptImportError]
 
-
-class PageData(BaseModel):
-    total: int
-    items: list[Any]
-
-
-class ApiResponse(BaseModel, Generic[T]):
-    code: int = 200
-    message: str = "success"
-    data: Optional[T] = None

@@ -2,89 +2,25 @@ import csv
 import io
 from typing import Any
 
-from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
-from app.core.security import get_password_hash
-from app.modules.account_management.repository import DeptRepository
-from app.modules.account_management.repository import EmployeeRepository
-from app.modules.account_management.repository import UserRepository
-from app.schemas.vo.request.account_management_request import (
-    ManagedEmployeeCreate,
-    ManagedEmployeeUpdate,
-    ManagedUserCreate,
-    ManagedUserUpdate,
-)
-from app.schemas.vo.response.account_management_response import ManagedEmployeeItem, ManagedUserItem
-
-ADMIN_EMAIL = "18229923842@163.com"
+from app.utils.auth import ensure_admin
+from app.infrastructure.exception import NotFoundError, ValidationError
+from app.utils.security import get_password_hash
+from app.schemas.vo.response.account_management_response import ManagedEmployeeItem
 
 
-class AccountManagementService:
-    def __init__(self, user_repo: UserRepository, employee_repo: EmployeeRepository, dept_repo: DeptRepository):
-        self.user_repo = user_repo
+class EmployeeManageService:
+    def __init__(self, employee_repo, dept_repo):
         self.employee_repo = employee_repo
         self.dept_repo = dept_repo
 
     async def ensure_admin(self, current_user: dict) -> None:
-        if current_user.get("user_type") != "employee":
-            raise ForbiddenError("仅员工账号可访问")
-        employee = await self.employee_repo.get_by_id(int(current_user["sub"]))
-        if not employee or employee.email != ADMIN_EMAIL:
-            raise ForbiddenError("当前员工无管理权限")
-
-    async def list_users(self, page: int, page_size: int, status: int = None, search: str = None) -> dict[str, Any]:
-        skip = (page - 1) * page_size
-        users = await self.user_repo.list_page(skip=skip, limit=page_size, status=status, search=search)
-        total = await self.user_repo.get_count(status=status, search=search)
-        return {"total": total, "items": [ManagedUserItem.model_validate(user) for user in users]}
-
-    async def get_user(self, user_id: int) -> ManagedUserItem:
-        user = await self.user_repo.get_by_id(user_id)
-        if not user:
-            raise NotFoundError("用户不存在")
-        return ManagedUserItem.model_validate(user)
-
-    async def create_user(self, body: ManagedUserCreate) -> ManagedUserItem:
-        existing = await self.user_repo.get_by_email(str(body.email))
-        if existing:
-            raise ValidationError("该邮箱已存在")
-        user = await self.user_repo.create(
-            email=str(body.email),
-            password_hash=get_password_hash(body.password),
-            real_name=body.real_name,
-        )
-        if body.status != 1:
-            user = await self.user_repo.update(user.id, status=body.status)
-        return ManagedUserItem.model_validate(user)
-
-    async def update_user(self, user_id: int, body: ManagedUserUpdate) -> ManagedUserItem:
-        user = await self.user_repo.get_by_id(user_id)
-        if not user:
-            raise NotFoundError("用户不存在")
-        payload = body.model_dump(exclude_unset=True)
-        email = payload.get("email")
-        if email and str(email) != user.email:
-            existing = await self.user_repo.get_by_email(str(email))
-            if existing:
-                raise ValidationError("该邮箱已存在")
-            payload["email"] = str(email)
-        password = payload.pop("password", None)
-        if password:
-            payload["password_hash"] = get_password_hash(password)
-        if payload:
-            user = await self.user_repo.update(user_id, **payload)
-        return ManagedUserItem.model_validate(user)
-
-    async def delete_user(self, user_id: int) -> None:
-        user = await self.user_repo.get_by_id(user_id)
-        if not user:
-            raise NotFoundError("用户不存在")
-        await self.user_repo.delete(user_id)
+        await ensure_admin(current_user, self.employee_repo)
 
     async def list_employees(self, page: int, page_size: int, status: int = None, search: str = None) -> dict[str, Any]:
         skip = (page - 1) * page_size
         employees = await self.employee_repo.list_page_with_dept(skip=skip, limit=page_size, status=status, search=search)
         total = await self.employee_repo.get_count(status=status, search=search)
-        return {"total": total, "items": [ManagedEmployeeItem(**employee) for employee in employees]}
+        return {"total": total, "items": [ManagedEmployeeItem(**e) for e in employees]}
 
     async def get_employee(self, employee_id: int) -> ManagedEmployeeItem:
         employee = await self.employee_repo.get_by_id_with_dept(employee_id)
@@ -92,7 +28,7 @@ class AccountManagementService:
             raise NotFoundError("员工不存在")
         return ManagedEmployeeItem(**employee)
 
-    async def create_employee(self, body: ManagedEmployeeCreate) -> ManagedEmployeeItem:
+    async def create_employee(self, body) -> ManagedEmployeeItem:
         await self._ensure_employee_unique(emp_no=body.emp_no, email=str(body.email))
         dept_ids, primary_dept_id = self._resolve_dept_assignment(body.dept_id, body.dept_ids, body.primary_dept_id)
         await self._ensure_depts_exist(dept_ids)
@@ -108,7 +44,7 @@ class AccountManagementService:
             await self.employee_repo.assign_depts(employee.id, dept_ids, primary_dept_id)
         return await self.get_employee(employee.id)
 
-    async def update_employee(self, employee_id: int, body: ManagedEmployeeUpdate) -> ManagedEmployeeItem:
+    async def update_employee(self, employee_id: int, body) -> ManagedEmployeeItem:
         employee = await self.employee_repo.get_by_id(employee_id)
         if not employee:
             raise NotFoundError("员工不存在")
@@ -187,12 +123,7 @@ class AccountManagementService:
             success_count += 1
         return {"success_count": success_count, "fail_count": len(errors), "errors": errors}
 
-    async def _ensure_employee_unique(
-        self,
-        emp_no: str = None,
-        email: str = None,
-        exclude_employee_id: int = None,
-    ) -> None:
+    async def _ensure_employee_unique(self, emp_no: str = None, email: str = None, exclude_employee_id: int = None) -> None:
         if emp_no:
             existing = await self.employee_repo.get_by_emp_no(emp_no)
             if existing and existing.id != exclude_employee_id:
@@ -210,12 +141,7 @@ class AccountManagementService:
         for dept_id in dept_ids:
             await self._ensure_dept_exists(dept_id)
 
-    def _resolve_dept_assignment(
-        self,
-        dept_id: int | None,
-        dept_ids: list[int] | None,
-        primary_dept_id: int | None,
-    ) -> tuple[list[int], int | None]:
+    def _resolve_dept_assignment(self, dept_id: int | None, dept_ids: list[int] | None, primary_dept_id: int | None) -> tuple[list[int], int | None]:
         resolved_dept_ids = [item for item in dict.fromkeys(dept_ids or []) if item]
         resolved_primary_dept_id = primary_dept_id or None
         if not resolved_dept_ids and dept_id:

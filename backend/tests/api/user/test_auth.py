@@ -2,7 +2,7 @@
 User Auth API Tests
 
 Tests for:
-- POST /api/v1/user/auth/send-code
+- POST /api/v1/verification/send-code
 - POST /api/v1/user/auth/register
 - POST /api/v1/user/auth/login
 - POST /api/v1/user/auth/refresh
@@ -12,13 +12,13 @@ import time
 
 
 class TestUserSendCode:
-    """Tests for POST /api/v1/user/auth/send-code"""
+    """Tests for POST /api/v1/verification/send-code"""
 
     @pytest.mark.asyncio
     async def test_send_code_returns_200_and_stores_in_redis(self, client, unique_email, redis_client):
         """Send code should return 200 and store code in Redis."""
         response = await client.post(
-            "/api/v1/user/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "user"}
         )
         assert response.status_code == 200
@@ -38,14 +38,14 @@ class TestUserSendCode:
         """Send code should reject rapid repeat requests (60s cooldown)."""
         # First request should succeed
         response1 = await client.post(
-            "/api/v1/user/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "user"}
         )
         assert response1.status_code == 200
 
         # Second request within cooldown should fail
         response2 = await client.post(
-            "/api/v1/user/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "user"}
         )
         assert response2.status_code == 429
@@ -61,7 +61,7 @@ class TestUserRegister:
         """Register should create user and return tokens."""
         # First send code to get valid verification
         send_response = await client.post(
-            "/api/v1/user/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "user"}
         )
         assert send_response.status_code == 200
@@ -107,7 +107,7 @@ class TestUserRegister:
         """Register should prevent duplicate email registration."""
         # First send code and register
         await client.post(
-            "/api/v1/user/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "user"}
         )
         key = f"verify_code:{unique_email}:user"
@@ -127,7 +127,7 @@ class TestUserRegister:
         import asyncio
         await asyncio.sleep(61)
         response2 = await client.post(
-            "/api/v1/user/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "user"}
         )
         code2 = redis_client.get(key)
@@ -153,7 +153,7 @@ class TestUserLogin:
         """Login with password should return tokens when credentials are valid."""
         # First register
         await client.post(
-            "/api/v1/user/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "user"}
         )
         key = f"verify_code:{unique_email}:user"
@@ -189,7 +189,7 @@ class TestUserLogin:
         """Login with password should reject wrong password."""
         # First register
         await client.post(
-            "/api/v1/user/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "user"}
         )
         key = f"verify_code:{unique_email}:user"
@@ -222,7 +222,7 @@ class TestUserLogin:
         """Login with code should return token when code is valid."""
         # First register
         await client.post(
-            "/api/v1/user/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "user"}
         )
         key = f"verify_code:{unique_email}:user"
@@ -261,7 +261,7 @@ class TestUserLogin:
         """Login with code should reject wrong code."""
         # First register
         await client.post(
-            "/api/v1/user/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "user"}
         )
         key = f"verify_code:{unique_email}:user"
@@ -298,7 +298,7 @@ class TestUserRefresh:
         """Refresh should issue new tokens when refresh token is valid."""
         # First register
         await client.post(
-            "/api/v1/user/auth/send-code",
+            "/api/v1/verification/send-code",
             json={"email": unique_email, "user_type": "user"}
         )
         key = f"verify_code:{unique_email}:user"

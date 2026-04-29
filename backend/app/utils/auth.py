@@ -1,11 +1,11 @@
-from app.modules.employee_auth.repository import UserRepository
-from app.modules.employee_auth.repository import EmployeeRepository
-from app.core.security import verify_password, create_access_token, create_refresh_token
-from app.core.exceptions import UnauthorizedError, ValidationError
+from app.infrastructure.exception import ForbiddenError, UnauthorizedError
+from app.utils.security import create_access_token, create_refresh_token, verify_password
+
+ADMIN_EMAIL = "18229923842@163.com"
 
 
 class AuthService:
-    def __init__(self, user_repo: UserRepository, employee_repo: EmployeeRepository):
+    def __init__(self, user_repo, employee_repo):
         self.user_repo = user_repo
         self.employee_repo = employee_repo
 
@@ -39,3 +39,11 @@ class AuthService:
 
     async def get_employee_by_id(self, employee_id: int):
         return await self.employee_repo.get_by_id(employee_id)
+
+
+async def ensure_admin(current_user: dict, employee_repo) -> None:
+    if current_user.get("user_type") != "employee":
+        raise ForbiddenError("仅员工账号可访问")
+    employee = await employee_repo.get_by_id(int(current_user["sub"]))
+    if not employee or employee.email != ADMIN_EMAIL:
+        raise ForbiddenError("当前员工无管理权限")

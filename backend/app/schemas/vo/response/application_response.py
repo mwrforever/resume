@@ -1,14 +1,13 @@
 from datetime import datetime
-from typing import Any, Generic, Optional, TypeVar
+from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-T = TypeVar("T")
+from app.schemas.common import ApiResponse, PageData
 
 
 class BaseItem(BaseModel):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ApplicationItem(BaseItem):
@@ -32,6 +31,7 @@ class ApplicationDetail(ApplicationItem):
 class EmployeeApplicationItem(BaseItem):
     id: int
     user_id: int
+    user_real_name: Optional[str] = None
     job_id: int
     job_name: str = ""
     job_snapshot: Optional[dict] = None
@@ -42,13 +42,3 @@ class EmployeeApplicationItem(BaseItem):
     status_name: str
     create_time: Optional[datetime] = None
 
-
-class PageData(BaseModel):
-    total: int
-    items: list[Any]
-
-
-class ApiResponse(BaseModel, Generic[T]):
-    code: int = 200
-    message: str = "success"
-    data: Optional[T] = None

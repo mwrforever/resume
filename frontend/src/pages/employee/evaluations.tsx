@@ -3,22 +3,18 @@ import { Link } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { DepartmentMultiSelect } from '@/components/employee/department-multi-select';
 import { MatchPieChart } from '@/components/common/match-pie-chart';
 import { MatchBadge } from '@/components/common/match-badge';
 import { employeeJobsApi } from '@/api/employee/jobs';
 import { employeeEvaluationsApi } from '@/api/employee/evaluations';
 import { employeeAnalyticsApi } from '@/api/employee/analytics';
-import { deptApi } from '@/api/employee/depts';
-import { MatchDistribution, ResumeWithEvaluation, Job, IDeptItem } from '@/types/employee';
-import { Loader2 } from 'lucide-react';
+import { MatchDistribution, ResumeWithEvaluation, Job } from '@/types/employee';
+import { Loader2, RotateCcw, X } from 'lucide-react';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 
 export default function EmployeeEvaluations() {
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [depts, setDepts] = useState<IDeptItem[]>([]);
-  const [selectedDeptIds, setSelectedDeptIds] = useState<number[]>([]);
-  const [deptFilterOpen, setDeptFilterOpen] = useState(false);
+  const [jobSelectOpen, setJobSelectOpen] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [distribution, setDistribution] = useState<MatchDistribution | null>(null);
   const [resumes, setResumes] = useState<ResumeWithEvaluation[]>([]);
@@ -35,12 +31,6 @@ export default function EmployeeEvaluations() {
         setJobs(jobRes.data.items || []);
       } catch (error) {
         console.error('Failed to load jobs:', error);
-      }
-      try {
-        const deptRes = await deptApi.listDepts();
-        setDepts(deptRes.data || []);
-      } catch (error) {
-        console.error('Failed to load departments:', error);
       }
     };
     loadJobs();
@@ -126,16 +116,7 @@ export default function EmployeeEvaluations() {
   };
 
   const allSelected = resumes.length > 0 && resumes.every((r) => selectedApplicationIds.includes(r.application_id));
-  const filteredJobs = selectedDeptIds.length === 0 ? jobs : jobs.filter((job) => selectedDeptIds.includes(job.dept_id));
-  const handleDeptFilterChange = (deptIds: number[]) => {
-    setSelectedDeptIds(deptIds);
-    if (selectedJobId && !jobs.some((job) => job.id === selectedJobId && (deptIds.length === 0 || deptIds.includes(job.dept_id)))) {
-      setSelectedJobId(null);
-      setDistribution(null);
-      setResumes([]);
-      setSelectedApplicationIds([]);
-    }
-  };
+  const selectedJob = jobs.find((j) => j.id === selectedJobId);
   const toggleAll = () => {
     if (allSelected) setSelectedApplicationIds([]);
     else setSelectedApplicationIds(resumes.map((r) => r.application_id));
@@ -154,30 +135,92 @@ export default function EmployeeEvaluations() {
         <div className="lg:col-span-1 space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm">选择目标岗位</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm">选择目标岗位</CardTitle>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto p-1 text-[#94A3B8] hover:text-[#64748B]"
+                  disabled={!selectedJobId}
+                  onClick={() => { setSelectedJobId(null); setDistribution(null); setResumes([]); setSelectedApplicationIds([]); }}
+                  aria-label="清除筛选"
+                >
+                  <RotateCcw size={14} aria-hidden="true" />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="pt-0">
-              <DepartmentMultiSelect
-                depts={depts}
-                selectedIds={selectedDeptIds}
-                onChange={handleDeptFilterChange}
-                open={deptFilterOpen}
-                onOpenChange={setDeptFilterOpen}
-                placeholder="按部门筛选"
-                className="mb-3"
-              />
-              <Select value={selectedJobId ? String(selectedJobId) : ''} onValueChange={(v) => setSelectedJobId(Number(v))}>
-                <SelectTrigger>
-                  <SelectValue placeholder="请选择岗位" />
-                </SelectTrigger>
-                <SelectContent>
-                  {filteredJobs.map((job) => (
-                    <SelectItem key={job.id} value={String(job.id)}>
-                      {job.name}{job.dept_name ? `（${job.dept_name}）` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setJobSelectOpen(true)}
+                  className="min-h-9 w-full rounded-md border border-[#E2E8F0] bg-white px-3 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                >
+                  {selectedJob ? (
+                    <span className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-0.5 text-xs text-[#2563EB]">
+                      {selectedJob.name}
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(event) => { event.stopPropagation(); setSelectedJobId(null); setDistribution(null); setResumes([]); setSelectedApplicationIds([]); }}
+                        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); setSelectedJobId(null); setDistribution(null); setResumes([]); setSelectedApplicationIds([]); } }}
+                        className="rounded hover:bg-blue-100"
+                        aria-label="清除岗位选择"
+                      >
+                        <X size={12} aria-hidden="true" />
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="text-[#94A3B8] leading-6">请选择岗位</span>
+                  )}
+                </button>
+
+                <Dialog open={jobSelectOpen} onOpenChange={setJobSelectOpen}>
+                  <DialogContent>
+                    <div className="mb-4 flex items-center justify-between">
+                      <DialogTitle className="mb-0">选择岗位</DialogTitle>
+                      <button
+                        type="button"
+                        onClick={() => setJobSelectOpen(false)}
+                        aria-label="关闭岗位选择"
+                        className="text-[#94A3B8] hover:text-[#1E293B] focus-visible:outline-none"
+                      >
+                        <X size={18} aria-hidden="true" />
+                      </button>
+                    </div>
+                    <div className="max-h-80 overflow-auto rounded-lg border border-[#E2E8F0]">
+                      {jobs.length === 0 ? (
+                        <p className="px-4 py-8 text-center text-sm text-[#94A3B8]">暂无岗位</p>
+                      ) : (
+                        jobs.map((job) => {
+                          const checked = job.id === selectedJobId;
+                          return (
+                            <label key={job.id} className="flex cursor-pointer items-center gap-3 border-b border-[#F1F5F9] px-4 py-3 text-sm hover:bg-[#F8FAFC] last:border-b-0">
+                              <input
+                                type="radio"
+                                name="job-select"
+                                checked={checked}
+                                onChange={() => { setSelectedJobId(job.id); setJobSelectOpen(false); }}
+                                className="accent-[#2563EB]"
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[#1E293B]">{job.name}</span>
+                                {job.dept_name && <span className="block truncate text-xs text-[#94A3B8]">{job.dept_name}</span>}
+                              </span>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                    <div className="mt-5 flex justify-end gap-3">
+                      <Button type="button" onClick={() => setJobSelectOpen(false)} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white">
+                        确定
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
             </CardContent>
           </Card>
 

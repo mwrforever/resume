@@ -1,11 +1,16 @@
-from typing import Generic, Optional, TypeVar
-
 from pydantic import BaseModel
 
-T = TypeVar("T")
+from app.schemas.common import ApiResponse
 
 
-class ApiResponse(BaseModel, Generic[T]):
-    code: int = 200
-    message: str = "success"
-    data: Optional[T] = None
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user_type: str
+    user_id: int
+
+
+class RefreshTokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
