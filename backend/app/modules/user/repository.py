@@ -1,7 +1,6 @@
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.sys_user import SysUser
-from app.common.sql_utils import safe_ilike
 
 
 class UserRepository:
@@ -42,7 +41,7 @@ class UserRepository:
         if status is not None:
             query = query.where(SysUser.status == status)
         if search:
-            query = query.where(safe_ilike(SysUser.email, search) | safe_ilike(SysUser.real_name, search))
+            query = query.where((SysUser.email.ilike(f"%{search}%")) | (SysUser.real_name.ilike(f"%{search}%")))
         result = await self.db.execute(query)
         return result.scalar() or 0
 
@@ -51,7 +50,7 @@ class UserRepository:
         if status is not None:
             query = query.where(SysUser.status == status)
         if search:
-            query = query.where(safe_ilike(SysUser.email, search) | safe_ilike(SysUser.real_name, search))
+            query = query.where((SysUser.email.ilike(f"%{search}%")) | (SysUser.real_name.ilike(f"%{search}%")))
         query = query.order_by(SysUser.id.desc()).offset(skip).limit(limit)
         result = await self.db.execute(query)
         return result.scalars().all()

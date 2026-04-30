@@ -1,6 +1,5 @@
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.common.sql_utils import safe_ilike
 from app.models.eval_dimension import EvalDimension
 from app.models.eval_template import EvalTemplate
 from app.models.eval_template_dimension import EvalTemplateDimension
@@ -20,7 +19,7 @@ class EvalTemplateRepository:
         if status is not None:
             query = query.where(EvalDimension.status == status)
         if search:
-            query = query.where(safe_ilike(EvalDimension.dimension_name, search))
+            query = query.where(EvalDimension.dimension_name.ilike(f"%{search}%"))
         query = query.order_by(EvalDimension.sort_order.asc(), EvalDimension.id.desc()).offset(skip).limit(limit)
         result = await self.db.execute(query)
         return result.scalars().all()
@@ -30,7 +29,7 @@ class EvalTemplateRepository:
         if status is not None:
             query = query.where(EvalDimension.status == status)
         if search:
-            query = query.where(safe_ilike(EvalDimension.dimension_name, search))
+            query = query.where(EvalDimension.dimension_name.ilike(f"%{search}%"))
         result = await self.db.execute(query)
         return result.scalar() or 0
 
@@ -92,7 +91,7 @@ class EvalTemplateRepository:
         if status is not None:
             query = query.where(EvalTemplate.status == status)
         if search:
-            query = query.where(safe_ilike(EvalTemplate.template_name, search))
+            query = query.where(EvalTemplate.template_name.ilike(f"%{search}%"))
         query = query.order_by(EvalTemplate.id.desc()).offset(skip).limit(limit)
         result = await self.db.execute(query)
         return result.scalars().all()
@@ -102,7 +101,7 @@ class EvalTemplateRepository:
         if status is not None:
             query = query.where(EvalTemplate.status == status)
         if search:
-            query = query.where(safe_ilike(EvalTemplate.template_name, search))
+            query = query.where(EvalTemplate.template_name.ilike(f"%{search}%"))
         result = await self.db.execute(query)
         return result.scalar() or 0
 

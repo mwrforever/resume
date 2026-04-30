@@ -7,7 +7,6 @@ from sqlalchemy.sql._typing import _HasClauseElement
 from sqlalchemy.sql.elements import SQLCoreOperations
 from sqlalchemy.sql.roles import ColumnsClauseRole, TypedColumnsClauseRole
 
-from app.common.sql_utils import safe_ilike
 from app.models.job_position import JobPosition
 from app.models.sys_dept import SysDept
 from app.models.sys_dept_employee import SysDeptEmployee
@@ -198,5 +197,5 @@ class DeptRepository:
         if status is not None:
             query = query.where(SysDept.status == status)
         if search:
-            query = query.where(or_(safe_ilike(SysDept.dept_name, search), safe_ilike(SysDept.dept_code, search)))
+            query = query.where(or_(SysDept.dept_name.ilike(f"%{search}%"), SysDept.dept_code.ilike(f"%{search}%")))
         return query

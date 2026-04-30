@@ -1,27 +1,9 @@
-from typing import Any
-
-from sqlalchemy import select, update, func, or_, Select
+from sqlalchemy import select, update, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.common.sql_utils import safe_ilike
 from app.models.job_application import JobApplication
 from app.models.job_position import JobPosition
 from app.models.resume import Resume
 from app.models.sys_user import SysUser
-
-
-async def check_query(dept_ids: list[int] | None, job_ids: list[int] | None,
-                      query: Select[tuple[Any]] | Select[Any], status: int | None) -> Select[tuple[Any]] | Select[
-    Any]:
-    if status is not None:
-        query = query.where(JobApplication.status == status)
-    if job_ids:
-        query = query.where(JobApplication.job_id.in_(job_ids))
-    if dept_ids:
-        query = query.join(JobPosition, JobPosition.id == JobApplication.job_id).where(
-            JobPosition.is_deleted == 0,
-            JobPosition.dept_id.in_(dept_ids),
-        )
-    return query
 
 
 class ApplicationRepository:
@@ -120,9 +102,17 @@ class ApplicationRepository:
         if search:
             query = query.outerjoin(Resume, Resume.id == JobApplication.resume_id)
             query = query.where(
-                or_(safe_ilike(Resume.file_name, search), safe_ilike(SysUser.real_name, search))
+                or_(Resume.file_name.ilike(f"%{search}%"), SysUser.real_name.ilike(f"%{search}%"))
             )
-        query = await check_query(dept_ids, job_ids, query, status)
+        if status is not None:
+            query = query.where(JobApplication.status == status)
+        if job_ids:
+            query = query.where(JobApplication.job_id.in_(job_ids))
+        if dept_ids:
+            query = query.join(JobPosition, JobPosition.id == JobApplication.job_id).where(
+                JobPosition.is_deleted == 0,
+                JobPosition.dept_id.in_(dept_ids),
+            )
         query = query.order_by(JobApplication.create_time.desc()).offset(skip).limit(limit)
         result = await self.db.execute(query)
         return [(row[0], row[1]) for row in result.all()]
@@ -136,7 +126,15 @@ class ApplicationRepository:
                 .outerjoin(SysUser, (SysUser.id == JobApplication.user_id) & (SysUser.is_deleted == 0))
                 .where(or_(Resume.file_name.ilike(f"%{search}%"), SysUser.real_name.ilike(f"%{search}%")))
             )
-        query = await check_query(dept_ids, job_ids, query, status)
+        if status is not None:
+            query = query.where(JobApplication.status == status)
+        if job_ids:
+            query = query.where(JobApplication.job_id.in_(job_ids))
+        if dept_ids:
+            query = query.join(JobPosition, JobPosition.id == JobApplication.job_id).where(
+                JobPosition.is_deleted == 0,
+                JobPosition.dept_id.in_(dept_ids),
+            )
         result = await self.db.execute(query)
         return result.scalar() or 0
 
