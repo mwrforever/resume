@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 
 from app.infrastructure.config import get_settings
 
@@ -20,7 +20,9 @@ async_session_maker = async_sessionmaker(
 )
 
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
+
 
 from .sys_user import SysUser
 from .sys_employee import SysEmployee
@@ -39,4 +41,7 @@ from .eval_template_dimension import EvalTemplateDimension
 from .eval_template_skill import EvalTemplateSkill
 from .eval_template_tag import EvalTemplateTag
 
-__all__ = ["Base", "SysUser", "async_session_maker", "SysEmployee", "Resume", "JobPosition", "JobApplication", "ResumeJobMatch", "ResumeEvalDetail", "ResumeSkillHit", "SysDept", "SysDeptEmployee", "SysTag", "EvalDimension", "EvalTemplate", "EvalTemplateDimension", "EvalTemplateSkill", "EvalTemplateTag"]
+__all__ = ["Base", "SysUser", "async_session_maker", "SysEmployee", "Resume", "JobPosition",
+           "JobApplication", "ResumeJobMatch", "ResumeEvalDetail", "ResumeSkillHit", "SysDept",
+           "SysDeptEmployee", "SysTag", "EvalDimension", "EvalTemplate", "EvalTemplateDimension",
+           "EvalTemplateSkill", "EvalTemplateTag"]
