@@ -6,11 +6,11 @@ from app.infrastructure.exception import NotFoundError, ValidationError
 
 
 class EvalService:
-    def __init__(self, eval_repo: EvalRepository, resume_repo: ResumeRepository, job_repo: JobRepository) -> None:
+    def __init__(self, eval_repo: EvalRepository, resume_repo: ResumeRepository, job_repo: JobRepository, app_repo: ApplicationRepository) -> None:
         self.eval_repo = eval_repo
         self.resume_repo = resume_repo
         self.job_repo = job_repo
-        self.app_repo = ApplicationRepository(eval_repo.db)
+        self.app_repo = app_repo
 
     async def validate_batch_applications(self, application_ids: list[int]) -> None:
         if not application_ids:

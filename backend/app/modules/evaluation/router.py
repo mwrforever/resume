@@ -7,6 +7,7 @@ from app.infrastructure.client import get_db
 from app.modules.evaluation.repository import EvalRepository
 from app.modules.job.repository import JobRepository
 from app.modules.resume.repository import ResumeRepository
+from app.modules.application.repository import ApplicationRepository
 from app.modules.evaluation.service import EvalService
 from app.schemas.vo.request.evaluation_request import BatchEvalRequest
 from app.schemas.vo.response.evaluation_response import ApiResponse, EvalResult
@@ -20,7 +21,8 @@ def get_service(db=Depends(get_db)) -> EvalService:
     return EvalService(
         EvalRepository(db),
         ResumeRepository(db),
-        JobRepository(db)
+        JobRepository(db),
+        ApplicationRepository(db),
     )
 
 

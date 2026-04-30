@@ -129,6 +129,18 @@ class JobRepository:
                 skills_map[job_id].append(skill_name)
         return skills_map
 
+    async def get_by_ids_batch(self, job_ids: list[int]) -> dict[int, JobPosition]:
+        """批量获取岗位: job_id -> JobPosition"""
+        if not job_ids:
+            return {}
+        result = await self.db.execute(
+            select(JobPosition).where(
+                JobPosition.id.in_(job_ids),
+                JobPosition.is_deleted == 0,
+            )
+        )
+        return {job.id: job for job in result.scalars().all()}
+
     async def delete(self, job_id: int) -> bool:
         await self.db.execute(
             update(JobPosition).where(JobPosition.id == job_id).values(is_deleted=1)

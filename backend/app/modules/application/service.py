@@ -32,10 +32,10 @@ class ApplicationService:
 
     async def create_application(self, user_id: int, job_id: int, resume_id: int) -> JobApplication:
         """创建投递记录"""
-        # 验证岗位是否存在且在招聘中
-        job = await self.job_repo.get_by_id(job_id)
-        if not job:
+        row = await self.job_repo.get_by_id_with_dept(job_id)
+        if not row:
             raise NotFoundError("岗位不存在")
+        job = row[0]
         if job.status != 1:
             raise ValidationError("岗位已下架")
         if not job.template_id:
@@ -50,8 +50,7 @@ class ApplicationService:
         if existing:
             raise ValidationError("该岗位已有未结束投递记录")
         template_detail = await self.template_service.validate_template_available(job.template_id)
-        row = await self.job_repo.get_by_id_with_dept(job_id)
-        dept = row[1] if row else None
+        dept = row[1]
         snapshot = await self.template_service.build_job_snapshot(
             job,
             template_detail,
@@ -96,12 +95,8 @@ class ApplicationService:
 
     async def get_job_names(self, job_ids: list[int]) -> dict[int, str]:
         """批量获取岗位名称"""
-        result = {}
-        for job_id in job_ids:
-            job = await self.job_repo.get_by_id(job_id)
-            if job:
-                result[job_id] = job.name
-        return result
+        jobs = await self.job_repo.get_by_ids_batch(job_ids)
+        return {job_id: job.name for job_id, job in jobs.items()}
 
     async def update_status(self, app_id: int, status: int) -> bool:
         """更新投递状态"""
