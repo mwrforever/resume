@@ -101,7 +101,17 @@ def _delete_old_results(session: Session, match_id: int) -> None:
     session.execute(text("DELETE FROM resume_skill_hit WHERE match_id = :match_id"), {"match_id": match_id})
 
 
-def _get_dimensions(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+def _get_template_dimensions(session: Session, template_id: int) -> list[dict[str, Any]]:
+    rows = session.execute(
+        text(
+            "SELECT etd.dimension_id, ed.dimension_name, etd.weight, etd.prompt_template "
+            "FROM eval_template_dimension etd "
+            "JOIN eval_dimension ed ON ed.id = etd.dimension_id AND ed.is_deleted = 0 AND ed.status = 1 "
+            "WHERE etd.template_id = :template_id "
+            "ORDER BY etd.sort_order ASC, etd.id ASC"
+        ),
+        {"template_id": template_id},
+    ).mappings().all()
     return [
         {
             "dimension_id": int(row["dimension_id"]),
@@ -109,19 +119,27 @@ def _get_dimensions(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             "weight": float(row["weight"]),
             "prompt_template": row["prompt_template"],
         }
-        for row in snapshot.get("dimensions", [])
+        for row in rows
     ]
 
 
-def _get_skills(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+def _get_template_skills(session: Session, template_id: int) -> list[dict[str, Any]]:
+    rows = session.execute(
+        text(
+            "SELECT id, skill_name, skill_type "
+            "FROM eval_template_skill "
+            "WHERE template_id = :template_id "
+            "ORDER BY skill_type ASC, id ASC"
+        ),
+        {"template_id": template_id},
+    ).mappings().all()
     return [
         {
             "skill_id": int(row["id"]),
             "skill": row["skill_name"],
             "type": int(row["skill_type"]),
         }
-        for row in snapshot.get("skills", [])
-        if row.get("id") is not None
+        for row in rows
     ]
 
 
@@ -311,11 +329,15 @@ def _load_evaluation_context(session: Session, application_id: int) -> dict[str,
         raise NotFoundError("简历不存在或未解析")
 
     job = snapshot.get("job", {})
-    dimensions = _get_dimensions(snapshot)
-    if not dimensions:
-        raise NotFoundError("投递快照未包含评估维度，无法评估")
+    template_id = job.get("template_id")
+    if not template_id:
+        raise ValidationError("投递快照未包含模板ID，无法评估")
 
-    skills = _get_skills(snapshot)
+    dimensions = _get_template_dimensions(session, template_id)
+    if not dimensions:
+        raise NotFoundError("评估模板维度不存在，无法评估")
+
+    skills = _get_template_skills(session, template_id)
     return {
         "application_id": application_id,
         "resume_id": resume_id,

@@ -22,7 +22,7 @@ class JobApplication(Base):
     job_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="岗位ID")
     resume_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="关联简历ID")
     status: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, comment="状态：0待评估，1待处理，2已查看，3面试中，4已拒绝，5已录用，6已结束")
-    job_snapshot: Mapped[dict | None] = mapped_column(JSON, comment="投递时岗位与评估模板快照")
+    job_snapshot: Mapped[dict | None] = mapped_column(JSON, comment="投递时岗位与标签快照")
     is_deleted: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, comment="逻辑删除")
     create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="投递时间")
     update_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")

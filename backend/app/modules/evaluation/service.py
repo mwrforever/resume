@@ -29,17 +29,16 @@ class EvalService:
         app = await self.app_repo.get_by_id(match.application_id)
         if not app or not app.job_snapshot:
             raise ValidationError("投递快照不存在，无法查看评估详情")
-        snapshot = app.job_snapshot
-        dimension_map = {
-            int(item["dimension_id"]): item
-            for item in snapshot.get("dimensions", [])
-            if item.get("dimension_id") is not None
-        }
-        skill_map = {
-            int(item["id"]): item
-            for item in snapshot.get("skills", [])
-            if item.get("id") is not None
-        }
+
+        template_id = (app.job_snapshot.get("job") or {}).get("template_id")
+        if not template_id:
+            raise ValidationError("投递快照缺少模板信息")
+
+        dimension_rows = await self.eval_repo.get_template_dimensions_for_display(template_id)
+        skill_rows = await self.eval_repo.get_template_skills_for_display(template_id)
+
+        dimension_map = {int(item["dimension_id"]): item for item in dimension_rows}
+        skill_map = {int(item["id"]): item for item in skill_rows}
 
         details = await self.eval_repo.get_eval_details(match_id)
         hits = await self.eval_repo.get_skill_hits(match_id)

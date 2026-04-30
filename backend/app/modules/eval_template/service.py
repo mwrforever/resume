@@ -1,5 +1,4 @@
 import asyncio
-from datetime import datetime
 
 from app.infrastructure.exception import NotFoundError, ValidationError
 from app.modules.eval_template.repository import EvalTemplateRepository
@@ -173,15 +172,9 @@ class EvalTemplateService:
                 "name": job.name,
                 "description": job.description or "",
                 "dept_id": job.dept_id,
+                "template_id": job.template_id,
                 "dept_name": dept_name,
                 "dept_code": dept_code,
             },
-            "template": {
-                "id": template_detail["id"],
-                "template_name": template_detail["template_name"],
-            },
-            "dimensions": template_detail["dimensions"],
-            "skills": template_detail["skills"],
             "tags": template_detail["tags"],
-            "snapshot_time": datetime.now().isoformat(timespec="seconds"),
         }
