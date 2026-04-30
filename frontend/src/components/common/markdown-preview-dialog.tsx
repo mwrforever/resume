@@ -51,7 +51,7 @@ export function MarkdownPreviewDialog({ open, title = 'Markdown 预览', content
         </div>
         <div className="flex-1 overflow-y-auto bg-[#F8FAFC] p-6">
           {editing ? (
-            <Textarea value={draft} onChange={event => setDraft(event.target.value)} className="min-h-[60vh] resize-none bg-white font-mono text-sm" />
+            <Textarea value={draft} onChange={event => setDraft(event.target.value)} className="min-h-[75vh] resize-none bg-white font-mono text-sm" />
           ) : draft.trim() ? (
             <div className="mx-auto max-w-3xl rounded-lg border border-[#E2E8F0] bg-white p-6 text-sm leading-7 text-[#334155] shadow-sm">
               <ReactMarkdown
