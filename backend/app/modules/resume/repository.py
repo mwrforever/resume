@@ -2,6 +2,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.resume import Resume
 from app.models.sys_user import SysUser
+from app.common.sql_utils import safe_ilike
 
 
 class ResumeRepository:
@@ -74,12 +75,12 @@ class ResumeRepository:
 
         if search:
             base_q = base_q.where(
-                or_(Resume.file_name.ilike(f"%{search}%"), SysUser.real_name.ilike(f"%{search}%"))
+                or_(safe_ilike(Resume.file_name, search), safe_ilike(SysUser.real_name, search))
             )
             count_q = count_q.outerjoin(
                 SysUser, (SysUser.id == Resume.user_id) & (SysUser.is_deleted == 0)
             ).where(
-                or_(Resume.file_name.ilike(f"%{search}%"), SysUser.real_name.ilike(f"%{search}%"))
+                or_(safe_ilike(Resume.file_name, search), safe_ilike(SysUser.real_name, search))
             )
 
         items_result = await self.db.execute(

@@ -4,6 +4,7 @@ from app.models.eval_template_skill import EvalTemplateSkill
 from app.models.job_position import JobPosition
 from app.models.job_application import JobApplication
 from app.models.sys_dept import SysDept
+from app.common.sql_utils import safe_ilike
 
 
 class JobRepository:
@@ -32,7 +33,7 @@ class JobRepository:
         if status is not None:
             query = query.where(JobPosition.status == status)
         if search:
-            query = query.where(JobPosition.name.ilike(f"%{search}%"))
+            query = query.where(safe_ilike(JobPosition.name, search))
         query = query.order_by(JobPosition.id.desc()).offset(skip).limit(limit)
         result = await self.db.execute(query)
         return result.scalars().all()
@@ -48,7 +49,7 @@ class JobRepository:
         if status is not None:
             query = query.where(JobPosition.status == status)
         if search:
-            query = query.where(JobPosition.name.ilike(f"%{search}%"))
+            query = query.where(safe_ilike(JobPosition.name, search))
         query = query.order_by(JobPosition.id.desc()).offset(skip).limit(limit)
         result = await self.db.execute(query)
         return result.all()
@@ -64,7 +65,7 @@ class JobRepository:
         if status is not None:
             query = query.where(JobPosition.status == status)
         if search:
-            query = query.where(JobPosition.name.ilike(f"%{search}%"))
+            query = query.where(safe_ilike(JobPosition.name, search))
         result = await self.db.execute(query)
         return result.scalar() or 0
 

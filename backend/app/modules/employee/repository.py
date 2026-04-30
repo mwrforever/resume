@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.sys_dept import SysDept
 from app.models.sys_dept_employee import SysDeptEmployee
 from app.models.sys_employee import SysEmployee
+from app.common.sql_utils import safe_ilike
 
 
 class EmployeeRepository:
@@ -73,10 +74,10 @@ class EmployeeRepository:
             query = query.where(SysEmployee.status == status)
         if search:
             query = query.where(
-                (SysEmployee.emp_no.ilike(f"%{search}%"))
-                | (SysEmployee.email.ilike(f"%{search}%"))
-                | (SysEmployee.real_name.ilike(f"%{search}%"))
-                | (SysEmployee.phone.ilike(f"%{search}%"))
+                safe_ilike(SysEmployee.emp_no, search)
+                | safe_ilike(SysEmployee.email, search)
+                | safe_ilike(SysEmployee.real_name, search)
+                | safe_ilike(SysEmployee.phone, search)
             )
         result = await self.db.execute(query)
         return result.scalar() or 0
@@ -93,10 +94,10 @@ class EmployeeRepository:
             query = query.where(SysEmployee.status == status)
         if search:
             query = query.where(
-                (SysEmployee.emp_no.ilike(f"%{search}%"))
-                | (SysEmployee.email.ilike(f"%{search}%"))
-                | (SysEmployee.real_name.ilike(f"%{search}%"))
-                | (SysEmployee.phone.ilike(f"%{search}%"))
+                safe_ilike(SysEmployee.emp_no, search)
+                | safe_ilike(SysEmployee.email, search)
+                | safe_ilike(SysEmployee.real_name, search)
+                | safe_ilike(SysEmployee.phone, search)
             )
         query = query.order_by(SysEmployee.id.desc()).offset(skip).limit(limit)
         result = await self.db.execute(query)
@@ -114,10 +115,10 @@ class EmployeeRepository:
             query = query.where(SysEmployee.status == status)
         if search:
             query = query.where(
-                (SysEmployee.emp_no.ilike(f"%{search}%"))
-                | (SysEmployee.email.ilike(f"%{search}%"))
-                | (SysEmployee.real_name.ilike(f"%{search}%"))
-                | (SysEmployee.phone.ilike(f"%{search}%"))
+                safe_ilike(SysEmployee.emp_no, search)
+                | safe_ilike(SysEmployee.email, search)
+                | safe_ilike(SysEmployee.real_name, search)
+                | safe_ilike(SysEmployee.phone, search)
             )
         result = await self.db.execute(query.order_by(SysEmployee.id.desc()).offset(skip).limit(limit))
         items = [self._build_employee_item(row) for row in result.all()]

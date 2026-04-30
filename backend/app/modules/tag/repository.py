@@ -2,6 +2,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.eval_template_tag import EvalTemplateTag
 from app.models.sys_tag import SysTag
+from app.common.sql_utils import safe_ilike
 
 
 class TagRepository:
@@ -29,7 +30,7 @@ class TagRepository:
         if status is not None:
             query = query.where(SysTag.status == status)
         if search:
-            query = query.where(SysTag.tag_name.ilike(f"%{search}%"))
+            query = query.where(safe_ilike(SysTag.tag_name, search))
         result = await self.db.execute(query)
         return result.scalar() or 0
 
@@ -47,7 +48,7 @@ class TagRepository:
         if status is not None:
             query = query.where(SysTag.status == status)
         if search:
-            query = query.where(SysTag.tag_name.ilike(f"%{search}%"))
+            query = query.where(safe_ilike(SysTag.tag_name, search))
         query = query.order_by(SysTag.sort_order.asc(), SysTag.id.desc()).offset(skip).limit(limit)
         result = await self.db.execute(query)
         return result.scalars().all()
