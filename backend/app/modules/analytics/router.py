@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, Query
 
 from app.infrastructure.client import get_db
+from app.infrastructure.cache import get_cache, CacheService
 from app.modules.evaluation.repository import EvalRepository
 from app.modules.job.repository import JobRepository
 from app.modules.resume.repository import ResumeRepository
+from app.modules.application.repository import ApplicationRepository
+from app.modules.evaluation.service import EvalService
 from app.schemas.vo.response.analytics_response import ApiResponse
 
 router = APIRouter()
@@ -17,16 +20,27 @@ def get_repos(db=Depends(get_db)):
     }
 
 
+def get_eval_service(db=Depends(get_db), cache: CacheService = Depends(get_cache)) -> EvalService:
+    return EvalService(
+        EvalRepository(db),
+        ResumeRepository(db),
+        JobRepository(db),
+        ApplicationRepository(db),
+        cache,
+    )
+
+
 @router.get("/dashboard", response_model=ApiResponse)
 async def get_dashboard_stats(
     repos=Depends(get_repos),
+    eval_service: EvalService = Depends(get_eval_service),
 ):
     """获取工作台统计数据"""
     job_count = await repos["job"].count_active()
     resume_count = await repos["resume"].count_all()
-    pending_count = await repos["eval"].count_pending_evaluations()
-    avg_score = await repos["eval"].get_avg_match_score()
-    recent_activities = await repos["eval"].get_recent_activities(10)
+    pending_count = await eval_service.get_pending_count()
+    avg_score = await eval_service.get_avg_score()
+    recent_activities = await eval_service.get_recent_activities(10)
 
     return ApiResponse(data={
         "job_count": job_count,
@@ -40,10 +54,10 @@ async def get_dashboard_stats(
 @router.get("/job/{job_id}/match-distribution", response_model=ApiResponse)
 async def get_match_distribution(
     job_id: int,
-    repos=Depends(get_repos),
+    eval_service: EvalService = Depends(get_eval_service),
 ):
     """获取岗位匹配度分布（饼图数据）"""
-    distribution = await repos["eval"].get_match_distribution(job_id)
+    distribution = await eval_service.get_match_distribution(job_id)
     return ApiResponse(data=distribution)
 
 

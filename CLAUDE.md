@@ -38,7 +38,7 @@ backend/
 │   │   └── exception.py       #   错误
 │   └── utils/                 # 工具类：AI (LLM/LangChain)、邮件、存储、简历解析，安全 (JWT/bcrypt)
 ├── tests/                     # 测试目录
-└── requirements.txt
+└── pyproject.toml
 ```
 
 ### 1.2 前端目录结构

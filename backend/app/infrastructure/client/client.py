@@ -1,11 +1,12 @@
 from typing import Any, AsyncGenerator
 
-import redis
+import redis.asyncio as redis
+from redis.asyncio import Redis
 
 from app.infrastructure.config import get_settings
 from app.models import async_session_maker
 
-_redis_client: redis.Redis | None = None
+_redis_client: Redis | None = None
 
 
 async def get_db() -> AsyncGenerator[Any, Any]:
@@ -13,7 +14,7 @@ async def get_db() -> AsyncGenerator[Any, Any]:
         yield session
 
 
-def get_redis_client() -> redis.Redis:
+def get_redis_client() -> Redis | None:
     global _redis_client
     if _redis_client is None:
         settings = get_settings()

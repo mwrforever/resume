@@ -9,6 +9,7 @@ from app.infrastructure.exception import ValidationError
 from app.modules.application.repository import ApplicationRepository
 from app.modules.eval_template.repository import EvalTemplateRepository
 from app.modules.eval_template.service import EvalTemplateService
+from app.infrastructure.cache import get_cache, CacheService
 from app.modules.job.repository import JobRepository
 from app.modules.job.service import JobService
 from app.schemas.vo.request.job_request import AiSuggestRequest, JobCreate, JobUpdate
@@ -22,19 +23,19 @@ user_router = APIRouter()
 _chain = JobAiSuggestChain()
 
 
-def get_job_service(db=Depends(get_db)) -> JobService:
-    return JobService(JobRepository(db))
+def get_job_service(db=Depends(get_db), cache: CacheService = Depends(get_cache)) -> JobService:
+    return JobService(JobRepository(db), cache)
 
 
-def get_template_service(db=Depends(get_db)) -> EvalTemplateService:
-    return EvalTemplateService(EvalTemplateRepository(db))
+def get_template_service(db=Depends(get_db), cache: CacheService = Depends(get_cache)) -> EvalTemplateService:
+    return EvalTemplateService(EvalTemplateRepository(db), cache)
 
 
-async def _build_job_item(job, dept, service: JobService) -> JobItem:
+async def _build_job_item(job, dept, service: JobService, resume_count: int) -> JobItem:
     data = JobItem.model_validate(job).model_dump()
     data["dept_name"] = dept.dept_name if dept else None
     data["dept_code"] = dept.dept_code if dept else None
-    data["resume_count"] = await service.job_repo.count_applications(job.id)
+    data["resume_count"] = resume_count
     data["template_id"] = job.template_id
     return JobItem.model_validate(data)
 
@@ -114,10 +115,16 @@ async def list_employee_jobs(
     skip = (page - 1) * page_size
     rows = await service.job_repo.get_list_with_dept(skip=skip, limit=page_size, status=status, search=search)
     total = await service.job_repo.get_count(status=status, search=search)
+    if rows:
+        job_ids = [job.id for job, _ in rows]
+        counts = await service.job_repo.batch_count_applications(job_ids)
+        items = [await _build_job_item(job, dept, service, counts.get(job.id, 0)) for job, dept in rows]
+    else:
+        items = []
     return ApiResponse(
         data=PageData(
             total=total,
-            items=[await _build_job_item(job, dept, service) for job, dept in rows]
+            items=items
         )
     )
 

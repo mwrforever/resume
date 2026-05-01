@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.infrastructure.client.deps import get_current_user
 from app.infrastructure.client import get_db
+from app.infrastructure.cache import get_cache, CacheService
 from app.modules.application.repository import ApplicationRepository
 from app.modules.application.service import ApplicationService
 from app.modules.eval_template.repository import EvalTemplateRepository
@@ -18,12 +19,13 @@ employee_router = APIRouter()
 user_router = APIRouter()
 
 
-def get_service(db=Depends(get_db)) -> ApplicationService:
+def get_service(db=Depends(get_db), cache: CacheService = Depends(get_cache)) -> ApplicationService:
     return ApplicationService(
         ApplicationRepository(db),
         ResumeRepository(db),
         JobRepository(db),
         EvalTemplateService(EvalTemplateRepository(db)),
+        cache,
     )
 
 

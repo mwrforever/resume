@@ -1,14 +1,13 @@
 from typing import Any, Optional
 
-import redis
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.auth import AuthService
 from app.infrastructure.client.deps import get_current_user
 from app.infrastructure.client import get_db
+from app.infrastructure.cache import get_cache, CacheService
 from app.utils.security import create_access_token, create_refresh_token, decode_token, get_password_hash
-from app.infrastructure.client import get_redis_client
 from app.modules.user.service import UserManageService
 from app.utils.verification import verify_and_consume_code
 from app.modules.user.repository import UserRepository
@@ -22,12 +21,12 @@ router = APIRouter()
 user_manage_router = APIRouter()
 
 
-def get_auth_service(db: AsyncSession = Depends(get_db)) -> AuthService:
-    return AuthService(UserRepository(db), EmployeeRepository(db))
+def get_auth_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> AuthService:
+    return AuthService(UserRepository(db), EmployeeRepository(db), cache)
 
 
-def get_user_manage_service(db: AsyncSession = Depends(get_db)) -> UserManageService:
-    return UserManageService(UserRepository(db), EmployeeRepository(db))
+def get_user_manage_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> UserManageService:
+    return UserManageService(UserRepository(db), EmployeeRepository(db), cache)
 
 
 # ── auth endpoints ──
@@ -36,10 +35,10 @@ def get_user_manage_service(db: AsyncSession = Depends(get_db)) -> UserManageSer
 async def register(
     req: RegisterRequest,
     db: AsyncSession = Depends(get_db),
-    r: redis.Redis = Depends(get_redis_client),
+    cache: CacheService = Depends(get_cache),
     service: AuthService = Depends(get_auth_service)
 ) -> dict[str, Any]:
-    verify_and_consume_code(req.email, "user", req.code, r)
+    await verify_and_consume_code(req.email, "user", req.code, cache)
 
     user_repo = UserRepository(db)
     existing = await user_repo.get_by_email(req.email)
@@ -69,7 +68,7 @@ async def register(
 async def login(
     req: LoginRequest,
     db: AsyncSession = Depends(get_db),
-    r: redis.Redis = Depends(get_redis_client),
+    cache: CacheService = Depends(get_cache),
     service: AuthService = Depends(get_auth_service)
 ) -> TokenResponse:
     if req.login_type == "password":
@@ -81,10 +80,9 @@ async def login(
     elif req.login_type == "code":
         if not req.code:
             raise HTTPException(status_code=400, detail="验证码不能为空")
-        verify_and_consume_code(req.identifier, "user", req.code, r)
+        await verify_and_consume_code(req.identifier, "user", req.code, cache)
 
-        user_repo = UserRepository(db)
-        user = await user_repo.get_by_email(req.identifier)
+        user = await service.get_user_by_email(req.identifier)
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
     else:
@@ -201,7 +199,7 @@ async def update_user(
     current_user: dict = Depends(get_current_user),
 ) -> ApiResponse[ManagedUserItem]:
     await service.ensure_admin(current_user)
-    return ApiResponse(message="更新成功", data=await service.update_user(user_id, body))
+    return ApiResponse(message="修改成功", data=await service.update_user(user_id, body))
 
 
 @user_manage_router.delete("/users/{user_id}", response_model=ApiResponse)

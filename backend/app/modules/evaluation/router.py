@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 
 from app.infrastructure.client.deps import get_current_user
 from app.infrastructure.client import get_db
+from app.infrastructure.cache import get_cache, CacheService
 from app.modules.evaluation.repository import EvalRepository
 from app.modules.job.repository import JobRepository
 from app.modules.resume.repository import ResumeRepository
@@ -17,12 +18,13 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-def get_service(db=Depends(get_db)) -> EvalService:
+def get_service(db=Depends(get_db), cache: CacheService = Depends(get_cache)) -> EvalService:
     return EvalService(
         EvalRepository(db),
         ResumeRepository(db),
         JobRepository(db),
         ApplicationRepository(db),
+        cache,
     )
 
 
@@ -33,8 +35,7 @@ async def batch_evaluate(
     current_user: dict = Depends(get_current_user)
 ):
     """批量触发评估（员工端核心功能）"""
-    if hasattr(service, "validate_batch_applications"):
-        await service.validate_batch_applications(req.application_ids)
+    await service.validate_batch_applications(req.application_ids)
     logger.info(f"员工 {current_user['sub']} 提交批量评估: {len(req.application_ids)} 条投递")
     run_evaluation_task.apply_async(args=(req.application_ids,), ignore_result=True)
     return ApiResponse(code=200, message="评估任务已提交", data={"count": len(req.application_ids)})
@@ -44,7 +45,6 @@ async def batch_evaluate(
 async def get_evaluation(
     match_id: int,
     service: EvalService = Depends(get_service),
-    current_user: dict = Depends(get_current_user)
 ):
     """获取评估详情"""
     result = await service.get_evaluation_detail(match_id)
@@ -55,7 +55,6 @@ async def get_evaluation(
 async def get_skill_hits(
     match_id: int,
     service: EvalService = Depends(get_service),
-    current_user: dict = Depends(get_current_user)
 ):
     """获取技能命中详情"""
     result = await service.get_evaluation_detail(match_id)

@@ -1,14 +1,13 @@
 from typing import Any, Optional
 
-import redis
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.auth import AuthService
 from app.infrastructure.client.deps import get_current_user
 from app.infrastructure.client import get_db
+from app.infrastructure.cache import get_cache, CacheService
 from app.utils.security import create_access_token, create_refresh_token, decode_token, get_password_hash
-from app.infrastructure.client import get_redis_client
 from app.modules.employee.service import EmployeeManageService
 from app.utils.verification import verify_and_consume_code
 from app.modules.employee.repository import EmployeeRepository
@@ -23,12 +22,12 @@ router = APIRouter()
 employee_manage_router = APIRouter()
 
 
-def get_auth_service(db: AsyncSession = Depends(get_db)) -> AuthService:
-    return AuthService(UserRepository(db), EmployeeRepository(db))
+def get_auth_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> AuthService:
+    return AuthService(UserRepository(db), EmployeeRepository(db), cache)
 
 
-def get_employee_manage_service(db: AsyncSession = Depends(get_db)) -> EmployeeManageService:
-    return EmployeeManageService(EmployeeRepository(db), DeptRepository(db))
+def get_employee_manage_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> EmployeeManageService:
+    return EmployeeManageService(EmployeeRepository(db), DeptRepository(db), cache)
 
 
 # ── auth endpoints ──
@@ -37,16 +36,15 @@ def get_employee_manage_service(db: AsyncSession = Depends(get_db)) -> EmployeeM
 async def register(
     req: EmployeeRegisterRequest,
     db: AsyncSession = Depends(get_db),
-    r: redis.Redis = Depends(get_redis_client),
+    cache: CacheService = Depends(get_cache),
     service: AuthService = Depends(get_auth_service)
 ) -> dict[str, Any]:
-    verify_and_consume_code(req.email, "employee", req.code, r)
+    await verify_and_consume_code(req.email, "employee", req.code, cache)
 
     employee_repo = EmployeeRepository(db)
     existing = await employee_repo.get_by_email(req.email)
     if existing:
         raise HTTPException(status_code=400, detail="该邮箱已被注册")
-
     existing_by_emp_no = await employee_repo.get_by_emp_no(req.emp_no)
     if existing_by_emp_no:
         raise HTTPException(status_code=400, detail="该员工号已被注册")
@@ -75,7 +73,7 @@ async def register(
 async def login(
     req: EmployeeLoginRequest,
     db: AsyncSession = Depends(get_db),
-    r: redis.Redis = Depends(get_redis_client),
+    cache: CacheService = Depends(get_cache),
     service: AuthService = Depends(get_auth_service)
 ) -> TokenResponse:
     if req.login_type == "password":
@@ -87,10 +85,9 @@ async def login(
     elif req.login_type == "code":
         if not req.code:
             raise HTTPException(status_code=400, detail="验证码不能为空")
-        verify_and_consume_code(req.identifier, "employee", req.code, r)
+        await verify_and_consume_code(req.identifier, "employee", req.code, cache)
 
-        employee_repo = EmployeeRepository(db)
-        employee = await employee_repo.get_by_email(req.identifier)
+        employee = await service.get_employee_by_email(req.identifier)
         if not employee:
             raise HTTPException(status_code=404, detail="员工不存在")
     else:
@@ -193,7 +190,7 @@ async def update_employee(
     current_user: dict = Depends(get_current_user),
 ) -> ApiResponse[ManagedEmployeeItem]:
     await service.ensure_admin(current_user)
-    return ApiResponse(message="更新成功", data=await service.update_employee(employee_id, body))
+    return ApiResponse(message="修改成功", data=await service.update_employee(employee_id, body))
 
 
 @employee_manage_router.delete("/employees/{employee_id}", response_model=ApiResponse)

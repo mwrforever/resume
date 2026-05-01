@@ -1,11 +1,20 @@
 from app.modules.job.repository import JobRepository
 from app.models.job_position import JobPosition
 from app.infrastructure.exception import NotFoundError, ValidationError
+from app.infrastructure.cache import CacheService
+from app.infrastructure.cache.redis_constants import (
+    JOB_SKILLS_KEY,
+    JOB_SKILLS_TTL,
+    JOB_DETAIL_KEY,
+    JOB_LIST_KEY,
+    JOB_COUNT_ACTIVE_KEY,
+)
 
 
 class JobService:
-    def __init__(self, job_repo: JobRepository):
+    def __init__(self, job_repo: JobRepository, cache: CacheService | None = None):
         self.job_repo = job_repo
+        self.cache = cache
 
     async def get_jobs(self, skip: int = 0, limit: int = 20) -> tuple[list[JobPosition], int]:
         """获取岗位列表（用户端）"""
@@ -36,8 +45,16 @@ class JobService:
 
     async def get_job_skills(self, job_id: int, limit: int = 100) -> list[str]:
         """获取岗位技能列表（单个岗位）"""
+        key = JOB_SKILLS_KEY.format(job_id=job_id)
+        if self.cache:
+            cached = await self.cache.get_json(key)
+            if cached is not None:
+                return cached
         skills = await self.job_repo.get_skills_by_job_ids([job_id], limit=limit)
-        return skills.get(job_id, [])
+        result = skills.get(job_id, [])
+        if self.cache:
+            await self.cache.set_json(key, result, JOB_SKILLS_TTL)
+        return result
 
     async def create_job(
         self,
@@ -47,10 +64,18 @@ class JobService:
         description: str = None,
         template_id: int = None,
     ) -> JobPosition:
-        return await self.job_repo.create(employee_id, dept_id, name, description, template_id)
+        job = await self.job_repo.create(employee_id, dept_id, name, description, template_id)
+        if self.cache:
+            await self.cache.delete_pattern(JOB_LIST_KEY.format(page="*", size="*"))
+            await self.cache.delete(JOB_COUNT_ACTIVE_KEY)
+        return job
 
     async def update_job(self, job_id: int, **kwargs) -> JobPosition:
-        return await self.job_repo.update(job_id, **kwargs)
+        job = await self.job_repo.update(job_id, **kwargs)
+        if self.cache:
+            await self.cache.delete(JOB_DETAIL_KEY.format(job_id=job_id))
+            await self.cache.delete(JOB_SKILLS_KEY.format(job_id=job_id))
+        return job
 
     async def ensure_job_editable(self, job_id: int) -> None:
         job = await self.job_repo.get_by_id(job_id)
@@ -63,4 +88,10 @@ class JobService:
             raise ValidationError("已有投递的岗位不能编辑")
 
     async def delete_job(self, job_id: int) -> bool:
-        return await self.job_repo.delete(job_id)
+        result = await self.job_repo.delete(job_id)
+        if self.cache:
+            await self.cache.delete(JOB_DETAIL_KEY.format(job_id=job_id))
+            await self.cache.delete_pattern(JOB_LIST_KEY.format(page="*", size="*"))
+            await self.cache.delete(JOB_SKILLS_KEY.format(job_id=job_id))
+            await self.cache.delete(JOB_COUNT_ACTIVE_KEY)
+        return result

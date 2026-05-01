@@ -4,11 +4,19 @@ from app.infrastructure.exception import NotFoundError, ValidationError
 from app.modules.eval_template.repository import EvalTemplateRepository
 from app.schemas.vo.request.eval_template_request import EvalDimensionAiSuggestRequest, JobTemplateAiSuggestRequest, TemplateSkillAiSuggestRequest
 from app.utils.ai.chains import EvalDimensionAiSuggestChain, JobTemplateAiSuggestChain, TemplateSkillAiSuggestChain
+from app.infrastructure.cache import CacheService
+from app.infrastructure.cache.redis_constants import (
+    TEMPLATE_DETAIL_KEY,
+    TEMPLATE_DETAIL_TTL,
+    DIMENSION_LIST_KEY,
+    DIMENSION_LIST_TTL,
+)
 
 
 class EvalTemplateService:
-    def __init__(self, repo: EvalTemplateRepository):
+    def __init__(self, repo: EvalTemplateRepository, cache: CacheService | None = None):
         self.repo = repo
+        self.cache = cache
 
     async def ensure_template_unlocked(self, template_id: int) -> None:
         if await self.repo.count_template_jobs(template_id, status=1) > 0:
@@ -22,7 +30,17 @@ class EvalTemplateService:
             raise ValidationError("评估维度权重合计必须为1.00")
 
     async def validate_template_available(self, template_id: int) -> dict:
-        detail = await self.repo.get_template_detail(template_id)
+        key = TEMPLATE_DETAIL_KEY.format(template_id=template_id)
+        if self.cache:
+            cached = await self.cache.get_json(key)
+            if cached is not None:
+                detail = cached
+            else:
+                detail = await self.repo.get_template_detail(template_id)
+                if detail:
+                    await self.cache.set_json(key, detail, TEMPLATE_DETAIL_TTL)
+        else:
+            detail = await self.repo.get_template_detail(template_id)
         if not detail:
             raise NotFoundError("评估模板不存在")
         if detail["status"] != 1:
@@ -31,13 +49,16 @@ class EvalTemplateService:
         return detail
 
     async def create_dimension(self, body) -> object:
-        return await self.repo.create_dimension(
+        result = await self.repo.create_dimension(
             dimension_name=body.dimension_name,
             description=body.description,
             default_prompt_template=body.default_prompt_template,
             sort_order=body.sort_order,
             status=body.status,
         )
+        if self.cache:
+            await self.cache.delete(DIMENSION_LIST_KEY)
+        return result
 
     async def suggest_dimension(self, body: EvalDimensionAiSuggestRequest) -> dict[str, str]:
         result = await asyncio.to_thread(
@@ -121,7 +142,10 @@ class EvalTemplateService:
         if await self.repo.count_dimension_published_jobs(dimension_id) > 0:
             raise ValidationError("已有招聘中岗位的模板引用该维度，不允许修改")
         payload = body.model_dump(exclude_unset=True)
-        return await self.repo.update_dimension(dimension_id, **payload) if payload else dimension
+        result = await self.repo.update_dimension(dimension_id, **payload) if payload else dimension
+        if self.cache:
+            await self.cache.delete(DIMENSION_LIST_KEY)
+        return result
 
     async def delete_dimension(self, dimension_id: int) -> bool:
         dimension = await self.repo.get_dimension(dimension_id)
@@ -129,7 +153,10 @@ class EvalTemplateService:
             raise NotFoundError("评估维度不存在")
         if await self.repo.count_dimension_templates(dimension_id) > 0:
             raise ValidationError("已有评估模板引用该维度，不允许删除")
-        return await self.repo.delete_dimension(dimension_id)
+        result = await self.repo.delete_dimension(dimension_id)
+        if self.cache:
+            await self.cache.delete(DIMENSION_LIST_KEY)
+        return result
 
     async def create_template(self, body) -> object:
         dimensions = [item.model_dump() for item in body.dimensions]
@@ -154,7 +181,10 @@ class EvalTemplateService:
         tag_ids = payload.pop("tag_ids", None)
         if dimensions is not None:
             self.validate_template_detail(dimensions)
-        return await self.repo.update_template_with_details(template_id, payload, dimensions, skills, tag_ids)
+        result = await self.repo.update_template_with_details(template_id, payload, dimensions, skills, tag_ids)
+        if self.cache:
+            await self.cache.delete(TEMPLATE_DETAIL_KEY.format(template_id=template_id))
+        return result
 
     async def delete_template(self, template_id: int) -> bool:
         template = await self.repo.get_template(template_id)
@@ -163,7 +193,10 @@ class EvalTemplateService:
         await self.ensure_template_unlocked(template_id)
         if await self.repo.count_template_jobs(template_id) > 0:
             raise ValidationError("已有岗位绑定该模板，不允许删除")
-        return await self.repo.delete_template(template_id)
+        result = await self.repo.delete_template(template_id)
+        if self.cache:
+            await self.cache.delete(TEMPLATE_DETAIL_KEY.format(template_id=template_id))
+        return result
 
     async def build_job_snapshot(self, job, template_detail: dict, dept_name: str = None, dept_code: str = None) -> dict:
         return {

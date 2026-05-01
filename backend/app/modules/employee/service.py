@@ -6,12 +6,19 @@ from app.utils.auth import ensure_admin
 from app.infrastructure.exception import NotFoundError, ValidationError
 from app.utils.security import get_password_hash
 from app.schemas.vo.response.account_management_response import ManagedEmployeeItem
+from app.infrastructure.cache import CacheService
+from app.infrastructure.cache.redis_constants import (
+    EMPLOYEE_KEY,
+    EMPLOYEE_EMAIL_KEY,
+    EMPLOYEE_EMP_NO_KEY,
+)
 
 
 class EmployeeManageService:
-    def __init__(self, employee_repo, dept_repo):
+    def __init__(self, employee_repo, dept_repo, cache: CacheService | None = None):
         self.employee_repo = employee_repo
         self.dept_repo = dept_repo
+        self.cache = cache
 
     async def ensure_admin(self, current_user: dict) -> None:
         await ensure_admin(current_user, self.employee_repo)
@@ -42,6 +49,10 @@ class EmployeeManageService:
         )
         if dept_ids:
             await self.employee_repo.assign_depts(employee.id, dept_ids, primary_dept_id)
+        if self.cache:
+            await self.cache.delete(EMPLOYEE_KEY.format(employee_id=employee.id))
+            await self.cache.delete(EMPLOYEE_EMAIL_KEY.format(email=str(body.email)))
+            await self.cache.delete(EMPLOYEE_EMP_NO_KEY.format(emp_no=body.emp_no))
         return await self.get_employee(employee.id)
 
     async def update_employee(self, employee_id: int, body) -> ManagedEmployeeItem:
@@ -72,6 +83,13 @@ class EmployeeManageService:
             employee = await self.employee_repo.update(employee_id, **payload)
         if has_dept_assignment:
             await self.employee_repo.assign_depts(employee_id, dept_ids, primary_dept_id)
+        if self.cache:
+            await self.cache.delete(EMPLOYEE_KEY.format(employee_id=employee_id))
+            await self.cache.delete(EMPLOYEE_EMAIL_KEY.format(email=str(employee.email)))
+            if email:
+                await self.cache.delete(EMPLOYEE_EMAIL_KEY.format(email=str(email)))
+            if emp_no:
+                await self.cache.delete(EMPLOYEE_EMP_NO_KEY.format(emp_no=emp_no))
         return await self.get_employee(employee.id)
 
     async def delete_employee(self, employee_id: int, current_employee_id: int) -> None:
@@ -80,6 +98,10 @@ class EmployeeManageService:
             raise NotFoundError("员工不存在")
         if employee_id == current_employee_id:
             raise ValidationError("不能删除当前登录员工")
+        if self.cache:
+            await self.cache.delete(EMPLOYEE_KEY.format(employee_id=employee_id))
+            await self.cache.delete(EMPLOYEE_EMAIL_KEY.format(email=str(employee.email)))
+            await self.cache.delete(EMPLOYEE_EMP_NO_KEY.format(emp_no=employee.emp_no))
         await self.employee_repo.delete(employee_id)
 
     async def import_employees(self, content: bytes) -> dict[str, Any]:

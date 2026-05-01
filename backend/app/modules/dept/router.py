@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.client.deps import get_current_user
 from app.infrastructure.client import get_db
+from app.infrastructure.cache import get_cache, CacheService
 from app.modules.dept.repository import DeptRepository
 from app.schemas.vo.request.dept_request import DeptCreate, DeptUpdate
 from app.schemas.vo.response.dept_response import ApiResponse, DeptImportResult, DeptItem, PageData
@@ -13,8 +14,8 @@ from app.modules.dept.service import DeptService
 router = APIRouter()
 
 
-def get_service(db: AsyncSession = Depends(get_db)) -> DeptService:
-    return DeptService(DeptRepository(db))
+def get_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> DeptService:
+    return DeptService(DeptRepository(db), cache)
 
 
 @router.get("", response_model=ApiResponse)

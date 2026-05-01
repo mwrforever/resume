@@ -84,3 +84,13 @@ class TagRepository:
             select(func.count(EvalTemplateTag.id)).where(EvalTemplateTag.tag_id == tag_id)
         )
         return result.scalar() or 0
+
+    async def batch_count_job_associations(self, tag_ids: list[int]) -> dict[int, int]:
+        if not tag_ids:
+            return {}
+        rows = await self.db.execute(
+            select(EvalTemplateTag.tag_id, func.count(EvalTemplateTag.tag_id))
+            .where(EvalTemplateTag.tag_id.in_(tag_ids))
+            .group_by(EvalTemplateTag.tag_id)
+        )
+        return {row[0]: row[1] for row in rows.all()}

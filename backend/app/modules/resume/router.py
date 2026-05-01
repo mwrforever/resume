@@ -8,6 +8,7 @@ from app.infrastructure.client.deps import get_current_user
 from app.infrastructure.client import get_db
 from app.infrastructure.config import get_settings
 from app.infrastructure.exception import BizError
+from app.infrastructure.cache import get_cache, CacheService
 from app.modules.resume.repository import ResumeRepository
 from app.modules.resume.service import ResumeService
 from app.schemas.vo.response.resume_response import ApiResponse, PageData, ResumeDetail, ResumeItem
@@ -20,8 +21,8 @@ def get_repo(db=Depends(get_db)) -> ResumeRepository:
     return ResumeRepository(db)
 
 
-def get_resume_service(db=Depends(get_db)) -> ResumeService:
-    return ResumeService(ResumeRepository(db))
+def get_resume_service(db=Depends(get_db), cache: CacheService = Depends(get_cache)) -> ResumeService:
+    return ResumeService(ResumeRepository(db), cache)
 
 
 def get_user_id_from_token(current_user: dict = Depends(get_current_user)) -> int:

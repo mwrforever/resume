@@ -7,15 +7,27 @@ from app.infrastructure.exception import NotFoundError, ValidationError
 from app.modules.dept.repository import DeptRepository
 from app.schemas.vo.request.dept_request import DeptCreate, DeptUpdate
 from app.schemas.vo.response.dept_response import DeptItem
+from app.infrastructure.cache import CacheService
+from app.infrastructure.cache.redis_constants import (
+    DEPT_LIST_KEY,
+    DEPT_LIST_TTL,
+    DEPT_LEADERS_KEY,
+    DEPT_LEADERS_TTL,
+)
 
 
 class DeptService:
-    def __init__(self, repo: DeptRepository):
+    def __init__(self, repo: DeptRepository, cache: CacheService | None = None):
         self.repo = repo
+        self.cache = cache
 
     async def list_active(self) -> list[dict]:
+        if self.cache:
+            cached = await self.cache.get_json(DEPT_LIST_KEY)
+            if cached is not None:
+                return cached
         depts = await self.repo.list_active()
-        return [
+        result = [
             {
                 "id": dept.id,
                 "parent_id": dept.parent_id or 0,
@@ -24,6 +36,9 @@ class DeptService:
             }
             for dept in depts
         ]
+        if self.cache:
+            await self.cache.set_json(DEPT_LIST_KEY, result, DEPT_LIST_TTL)
+        return result
 
     async def get_tree(self) -> list[dict]:
         depts = await self.repo.list_tree_items_with_stats()
@@ -39,8 +54,15 @@ class DeptService:
         return attach_children(0)
 
     async def list_leader_options(self) -> list[dict]:
+        if self.cache:
+            cached = await self.cache.get_json(DEPT_LEADERS_KEY)
+            if cached is not None:
+                return cached
         employees = await self.repo.list_active_employees()
-        return [{"id": employee.id, "real_name": employee.real_name} for employee in employees]
+        result = [{"id": employee.id, "real_name": employee.real_name} for employee in employees]
+        if self.cache:
+            await self.cache.set_json(DEPT_LEADERS_KEY, result, DEPT_LEADERS_TTL)
+        return result
 
     async def list_page(self, page: int, page_size: int, status: int = None, search: str = None) -> dict[str, Any]:
         skip = (page - 1) * page_size
@@ -65,6 +87,9 @@ class DeptService:
             sort_order=payload.get("sort_order") or 0,
             status=payload.get("status") if payload.get("status") is not None else 1,
         )
+        if self.cache:
+            await self.cache.delete(DEPT_LIST_KEY)
+            await self.cache.delete(DEPT_LEADERS_KEY)
         return await self.get_dept(dept.id)
 
     async def update_dept(self, dept_id: int, body: DeptUpdate) -> DeptItem:
@@ -81,6 +106,9 @@ class DeptService:
             payload["dept_name"] = payload["dept_name"].strip()
         if payload:
             await self.repo.update(dept_id, **payload)
+        if self.cache:
+            await self.cache.delete(DEPT_LIST_KEY)
+            await self.cache.delete(DEPT_LEADERS_KEY)
         return await self.get_dept(dept_id)
 
     async def delete_dept(self, dept_id: int) -> None:
@@ -94,6 +122,9 @@ class DeptService:
         if await self.repo.count_children(dept_id) > 0:
             raise ValidationError("该部门存在子部门，不允许删除")
         await self.repo.delete(dept_id)
+        if self.cache:
+            await self.cache.delete(DEPT_LIST_KEY)
+            await self.cache.delete(DEPT_LEADERS_KEY)
 
     async def import_depts(self, content: bytes) -> dict[str, Any]:
         text = content.decode("utf-8-sig")
@@ -155,7 +186,11 @@ class DeptService:
                 break
             pending = next_pending
 
-        return {"success_count": success_count, "fail_count": len(errors), "errors": errors}
+        result = {"success_count": success_count, "fail_count": len(errors), "errors": errors}
+        if self.cache and success_count > 0:
+            await self.cache.delete(DEPT_LIST_KEY)
+            await self.cache.delete(DEPT_LEADERS_KEY)
+        return result
 
     async def _validate_payload(self, payload: dict[str, Any], dept_id: int = None, creating: bool = False) -> None:
         dept_code = payload.get("dept_code")

@@ -114,6 +114,16 @@ class JobRepository:
         )
         return result.scalar() or 0
 
+    async def batch_count_applications(self, job_ids: list[int]) -> dict[int, int]:
+        if not job_ids:
+            return {}
+        rows = await self.db.execute(
+            select(JobApplication.job_id, func.count(JobApplication.id))
+            .where(JobApplication.job_id.in_(job_ids), JobApplication.is_deleted == 0)
+            .group_by(JobApplication.job_id)
+        )
+        return {row[0]: row[1] for row in rows.all()}
+
     async def get_skills_by_job_ids(self, job_ids: list[int], limit: int = 5) -> dict[int, list[str]]:
         if not job_ids:
             return {}

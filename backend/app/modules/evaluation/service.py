@@ -3,14 +3,33 @@ from app.modules.resume.repository import ResumeRepository
 from app.modules.job.repository import JobRepository
 from app.modules.application.repository import ApplicationRepository
 from app.infrastructure.exception import NotFoundError, ValidationError
+from app.infrastructure.cache import CacheService
+from app.infrastructure.cache.redis_constants import (
+    EVAL_RECENT_KEY,
+    EVAL_RECENT_TTL,
+    EVAL_PENDING_COUNT_KEY,
+    EVAL_PENDING_COUNT_TTL,
+    EVAL_AVG_SCORE_KEY,
+    EVAL_AVG_SCORE_TTL,
+    EVAL_MATCH_DIST_KEY,
+    EVAL_MATCH_DIST_TTL,
+)
 
 
 class EvalService:
-    def __init__(self, eval_repo: EvalRepository, resume_repo: ResumeRepository, job_repo: JobRepository, app_repo: ApplicationRepository) -> None:
+    def __init__(
+        self,
+        eval_repo: EvalRepository,
+        resume_repo: ResumeRepository,
+        job_repo: JobRepository,
+        app_repo: ApplicationRepository,
+        cache: CacheService | None = None,
+    ) -> None:
         self.eval_repo = eval_repo
         self.resume_repo = resume_repo
         self.job_repo = job_repo
         self.app_repo = app_repo
+        self.cache = cache
 
     async def validate_batch_applications(self, application_ids: list[int]) -> None:
         if not application_ids:
@@ -74,3 +93,47 @@ class EvalService:
                 } for h in hits
             ]
         }
+
+    async def get_pending_count(self) -> int:
+        """获取待评估数量（带缓存）"""
+        if self.cache:
+            cached = await self.cache.get(EVAL_PENDING_COUNT_KEY)
+            if cached is not None:
+                return int(cached)
+        count = await self.eval_repo.count_pending_evaluations()
+        if self.cache:
+            await self.cache.set(EVAL_PENDING_COUNT_KEY, str(count), EVAL_PENDING_COUNT_TTL)
+        return count
+
+    async def get_avg_score(self) -> float:
+        """获取平均匹配分（带缓存）"""
+        if self.cache:
+            cached = await self.cache.get(EVAL_AVG_SCORE_KEY)
+            if cached is not None:
+                return float(cached)
+        score = await self.eval_repo.get_avg_match_score()
+        if self.cache:
+            await self.cache.set(EVAL_AVG_SCORE_KEY, str(score), EVAL_AVG_SCORE_TTL)
+        return score
+
+    async def get_recent_activities(self, limit: int = 10) -> list:
+        """获取最近活动（带缓存）"""
+        if self.cache:
+            cached = await self.cache.get_json(EVAL_RECENT_KEY)
+            if cached is not None:
+                return cached[:limit]
+        activities = await self.eval_repo.get_recent_activities(limit)
+        if self.cache:
+            await self.cache.set_json(EVAL_RECENT_KEY, activities, EVAL_RECENT_TTL)
+        return activities
+
+    async def get_match_distribution(self, job_id: int) -> list:
+        """获取岗位匹配度分布（带缓存）"""
+        if self.cache:
+            cached = await self.cache.get_json(EVAL_MATCH_DIST_KEY.format(job_id=job_id))
+            if cached is not None:
+                return cached
+        distribution = await self.eval_repo.get_match_distribution(job_id)
+        if self.cache:
+            await self.cache.set_json(EVAL_MATCH_DIST_KEY.format(job_id=job_id), distribution, EVAL_MATCH_DIST_TTL)
+        return distribution

@@ -3,6 +3,8 @@ from app.modules.resume.repository import ResumeRepository
 from app.modules.job.repository import JobRepository
 from app.models.job_application import JobApplication
 from app.infrastructure.exception import NotFoundError, ValidationError
+from app.infrastructure.cache import CacheService
+from app.infrastructure.cache.redis_constants import APPLICATION_EXISTS_KEY, APPLICATION_EXISTS_TTL
 from app.modules.eval_template.service import EvalTemplateService
 
 
@@ -24,11 +26,13 @@ class ApplicationService:
         resume_repo: ResumeRepository,
         job_repo: JobRepository,
         template_service: EvalTemplateService,
+        cache: CacheService | None = None,
     ):
         self.app_repo = app_repo
         self.resume_repo = resume_repo
         self.job_repo = job_repo
         self.template_service = template_service
+        self.cache = cache
 
     async def create_application(self, user_id: int, job_id: int, resume_id: int) -> JobApplication:
         """创建投递记录"""
@@ -57,7 +61,10 @@ class ApplicationService:
             dept_name=dept.dept_name if dept else None,
             dept_code=dept.dept_code if dept else None,
         )
-        return await self.app_repo.create(user_id, job_id, resume_id, snapshot)
+        result = await self.app_repo.create(user_id, job_id, resume_id, snapshot)
+        if self.cache:
+            await self.cache.delete(APPLICATION_EXISTS_KEY.format(user_id=user_id, job_id=job_id))
+        return result
 
     async def get_user_applications(self, user_id: int, skip: int = 0, limit: int = 20) -> tuple[list, int]:
         """获取用户的投递列表"""

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from app.infrastructure.client.deps import get_current_user
 from app.infrastructure.client import get_db
 from app.infrastructure.exception import NotFoundError
+from app.infrastructure.cache import get_cache, CacheService
 from app.modules.eval_template.repository import EvalTemplateRepository
 from app.modules.eval_template.service import EvalTemplateService
 from app.schemas.vo.request.eval_template_request import (
@@ -28,8 +29,8 @@ dimension_router = APIRouter()
 template_router = APIRouter()
 
 
-def get_service(db=Depends(get_db)) -> EvalTemplateService:
-    return EvalTemplateService(EvalTemplateRepository(db))
+def get_service(db=Depends(get_db), cache: CacheService = Depends(get_cache)) -> EvalTemplateService:
+    return EvalTemplateService(EvalTemplateRepository(db), cache)
 
 
 @dimension_router.get("", response_model=ApiResponse[PageData])
@@ -44,10 +45,12 @@ async def list_dimensions(
     skip = (page - 1) * page_size
     dimensions = await service.repo.list_dimensions(skip=skip, limit=page_size, status=status, search=search)
     total = await service.repo.count_dimensions(status=status, search=search)
+    dim_ids = [d.id for d in dimensions]
+    counts = await service.repo.batch_count_dimension_templates(dim_ids)
     items = []
     for dimension in dimensions:
         item = EvalDimensionItem.model_validate(dimension).model_dump()
-        item["template_count"] = await service.repo.count_dimension_templates(dimension.id)
+        item["template_count"] = counts.get(dimension.id, 0)
         items.append(item)
     return ApiResponse(data=PageData(total=total, items=items))
 
@@ -107,12 +110,12 @@ async def delete_dimension(
     return ApiResponse(message="删除成功")
 
 
-async def build_template_item(service: EvalTemplateService, template_id: int) -> dict:
+async def build_template_item(service: EvalTemplateService, template_id: int, job_counts: dict[int, int] = None, published_counts: dict[int, int] = None) -> dict:
     detail = await service.repo.get_template_detail(template_id)
     if not detail:
         raise NotFoundError("评估模板不存在")
-    detail["job_count"] = await service.repo.count_template_jobs(template_id)
-    detail["published_job_count"] = await service.repo.count_template_jobs(template_id, status=1)
+    detail["job_count"] = (job_counts or {}).get(template_id, 0)
+    detail["published_job_count"] = (published_counts or {}).get(template_id, 0)
     return detail
 
 
@@ -128,7 +131,13 @@ async def list_templates(
     skip = (page - 1) * page_size
     templates = await service.repo.list_templates(skip=skip, limit=page_size, status=status, search=search)
     total = await service.repo.count_templates(status=status, search=search)
-    items = [await build_template_item(service, template.id) for template in templates]
+    if templates:
+        template_ids = [t.id for t in templates]
+        job_counts = await service.repo.batch_count_template_jobs(template_ids)
+        published_counts = await service.repo.batch_count_template_jobs(template_ids, status=1)
+        items = [await build_template_item(service, t.id, job_counts, published_counts) for t in templates]
+    else:
+        items = []
     return ApiResponse(data=PageData(total=total, items=items))
 
 

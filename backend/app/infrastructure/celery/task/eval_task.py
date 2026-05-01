@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import json
 from pathlib import Path
@@ -11,6 +12,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.infrastructure.config import BASE_DIR, get_settings
 from app.infrastructure.exception import NotFoundError, ValidationError
+from app.infrastructure.cache import get_cache
+from app.infrastructure.cache.redis_constants import (
+    EVAL_RECENT_KEY,
+    EVAL_PENDING_COUNT_KEY,
+    EVAL_AVG_SCORE_KEY,
+)
 from app.utils.ai.chains import ResumeEvalChain
 from app.utils.resume_parser import extract_resume_text
 from app.infrastructure.celery.celery import celery_app
@@ -108,7 +115,7 @@ def _get_template_dimensions(session: Session, template_id: int) -> list[dict[st
             "FROM eval_template_dimension etd "
             "JOIN eval_dimension ed ON ed.id = etd.dimension_id AND ed.is_deleted = 0 AND ed.status = 1 "
             "WHERE etd.template_id = :template_id "
-            "ORDER BY etd.sort_order ASC, etd.id ASC"
+            "ORDER BY etd.sort_order , etd.id "
         ),
         {"template_id": template_id},
     ).mappings().all()
@@ -129,7 +136,7 @@ def _get_template_skills(session: Session, template_id: int) -> list[dict[str, A
             "SELECT id, skill_name, skill_type "
             "FROM eval_template_skill "
             "WHERE template_id = :template_id "
-            "ORDER BY skill_type ASC, id ASC"
+            "ORDER BY skill_type , id "
         ),
         {"template_id": template_id},
     ).mappings().all()
@@ -454,10 +461,27 @@ def _sync_eval_logic(application_ids: list[int]) -> dict[str, Any]:
                     "status": "failed",
                     "error": str(exc),
                 })
+        _invalidate_eval_cache()
     finally:
         engine.dispose()
 
     return {"status": "completed", "count": len(application_ids), "results": results}
+
+
+def _invalidate_eval_cache() -> None:
+    """评估完成后清除缓存（Celery同步上下文调用async方法）"""
+    try:
+        cache = get_cache()
+        if cache:
+            asyncio.get_event_loop().run_until_complete(
+                asyncio.gather(
+                    cache.delete(EVAL_RECENT_KEY),
+                    cache.delete(EVAL_PENDING_COUNT_KEY),
+                    cache.delete(EVAL_AVG_SCORE_KEY),
+                )
+            )
+    except Exception as exc:
+        logger.warning(f"评估完成但缓存清除失败: {exc}")
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60, ignore_result=True)

@@ -20,7 +20,6 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def get_by_identifier(self, identifier: str) -> SysUser:
-        # identifier can be username or email
         result = await self.db.execute(
             select(SysUser).where(
                 (SysUser.email == identifier) | (SysUser.real_name == identifier),

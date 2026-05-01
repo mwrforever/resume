@@ -74,6 +74,16 @@ class EvalTemplateRepository:
         )
         return result.scalar() or 0
 
+    async def batch_count_dimension_templates(self, dimension_ids: list[int]) -> dict[int, int]:
+        if not dimension_ids:
+            return {}
+        rows = await self.db.execute(
+            select(EvalTemplateDimension.dimension_id, func.count(EvalTemplateDimension.id))
+            .where(EvalTemplateDimension.dimension_id.in_(dimension_ids))
+            .group_by(EvalTemplateDimension.dimension_id)
+        )
+        return {row[0]: row[1] for row in rows.all()}
+
     async def count_dimension_published_jobs(self, dimension_id: int) -> int:
         result = await self.db.execute(
             select(func.count(JobPosition.id))
@@ -181,6 +191,19 @@ class EvalTemplateRepository:
             query = query.where(JobPosition.status == status)
         result = await self.db.execute(query)
         return result.scalar() or 0
+
+    async def batch_count_template_jobs(self, template_ids: list[int], status: int = None) -> dict[int, int]:
+        if not template_ids:
+            return {}
+        query = (
+            select(JobPosition.template_id, func.count(JobPosition.id))
+            .where(JobPosition.template_id.in_(template_ids), JobPosition.is_deleted == 0)
+            .group_by(JobPosition.template_id)
+        )
+        if status is not None:
+            query = query.where(JobPosition.status == status)
+        rows = await self.db.execute(query)
+        return {row[0]: row[1] for row in rows.all()}
 
     async def get_template_detail(self, template_id: int) -> dict:
         template = await self.get_template(template_id)

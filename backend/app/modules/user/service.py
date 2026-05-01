@@ -2,12 +2,18 @@ from app.utils.auth import ensure_admin
 from app.infrastructure.exception import NotFoundError, ValidationError
 from app.utils.security import get_password_hash
 from app.schemas.vo.response.account_management_response import ManagedUserItem
+from app.infrastructure.cache import CacheService
+from app.infrastructure.cache.redis_constants import (
+    USER_KEY,
+    USER_EMAIL_KEY,
+)
 
 
 class UserManageService:
-    def __init__(self, user_repo, employee_repo):
+    def __init__(self, user_repo, employee_repo, cache: CacheService | None = None):
         self.user_repo = user_repo
         self.employee_repo = employee_repo
+        self.cache = cache
 
     async def ensure_admin(self, current_user: dict) -> None:
         await ensure_admin(current_user, self.employee_repo)
@@ -35,6 +41,9 @@ class UserManageService:
         )
         if body.status != 1:
             user = await self.user_repo.update(user.id, status=body.status)
+        if self.cache:
+            await self.cache.delete(USER_KEY.format(user_id=user.id))
+            await self.cache.delete(USER_EMAIL_KEY.format(email=str(body.email)))
         return ManagedUserItem.model_validate(user)
 
     async def update_user(self, user_id: int, body) -> ManagedUserItem:
@@ -53,10 +62,18 @@ class UserManageService:
             payload["password_hash"] = get_password_hash(password)
         if payload:
             user = await self.user_repo.update(user_id, **payload)
+        if self.cache:
+            await self.cache.delete(USER_KEY.format(user_id=user_id))
+            await self.cache.delete(USER_EMAIL_KEY.format(email=str(user.email)))
+            if email:
+                await self.cache.delete(USER_EMAIL_KEY.format(email=str(email)))
         return ManagedUserItem.model_validate(user)
 
     async def delete_user(self, user_id: int) -> None:
         user = await self.user_repo.get_by_id(user_id)
         if not user:
             raise NotFoundError("用户不存在")
+        if self.cache:
+            await self.cache.delete(USER_KEY.format(user_id=user_id))
+            await self.cache.delete(USER_EMAIL_KEY.format(email=str(user.email)))
         await self.user_repo.delete(user_id)
