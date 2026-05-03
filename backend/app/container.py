@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 
-from app.infrastructure.config.settings import Settings
+from app.core.config import Settings
 from app.infrastructure.exception import register_exception_handlers
 from app.modules.analytics.router import router as analytics_router
 from app.modules.application.router import employee_router as employee_applications_router
@@ -25,26 +25,27 @@ from app.modules.user.verification_router import router as verification_router
 from app.modules.user.router import router as user_auth_router, user_manage_router
 
 
+def _register_middleware(app: FastAPI) -> None:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
 class ApplicationContainer:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
     def create_app(self) -> FastAPI:
         app = FastAPI(title=self.settings.APP_NAME)
-        self._register_middleware(app)
+        _register_middleware(app)
         register_exception_handlers(app)
         self._register_routers(app)
         self._mount_static_files(app)
         return app
-
-    def _register_middleware(self, app: FastAPI) -> None:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
 
     def _register_routers(self, app: FastAPI) -> None:
         app.include_router(verification_router, prefix="/api/v1/verification", tags=["verification"])

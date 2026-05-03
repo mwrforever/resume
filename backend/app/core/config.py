@@ -1,11 +1,10 @@
-from functools import lru_cache
 import logging
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 
@@ -30,11 +29,21 @@ class Settings(BaseSettings):
     DB_USER: str
     DB_PASSWORD: SecretStr
     DB_NAME: str
+    DB_CHARSET: str = "utf8mb4"
+    DB_POOL_MIN_SIZE: int = 10
+    DB_POOL_MAX_SIZE: int = 20
+    DB_POOL_RECYCLE: int = 3600
+    DB_POOL_TIMEOUT: int = 10
+    DB_CONNECT_TIMEOUT: int = 10
 
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: SecretStr = SecretStr("")
+    REDIS_MAX_CONNECTIONS: int = 10
+    REDIS_SOCKET_TIMEOUT: int = 5
+    REDIS_DECODE_RESPONSES: bool = True
+    REDIS_SOCKET_CONNECT_TIMEOUT: int = 3
 
     OPENAI_API_KEY: SecretStr
     OPENAI_API_BASE: str = "https://api.openai.com/v1"
@@ -106,6 +115,8 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+settings = get_settings()
 
 
 def configure_logging(settings: Settings | None = None) -> None:

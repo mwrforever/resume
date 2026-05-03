@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from starlette.responses import JSONResponse
 
 from app.common.file_utils import resolve_storage_file
-from app.infrastructure.config.settings import Settings
+from app.core.config import Settings
 
 
 def create_system_router(settings: Settings) -> APIRouter:

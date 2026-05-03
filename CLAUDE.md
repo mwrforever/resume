@@ -1,47 +1,127 @@
-本项目基于 FastAPI + React + MySQL + Redis 技术栈。
-**取舍原则**：本规范优先严谨稳妥，而非快速交付。简单琐碎任务可灵活判断处理。
+## 一、项目架构与目录规范（优化）
 
----
+严格遵循模块化 + 分层架构思想，禁止越层调用。每个业务模块形成逻辑闭环：
 
-## 一、项目架构与目录规范
+```text
+endpoint → service → repository → db/redis → schema
+```
 
-严格遵循分层架构思想，禁止越层调用。
-
-### 1.1 后端目录结构
+### 1.1 后端目录结构（优化后的模块化 schemas）
 
 ```text
 backend/
-├── main.py                    # 启动入口（委托至 app/main.py）
+├── main.py                      # 启动入口，委托 app/main.py
 ├── app/
-│   ├── main.py                # FastAPI 应用工厂 (ApplicationContainer) + 路由注册
-│   ├── common/                # 通用工具：文件校验、验证器、版本解析
-│   ├── models/                # 数据库模型：SQLAlchemy ORM 表结构
-│   ├── schemas/               # 数据契约：Pydantic DTO / 请求 (request) / 响应 (response)
-│   ├── modules/               # 业务模块（按领域划分，每模块内 router + service + repository）
-│   │   ├── user/              #   用户认证（注册、登录、令牌刷新），用户管理
-│   │   ├── employee/          #   员工认证，员工管理
-│   │   ├── resume/            #   简历管理（上传、列表、详情、文件流）
-│   │   ├── job/               #   职位管理（用户浏览 + 员工 CRUD + AI 建议）
-│   │   ├── application/       #   投递管理（用户投递/撤回 + 员工审核）
-│   │   ├── evaluation/        #   评估管理
-│   │   ├── eval_template/     #   评估模板（维度 + 模板 CRUD + AI 建议）
-│   │   ├── dept/              #   部门管理
-│   │   ├── tag/               #   标签管理
-│   │   ├── analytics/         #   数据分析（仪表盘）
-│   │   └── system/            #   系统路由（根端点、文件预览）
-│   ├── infrastructure/        # 外部服务集成：Celery 任务队列、HTTP 客户端、异常处理
-│   │   └── config/            #   配置文件 Settings (Pydantic BaseSettings)、常量、日志
-│   │   └── client/            #   所有外部客户端（如redis，mysql，http client）声明，提供方法共Depend使用
-│   │   └── celery/            #   celery相关的配置、任务、执行器
-│   │   │   └── task/          #   任务实现
-│   │   │   └── celery.py      #   celery配置
-│   │   └── exception.py       #   错误
-│   └── utils/                 # 工具类：AI (LLM/LangChain)、邮件、存储、简历解析，安全 (JWT/bcrypt)
-├── tests/                     # 测试目录
-└── pyproject.toml
+│   ├── main.py                  # FastAPI应用工厂 + 路由注册 + lifespan管理资源
+│   │
+│   ├── core/                     # 核心配置、日志、安全、异常
+│   │   ├── config.py
+│   │   ├── logging.py
+│   │   ├── security.py
+│   │   └── exceptions.py
+│   │
+│   ├── api/                      # HTTP API层
+│   │   ├── deps.py               # 依赖注入
+│   │   └── v1/
+│   │       ├── router.py
+│   │       └── endpoints/        # 按业务模块拆分
+│   │           ├── user.py
+│   │           ├── employee.py
+│   │           ├── resume.py
+│   │           ├── job.py
+│   │           ├── application.py
+│   │           ├── evaluation.py
+│   │           ├── eval_template.py
+│   │           ├── dept.py
+│   │           ├── tag.py
+│   │           ├── analytics.py
+│   │           └── system.py
+│   │
+│   ├── models/                   # ORM模型
+│   │   ├── user.py
+│   │   ├── employee.py
+│   │   ├── resume.py
+│   │   └── ...
+│   │
+│   ├── schemas/                  # 按模块拆分 + request/response/dto
+│   │   ├── base.py               # 公共DTO/基础模型
+│   │   ├── user/
+│   │   │   ├── request.py
+│   │   │   ├── response.py
+│   │   │   └── dto.py
+│   │   ├── employee/
+│   │   │   ├── request.py
+│   │   │   ├── response.py
+│   │   │   └── dto.py
+│   │   └── ...                   # 其他业务模块同理
+│   │
+│   ├── services/                 # 业务逻辑层
+│   │   ├── user_service.py
+│   │   ├── employee_service.py
+│   │   └── cache_service.py      # Redis缓存封装
+│   │
+│   ├── repositories/             # 数据访问层
+│   │   ├── user_repository.py
+│   │   ├── employee_repository.py
+│   │   └── ...
+│   │
+│   ├── db/                       # MySQL/Redis 初始化
+│   │   ├── mysql.py
+│   │   └── redis.py
+│   │
+│   ├── llm/                       # LLM调用链
+│   │   ├── clients/
+│   │   ├── chains/
+│   │   ├── prompts/
+│   │   ├── memory/
+│   │   ├── retrieval/
+│   │   ├── embeddings/
+│   │   ├── tools/
+│   │   ├── guards/
+│   │   └── tracing/
+│   │
+│   ├── workers/                  # Celery异步任务
+│   │   ├── celery_app.py
+│   │   ├── beat_schedule.py
+│   │   └── tasks/
+│   │
+│   ├── middleware/               # 中间件
+│   └── utils/                     # 通用工具
+│       ├── cache_utils.py
+│       ├── ai_utils.py
+│       ├── mail_utils.py
+│       ├── storage_utils.py
+│       ├── resume_parser.py
+│       └── security_utils.py
+├── tests/
+├── pyproject.toml
+└── Dockerfile
 ```
 
-### 1.2 前端目录结构
+### 1.2 各层级职责
+
+| 层级   | 目录                | 职责            |
+| ---- | ----------------- | ------------- |
+| 入口   | `main.py`         | 程序启动、容器组装     |
+| 配置   | `core/config.py`  | 全局配置、常量       |
+| 实体   | `schemas/`        | DTO、请求/响应     |
+| 模型   | `models/`         | ORM表映射        |
+| 业务   | `services/`       | 业务规则、事务处理     |
+| 数据访问 | `repositories/`   | 数据存取          |
+| 核心   | `core/`           | 安全、异常、日志      |
+| 外部服务 | `llm/`、`workers/` | LLM调用链、异步任务   |
+| 工具   | `utils/`          | 通用工具函数（含缓存工具） |
+
+### 1.3 层级依赖规范
+
+* **调用链路**：`endpoint → service → repository → db/redis → schema`
+* 上层可调用下层，下层禁止反向调用
+* 同层模块禁止直接调用
+* 每个业务模块形成闭环，schemas、service、repository、endpoint 对应一致
+* Redis/数据库等基础设施通过依赖注入获取，禁止函数内部直接实例化
+
+
+### 1.4 前端目录结构
 
 ```text
 frontend/
@@ -56,21 +136,6 @@ frontend/
 │   ├── utils/          # 前端工具函数
 │   └── App.tsx
 ```
-
-### 1.3 目录职责与依赖规则
-
-| 层级 | 目录 | 职责 | 可依赖 | 禁止依赖 |
-| --- | --- | --- | --- | --- |
-| **入口** | `main.py` | 程序启动、容器组装 | `core/` | 业务模块、infrastructure |
-| **配置** | `config/` | 全局配置、常量 | 无 | 任何业务模块 |
-| **实体** | `schemas/` | 数据结构定义 | `models/`（仅 dto） | service、router |
-| **模型** | `models/` | 数据库表映射 | `config/` | service、router |
-| **业务** | `modules/*/` | 各模块 router → service → repository | `schemas/`、`models/`、`core/`、`infrastructure/`、`common/` | 其他业务模块（同层） |
-| **核心** | `core/` | 安全、异常、中间件、容器 | `config/` | 业务模块、infrastructure |
-| **集成** | `infrastructure/` | 外部服务交互封装 | `core/`、`config/`、`common/` | 业务模块 |
-| **工具** | `common/` | 纯函数工具 | `config/`（仅常量） | 任何有状态模块 |
-
-调用链路：`router → service → repository → infrastructure`，上层可调用下层，下层禁止反向调用。同层模块间禁止直接调用，必须通过上层编排。
 
 ---
 
@@ -270,26 +335,4 @@ frontend/
 
 **规范生效判断**：代码差异中无效改动减少、因设计过度复杂导致的返工减少、先提问确认再开发，而非出错后补救。严格遵守分层不越界、命名不随性、异常不吞没、资源不乱用的底线。
 
-## gstack (REQUIRED — global install)
-
-**Before doing ANY work, verify gstack is installed:**
-
-```bash
-test -d ~/.claude/skills/gstack/bin && echo "GSTACK_OK" || echo "GSTACK_MISSING"
-```
-
-If GSTACK_MISSING: STOP. Do not proceed. Tell the user:
-
-> gstack is required for all AI-assisted work in this repo.
-> Install it:
-> ```bash
-> git clone --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack
-> cd ~/.claude/skills/gstack && ./setup --team
-> ```
-> Then restart your AI coding tool.
-
-Do not skip skills, ignore gstack errors, or work around missing gstack.
-
-Using gstack skills: After install, skills like /qa, /ship, /review, /investigate,
-and /browse are available. Use /browse for all web browsing.
-Use ~/.claude/skills/gstack/... for gstack file paths (the global path).
+---

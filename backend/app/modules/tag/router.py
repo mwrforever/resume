@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, Query
 from app.modules.tag.repository import TagRepository
 from app.schemas.vo.request.tag_request import TagCreate, TagUpdate
 from app.schemas.vo.response.tag_response import ApiResponse, PageData, TagItem
-from app.infrastructure.client.deps import get_current_user
 from app.infrastructure.client import get_db
 from app.infrastructure.cache import get_cache, CacheService
 from app.infrastructure.cache.redis_constants import TAG_LIST_KEY, TAG_LIST_TTL
@@ -18,14 +17,13 @@ def get_repo(db=Depends(get_db)) -> TagRepository:
 
 @router.get("", response_model=ApiResponse)
 async def list_tags(
-    tag_type: Optional[int] = Query(None),
-    status: Optional[int] = Query(None),
-    search: Optional[str] = Query(None),
-    page: Optional[int] = Query(None, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    repo: TagRepository = Depends(get_repo),
-    cache: CacheService = Depends(get_cache),
-    current_user: dict = Depends(get_current_user)
+        tag_type: Optional[int] = Query(None),
+        status: Optional[int] = Query(None),
+        search: Optional[str] = Query(None),
+        page: Optional[int] = Query(None, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+        repo: TagRepository = Depends(get_repo),
+        cache: CacheService = Depends(get_cache),
 ):
     if page is None:
         key = TAG_LIST_KEY.format(tag_type=tag_type) if tag_type is not None else TAG_LIST_KEY.format(tag_type="all")
@@ -51,9 +49,8 @@ async def list_tags(
 
 @router.get("/{tag_id}", response_model=ApiResponse)
 async def get_tag(
-    tag_id: int,
-    repo: TagRepository = Depends(get_repo),
-    current_user: dict = Depends(get_current_user)
+        tag_id: int,
+        repo: TagRepository = Depends(get_repo),
 ):
     tag = await repo.get_by_id(tag_id)
     if not tag:
@@ -65,10 +62,9 @@ async def get_tag(
 
 @router.post("", response_model=ApiResponse[TagItem])
 async def create_tag(
-    body: TagCreate,
-    repo: TagRepository = Depends(get_repo),
-    cache: CacheService = Depends(get_cache),
-    current_user: dict = Depends(get_current_user)
+        body: TagCreate,
+        repo: TagRepository = Depends(get_repo),
+        cache: CacheService = Depends(get_cache),
 ):
     tag = await repo.create(
         tag_name=body.tag_name,
@@ -77,18 +73,18 @@ async def create_tag(
         status=body.status,
         color=body.color,
     )
-    key = TAG_LIST_KEY.format(tag_type=body.tag_type) if body.tag_type is not None else TAG_LIST_KEY.format(tag_type="all")
+    key = TAG_LIST_KEY.format(tag_type=body.tag_type) if body.tag_type is not None else TAG_LIST_KEY.format(
+        tag_type="all")
     await cache.delete(key)
     return ApiResponse(message="创建成功", data=TagItem.model_validate(tag))
 
 
 @router.put("/{tag_id}", response_model=ApiResponse[TagItem])
 async def update_tag(
-    tag_id: int,
-    body: TagUpdate,
-    repo: TagRepository = Depends(get_repo),
-    cache: CacheService = Depends(get_cache),
-    current_user: dict = Depends(get_current_user)
+        tag_id: int,
+        body: TagUpdate,
+        repo: TagRepository = Depends(get_repo),
+        cache: CacheService = Depends(get_cache),
 ):
     tag = await repo.get_by_id(tag_id)
     if not tag:
@@ -98,17 +94,17 @@ async def update_tag(
     payload = body.model_dump(exclude_unset=True)
     if payload:
         tag = await repo.update(tag_id, **payload)
-    key = TAG_LIST_KEY.format(tag_type=body.tag_type) if body.tag_type is not None else TAG_LIST_KEY.format(tag_type="all")
+    key = TAG_LIST_KEY.format(tag_type=body.tag_type) if body.tag_type is not None else TAG_LIST_KEY.format(
+        tag_type="all")
     await cache.delete(key)
     return ApiResponse(message="更新成功", data=TagItem.model_validate(tag))
 
 
 @router.delete("/{tag_id}", response_model=ApiResponse)
 async def delete_tag(
-    tag_id: int,
-    repo: TagRepository = Depends(get_repo),
-    cache: CacheService = Depends(get_cache),
-    current_user: dict = Depends(get_current_user)
+        tag_id: int,
+        repo: TagRepository = Depends(get_repo),
+        cache: CacheService = Depends(get_cache),
 ):
     tag = await repo.get_by_id(tag_id)
     if not tag:
