@@ -211,6 +211,3 @@ async def delete_user(
     await service.ensure_admin(current_user)
     await service.delete_user(user_id)
     return ApiResponse(message="删除成功")
-
-
-__all__ = ["router", "user_manage_router"]

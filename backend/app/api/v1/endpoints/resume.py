@@ -6,8 +6,8 @@ from fastapi.responses import FileResponse
 
 from app.deps import get_current_user
 from app.deps import get_db
-from app.core.config import get_settings
 from app.core.exceptions import BizError
+from app.core.config import get_settings
 from app.services.cache_service import get_cache, CacheService
 from app.repositories.resume_repository import ResumeRepository
 from app.services.resume_service import ResumeService
@@ -168,6 +168,3 @@ async def get_employee_resume_file(
         media_type=media_type,
         filename=resume.file_name,
     )
-
-
-__all__ = ["employee_router", "user_router"]

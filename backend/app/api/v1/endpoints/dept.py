@@ -1,4 +1,4 @@
-﻿from typing import Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,4 +97,3 @@ async def delete_dept(
 ) -> ApiResponse:
     await service.delete_dept(dept_id)
     return ApiResponse(message="删除成功")
-

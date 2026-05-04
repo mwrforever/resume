@@ -13,6 +13,7 @@ backend/
 ├── main.py                      # 启动入口，委托 app/main.py
 ├── app/
 │   ├── main.py                  # FastAPI应用工厂 + 路由注册 + lifespan管理资源
+│   ├── deps.py                  # 依赖注入（统一管理全绝的依赖注入）
 │   │
 │   ├── core/                     # 核心配置、日志、安全、异常
 │   │   ├── config.py
@@ -21,7 +22,6 @@ backend/
 │   │   └── exceptions.py
 │   │
 │   ├── api/                      # HTTP API层
-│   │   ├── deps.py               # 依赖注入
 │   │   └── v1/
 │   │       ├── router.py
 │   │       └── endpoints/        # 按业务模块拆分
@@ -58,7 +58,7 @@ backend/
 │   ├── services/                 # 业务逻辑层
 │   │   ├── user_service.py
 │   │   ├── employee_service.py
-│   │   └── cache_service.py      # Redis缓存封装，真正进行redis缓存
+│   │   └── cache_service.py      # Redis缓存封装
 │   │
 │   ├── repositories/             # 数据访问层
 │   │   ├── user_repository.py
@@ -87,7 +87,8 @@ backend/
 │   │
 │   ├── middleware/               # 中间件
 │   └── utils/                     # 通用工具
-│       ├── cache_utils.py          # 负责缓存的通用工具方法，如构建key，序列化和反序列化等   
+│       ├── cache_utils.py
+│       ├── ai_utils.py
 │       ├── mail_utils.py
 │       ├── storage_utils.py
 │       ├── resume_parser.py

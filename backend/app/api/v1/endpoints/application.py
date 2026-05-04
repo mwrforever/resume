@@ -9,7 +9,6 @@ from app.repositories.application_repository import ApplicationRepository
 from app.repositories.resume_repository import ResumeRepository
 from app.repositories.job_repository import JobRepository
 from app.repositories.evaluation_repository import EvalRepository
-from app.repositories.eval_template_repository import EvalTemplateRepository
 from app.services.application_service import ApplicationService
 from app.services.eval_template_service import EvalTemplateService
 from app.schemas.vo.request.application_request import ApplyRequest
@@ -167,6 +166,3 @@ async def update_application_status(
     """更新投递状态"""
     await service.update_status(app_id, status)
     return ApiResponse(code=200, message="更新成功")
-
-
-__all__ = ["employee_router", "user_router"]

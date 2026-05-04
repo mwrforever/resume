@@ -7,12 +7,13 @@ import pydantic
 import redis
 import sqlalchemy
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from app.core.config import configure_logging, get_settings
 from app.db.mysql import mysql_manager
 from app.db.redis import redis_manager
-from app.infrastructure.exception import BizError
+from app.core.exceptions import BizError
 from app.api.v1.router import api_router
 
 settings = get_settings()
@@ -53,3 +54,10 @@ async def biz_error_handler(request, exc: BizError):
     )
 
 app.include_router(api_router, prefix="/api/v1")
+app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )

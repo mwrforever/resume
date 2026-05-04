@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse
 from starlette.responses import JSONResponse
 
-from app.common.file_utils import resolve_storage_file
+from app.utils.storage_utils import resolve_storage_file
 from app.core.config import Settings
 
 

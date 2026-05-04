@@ -199,6 +199,3 @@ async def delete_template(
 ):
     await service.delete_template(template_id)
     return ApiResponse(message="删除成功")
-
-
-__all__ = ["dimension_router", "template_router"]

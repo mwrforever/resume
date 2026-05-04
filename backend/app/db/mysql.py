@@ -63,7 +63,7 @@ class MySQLManager:
                 "connect_timeout": settings.DB_CONNECT_TIMEOUT,
                 "autocommit": False,
             },
-            echo=settings.DB_ECHO,
+            echo=settings.DEBUG,
         )
 
         self._session_factory = async_sessionmaker(

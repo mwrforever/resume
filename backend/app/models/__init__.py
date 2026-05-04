@@ -1,23 +1,9 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
-from app.infrastructure.config import get_settings
+from app.db.mysql import mysql_manager
 
-settings = get_settings()
-
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.DEBUG,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-)
-
-async_session_maker = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+async_session_maker = mysql_manager.session_factory
 
 
 class Base(DeclarativeBase):

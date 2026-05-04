@@ -2,7 +2,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
-from app.infrastructure.cache import get_cache, CacheService
+from app.services.cache_service import get_cache, CacheService
 from app.utils.verification import send_verification_code
 from app.schemas.vo.request.auth_request import SendCodeRequest
 

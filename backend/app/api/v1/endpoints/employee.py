@@ -202,6 +202,3 @@ async def delete_employee(
     await service.ensure_admin(current_user)
     await service.delete_employee(employee_id, int(current_user["sub"]))
     return ApiResponse(message="删除成功")
-
-
-__all__ = ["router", "employee_manage_router"]

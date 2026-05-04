@@ -83,6 +83,3 @@ async def get_job_resume_list(
         for r in resumes
     ]
     return ApiResponse(data={"total": total, "items": items})
-
-
-__all__ = ["router"]

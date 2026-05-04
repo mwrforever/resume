@@ -59,6 +59,3 @@ async def get_skill_hits(
     """获取技能命中详情"""
     result = await service.get_evaluation_detail(match_id)
     return ApiResponse(data=result["skill_hits"])
-
-
-__all__ = ["router"]

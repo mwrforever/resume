@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -205,6 +205,3 @@ async def delete_job(
     """员工端：删除岗位"""
     await service.delete_job(job_id)
     return ApiResponse(code=200, message="删除成功")
-
-
-__all__ = ["employee_ai_router", "employee_router", "user_router"]
