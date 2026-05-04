@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import BASE_DIR, get_settings
 from app.core.exceptions import NotFoundError, ValidationError
-from app.services.cache_service import get_cache
+from app.db.redis import redis_manager
+from app.services.cache_service import CacheService
 from app.utils.cache_utils import (
     EVAL_RECENT_KEY,
     EVAL_PENDING_COUNT_KEY,
@@ -20,9 +21,18 @@ from app.utils.cache_utils import (
 )
 from app.llm.chains.chains import ResumeEvalChain
 from app.utils.resume_parser import extract_resume_text
-from app.workers.celery.celery import celery_app
+from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+_cache_service: CacheService | None = None
+
+
+def _get_cache() -> CacheService:
+    global _cache_service
+    if _cache_service is None:
+        _cache_service = CacheService(redis_manager.client)
+    return _cache_service
 
 
 def _create_sync_engine() -> Engine:
@@ -471,7 +481,7 @@ def _sync_eval_logic(application_ids: list[int]) -> dict[str, Any]:
 def _invalidate_eval_cache() -> None:
     """评估完成后清除缓存（Celery同步上下文调用async方法）"""
     try:
-        cache = get_cache()
+        cache = _get_cache()
         if cache:
             asyncio.get_event_loop().run_until_complete(
                 asyncio.gather(
