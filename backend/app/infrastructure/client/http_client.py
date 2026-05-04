@@ -1,6 +1,6 @@
 import httpx
 
-from app.infrastructure.config.constants import DEFAULT_HTTP_CONNECT_TIMEOUT, DEFAULT_HTTP_READ_TIMEOUT, MAX_HTTP_RESPONSE_BYTES
+from app.core.config.constants import DEFAULT_HTTP_CONNECT_TIMEOUT, DEFAULT_HTTP_READ_TIMEOUT, MAX_HTTP_RESPONSE_BYTES
 
 
 class HttpClient:

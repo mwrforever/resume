@@ -3,7 +3,7 @@ import html
 import logging
 import aiosmtplib
 from email.message import EmailMessage
-from app.infrastructure.config import get_settings
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 

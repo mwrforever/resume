@@ -3,7 +3,7 @@ from typing import Any, AsyncGenerator
 import redis.asyncio as redis
 from redis.asyncio import Redis
 
-from app.infrastructure.config import get_settings
+from app.core.config import get_settings
 from app.models import async_session_maker
 
 _redis_client: Redis | None = None

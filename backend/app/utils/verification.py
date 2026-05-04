@@ -3,7 +3,7 @@ import random
 
 from fastapi import HTTPException
 
-from app.infrastructure.cache import get_cache, CacheService
+from app.services.cache_service import get_cache, CacheService
 from app.utils.email.email_service import send_verification_email
 
 logger = logging.getLogger(__name__)

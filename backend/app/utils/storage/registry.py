@@ -15,7 +15,7 @@ class StorageRegistry:
     @classmethod
     def get(cls, name: str = None) -> BaseStorage:
         """获取存储策略实例"""
-        from app.infrastructure.config import get_settings
+        from app.core.config import get_settings
         settings = get_settings()
         storage_type = name or settings.STORAGE_TYPE
         strategy_class = cls._strategies.get(storage_type, LocalStorage)

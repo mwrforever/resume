@@ -5,7 +5,7 @@ from typing import Optional
 import bcrypt
 from fastapi import HTTPException, Header
 from jose import JWTError, jwt
-from app.infrastructure.config import get_settings
+from app.core.config import get_settings
 
 settings = get_settings()
 MAX_BCRYPT_PASSWORD_BYTES = 72
