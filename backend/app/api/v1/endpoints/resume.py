@@ -8,7 +8,8 @@ from app.deps import get_current_user
 from app.deps import get_db
 from app.core.exceptions import BizError
 from app.core.config import get_settings
-from app.services.cache_service import get_cache, CacheService
+from app.deps import get_cache
+from app.services.cache_service import CacheService
 from app.repositories.resume_repository import ResumeRepository
 from app.services.resume_service import ResumeService
 from app.schemas.vo.response.resume_response import ApiResponse, PageData, ResumeDetail, ResumeItem

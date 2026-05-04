@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -15,6 +16,7 @@ from app.db.mysql import mysql_manager
 from app.db.redis import redis_manager
 from app.core.exceptions import BizError
 from app.api.v1.router import api_router
+from app.services.cache_service import CacheService
 
 settings = get_settings()
 configure_logging(settings)
@@ -27,17 +29,24 @@ logging.getLogger(__name__).info(
     celery.__version__,
 )
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await mysql_manager.init_pool()
-    await redis_manager.init_client()
+    await asyncio.gather(
+        mysql_manager.init_pool(),
+        redis_manager.init_client(),
+    )
+    app.state.redis = redis_manager.client
+    app.state.mysql = mysql_manager.engine
+
+    app.state.cache = CacheService(app.state.redis)
 
     try:
         yield
     finally:
-        await redis_manager.close_client()
-        await mysql_manager.close_pool()
+        await asyncio.gather(
+            redis_manager.close_client(),
+            mysql_manager.close_pool(),
+        )
 
 
 app = FastAPI(

@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, Query
 
 from app.deps import get_current_user
 from app.deps import get_db
-from app.services.cache_service import get_cache, CacheService
+from app.deps import get_cache
+from app.services.cache_service import CacheService
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.resume_repository import ResumeRepository
 from app.repositories.job_repository import JobRepository

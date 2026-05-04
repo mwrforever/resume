@@ -2,14 +2,9 @@ import json
 import logging
 from typing import Any, Optional
 
-import redis.asyncio as redis
 from redis.asyncio import Redis
 
-from app.core.config import get_settings
-
 logger = logging.getLogger(__name__)
-
-_redis_client: Optional[Redis] = None
 
 LUA_IP_COUNT = """
 local key = KEYS[1]
@@ -47,39 +42,6 @@ if code == ARGV[1] then
 end
 return 0
 """
-
-
-async def init_redis_client() -> Redis | None:
-    global _redis_client
-    if _redis_client is None:
-        settings = get_settings()
-        _redis_client = redis.Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            db=settings.REDIS_DB,
-            password=settings.redis_password or None,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-            retry_on_timeout=True,
-        )
-        logger.info("Redis client initialized.")
-    return _redis_client
-
-
-async def close_redis_client() -> None:
-    global _redis_client
-    if _redis_client is not None:
-        await _redis_client.aclose()
-        _redis_client = None
-        logger.info("Redis client closed.")
-
-
-def get_redis_client() -> Redis:
-    if _redis_client is None:
-        raise RuntimeError("Redis client is not initialized. Call `init_redis_client()` first.")
-    return _redis_client
-
 
 class CacheService:
     def __init__(self, client: Redis):
@@ -137,13 +99,3 @@ class CacheService:
         key = f"verify:count:{ip}"
         result = await self._script_ip_count(keys=[key], args=[limit])
         return result == 1
-
-
-_cache_service: CacheService | None = None
-
-
-def get_cache() -> CacheService:
-    global _cache_service
-    if _cache_service is None:
-        _cache_service = CacheService(get_redis_client())
-    return _cache_service

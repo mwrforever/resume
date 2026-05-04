@@ -9,7 +9,7 @@ celery_app = Celery(
     "resume_platform",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.workers.celery.task.eval_task"]
+    include=["app.workers.tasks.eval_task"]
 )
 
 celery_app.conf.update(
@@ -34,7 +34,7 @@ celery_app.conf.update(
         "visibility_timeout": 3600,
     },
     task_routes={
-        "app.workers.celery.task.eval_task.*": {"queue": "eval"}
+        "app.workers.tasks.eval_task.*": {"queue": "eval"}
     },
     # Windows 兼容设置：使用 threads 池避免 spawn 多进程的权限问题
     worker_pool="threads",

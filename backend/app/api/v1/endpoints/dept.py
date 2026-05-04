@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import get_current_user
 from app.deps import get_db
-from app.services.cache_service import get_cache, CacheService
+from app.deps import get_cache
+from app.services.cache_service import CacheService
 from app.repositories.dept_repository import DeptRepository
 from app.schemas.vo.request.dept_request import DeptCreate, DeptUpdate
 from app.schemas.vo.response.dept_response import ApiResponse, DeptImportResult, DeptItem, PageData

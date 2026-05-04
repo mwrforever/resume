@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, Query
 from app.deps import get_current_user
 from app.deps import get_db
 from app.core.exceptions import NotFoundError
-from app.services.cache_service import get_cache, CacheService
+from app.deps import get_cache
+from app.services.cache_service import CacheService
 from app.repositories.eval_template_repository import EvalTemplateRepository
 from app.services.eval_template_service import EvalTemplateService
 from app.schemas.vo.request.eval_template_request import (

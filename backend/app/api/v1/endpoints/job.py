@@ -9,7 +9,8 @@ from app.core.exceptions import ValidationError
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.eval_template_repository import EvalTemplateRepository
 from app.services.eval_template_service import EvalTemplateService
-from app.services.cache_service import get_cache, CacheService
+from app.deps import get_cache
+from app.services.cache_service import CacheService
 from app.repositories.job_repository import JobRepository
 from app.services.job_service import JobService
 from app.schemas.vo.request.job_request import AiSuggestRequest, JobCreate, JobUpdate
