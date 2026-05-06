@@ -24,9 +24,6 @@ api_router.include_router(verification.router, prefix="/verification", tags=["�
 # 用户认证
 api_router.include_router(user.router, prefix="/user/auth", tags=["认证"])
 
-# 用户管理
-api_router.include_router(user.user_manage_router, prefix="/users", tags=["用户管理"])
-
 # 员工认证
 api_router.include_router(employee.router, prefix="/employee/auth", tags=["员工认证"])
 

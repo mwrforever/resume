@@ -1,6 +1,6 @@
-from typing import Any, Optional
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.auth import AuthService
@@ -9,25 +9,18 @@ from app.deps import get_db
 from app.deps import get_cache
 from app.services.cache_service import CacheService
 from app.core.security import create_access_token, create_refresh_token, decode_token, get_password_hash
-from app.services.user_service import UserManageService
 from app.utils.verification import verify_and_consume_code
 from app.repositories.user_repository import UserRepository
 from app.repositories.employee_repository import EmployeeRepository
 from app.schemas.vo.request.auth_request import LoginRequest, RefreshTokenRequest, RegisterRequest
-from app.schemas.vo.request.account_management_request import ManagedUserCreate, ManagedUserUpdate
-from app.schemas.vo.response.auth_response import TokenResponse
-from app.schemas.vo.response.account_management_response import ApiResponse, ManagedUserItem, PageData
+from app.schemas.vo.response.auth_response import TokenResponse, RefreshTokenResponse
+from app.schemas.vo.response.account_management_response import ApiResponse
 
 router = APIRouter()
-user_manage_router = APIRouter()
 
 
 def get_auth_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> AuthService:
     return AuthService(UserRepository(db), EmployeeRepository(db), cache)
-
-
-def get_user_manage_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> UserManageService:
-    return UserManageService(UserRepository(db), EmployeeRepository(db), cache)
 
 
 # ── auth endpoints ──
@@ -65,13 +58,13 @@ async def register(
     }
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=ApiResponse[TokenResponse])
 async def login(
     req: LoginRequest,
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache),
     service: AuthService = Depends(get_auth_service)
-) -> TokenResponse:
+) -> ApiResponse[TokenResponse]:
     if req.login_type == "password":
         if not req.password:
             raise HTTPException(status_code=400, detail="密码不能为空")
@@ -90,12 +83,12 @@ async def login(
         raise HTTPException(status_code=400, detail="无效的登录类型")
 
     access_token, refresh_token = service.create_tokens(user.id, "user")
-    return TokenResponse(
+    return ApiResponse(data=TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         user_type="user",
         user_id=user.id
-    )
+    ))
 
 
 @router.get("/me")
@@ -119,11 +112,11 @@ async def get_current_user_info(
     }
 
 
-@router.post("/refresh")
+@router.post("/refresh", response_model=ApiResponse[RefreshTokenResponse])
 async def refresh_token(
     req: RefreshTokenRequest,
     service: AuthService = Depends(get_auth_service)
-) -> dict[str, Any]:
+) -> ApiResponse[RefreshTokenResponse]:
     try:
         payload = decode_token(req.refresh_token)
         if payload.get("type") != "refresh":
@@ -144,71 +137,9 @@ async def refresh_token(
         new_access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": user_type})
         new_refresh_token = create_refresh_token({"sub": str(user_id), "type": "refresh", "user_type": user_type})
 
-        return {
-            "code": 200,
-            "message": "success",
-            "data": {
-                "access_token": new_access_token,
-                "refresh_token": new_refresh_token
-            }
-        }
+        return ApiResponse(data=RefreshTokenResponse(
+            access_token=new_access_token,
+            refresh_token=new_refresh_token
+        ))
     except ValueError:
         raise HTTPException(status_code=401, detail="无效的token")
-
-
-# ── user management endpoints ──
-
-@user_manage_router.get("/users", response_model=ApiResponse[PageData])
-async def list_users(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    status: Optional[int] = Query(None),
-    search: Optional[str] = Query(None),
-    service: UserManageService = Depends(get_user_manage_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse[PageData]:
-    await service.ensure_admin(current_user)
-    data = await service.list_users(page=page, page_size=page_size, status=status, search=search)
-    return ApiResponse(data=PageData(**data))
-
-
-@user_manage_router.get("/users/{user_id}", response_model=ApiResponse[ManagedUserItem])
-async def get_user(
-    user_id: int,
-    service: UserManageService = Depends(get_user_manage_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse[ManagedUserItem]:
-    await service.ensure_admin(current_user)
-    return ApiResponse(data=await service.get_user(user_id))
-
-
-@user_manage_router.post("/users", response_model=ApiResponse[ManagedUserItem])
-async def create_user(
-    body: ManagedUserCreate,
-    service: UserManageService = Depends(get_user_manage_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse[ManagedUserItem]:
-    await service.ensure_admin(current_user)
-    return ApiResponse(message="创建成功", data=await service.create_user(body))
-
-
-@user_manage_router.put("/users/{user_id}", response_model=ApiResponse[ManagedUserItem])
-async def update_user(
-    user_id: int,
-    body: ManagedUserUpdate,
-    service: UserManageService = Depends(get_user_manage_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse[ManagedUserItem]:
-    await service.ensure_admin(current_user)
-    return ApiResponse(message="修改成功", data=await service.update_user(user_id, body))
-
-
-@user_manage_router.delete("/users/{user_id}", response_model=ApiResponse)
-async def delete_user(
-    user_id: int,
-    service: UserManageService = Depends(get_user_manage_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse:
-    await service.ensure_admin(current_user)
-    await service.delete_user(user_id)
-    return ApiResponse(message="删除成功")
