@@ -13,7 +13,7 @@ from app.repositories.application_repository import ApplicationRepository
 from app.services.evaluation_service import EvalService
 from app.schemas.vo.request.evaluation_request import BatchEvalRequest
 from app.schemas.vo.response.evaluation_response import ApiResponse, EvalResult
-from app.workers.celery.task.eval_task import run_evaluation_task
+from app.workers.tasks.eval_task import run_evaluation_task
 
 router = APIRouter()
 

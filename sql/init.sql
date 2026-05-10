@@ -249,3 +249,148 @@ CREATE TABLE `eval_template_tag`
     KEY           `idx_tag_id` (`tag_id`) COMMENT '用于反向查询引用某标签的模板'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估模板标签关联表';
 
+
+CREATE TABLE IF NOT EXISTS `llm_model_config`
+(
+    `id`                   BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '模型配置ID',
+    `biz_type`             VARCHAR(30)  NOT NULL COMMENT '业务类型：employee/dept',
+    `biz_id`               BIGINT       NOT NULL COMMENT '业务ID：员工ID/部门ID',
+    `config_name`          VARCHAR(50)  NOT NULL COMMENT '配置名称',
+    `protocol`             VARCHAR(20)  NOT NULL DEFAULT 'openai' COMMENT '协议',
+    `base_url`             VARCHAR(500) NOT NULL COMMENT 'OpenAI兼容Base URL',
+    `api_key_ciphertext`   TEXT         NOT NULL COMMENT '加密后的API Key',
+    `api_key_mask`         VARCHAR(50)  NOT NULL COMMENT '脱敏展示值',
+    `model_name`           VARCHAR(100) NOT NULL COMMENT '模型名称',
+    `fallback_model_name`  VARCHAR(100)          DEFAULT NULL COMMENT '兜底模型名称',
+    `extra_body`           JSON                  DEFAULT NULL COMMENT '扩展参数',
+    `timeout_seconds`      SMALLINT     NOT NULL DEFAULT 120 COMMENT '请求超时时间',
+    `max_retries`          SMALLINT     NOT NULL DEFAULT 2 COMMENT '最大重试次数',
+    `status`               SMALLINT     NOT NULL DEFAULT 1 COMMENT '状态：1启用，0停用',
+    `last_test_at`         DATETIME              DEFAULT NULL COMMENT '最近测试时间',
+    `last_test_status`     SMALLINT              DEFAULT NULL COMMENT '最近测试状态',
+    `last_test_message`    VARCHAR(500)          DEFAULT NULL COMMENT '最近测试结果',
+    `create_time`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_biz_model` (`biz_type`, `biz_id`, `model_name`),
+    KEY `idx_biz` (`biz_type`, `biz_id`, `status`),
+    KEY `idx_model_name` (`model_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM模型配置表';
+
+CREATE TABLE IF NOT EXISTS `agent_session`
+(
+    `id`                    BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '会话ID',
+    `session_key`           VARCHAR(64)  NOT NULL COMMENT '会话唯一标识',
+    `employee_id`           BIGINT       NOT NULL COMMENT '员工ID',
+    `title`                 VARCHAR(100) NOT NULL COMMENT '会话标题',
+    `status`                SMALLINT     NOT NULL DEFAULT 1 COMMENT '状态',
+    `selected_model_name`   VARCHAR(100)          DEFAULT NULL COMMENT '选中模型名称',
+    `selected_model_source` VARCHAR(20)           DEFAULT NULL COMMENT '选中模型来源',
+    `context_summary`       VARCHAR(1000)         DEFAULT NULL COMMENT '上下文摘要',
+    `last_message_time`     DATETIME              DEFAULT NULL COMMENT '最近消息时间',
+    `version`               INT          NOT NULL DEFAULT 0 COMMENT '版本号',
+    `create_time`           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_session_key` (`session_key`),
+    KEY `idx_employee_time` (`employee_id`, `create_time`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent会话表';
+
+CREATE TABLE IF NOT EXISTS `agent_message`
+(
+    `id`                BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '消息ID',
+    `session_id`        BIGINT      NOT NULL COMMENT '会话ID',
+    `parent_message_id` BIGINT               DEFAULT NULL COMMENT '父消息ID',
+    `role`              VARCHAR(20) NOT NULL COMMENT '消息角色',
+    `message_type`      VARCHAR(30) NOT NULL COMMENT '消息类型',
+    `content`           JSON        NOT NULL COMMENT '消息内容',
+    `model_name`        VARCHAR(100)         DEFAULT NULL COMMENT '模型名称',
+    `token_count`       INT                  DEFAULT NULL COMMENT 'Token数量',
+    `sort_order`        INT         NOT NULL DEFAULT 0 COMMENT '排序号',
+    `create_time`       DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    KEY `idx_session_order` (`session_id`, `sort_order`, `id`),
+    KEY `idx_parent` (`parent_message_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent消息表';
+
+CREATE TABLE IF NOT EXISTS `agent_run`
+(
+    `id`                BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '运行ID',
+    `trace_id`          VARCHAR(64) NOT NULL COMMENT 'Trace ID',
+    `parent_run_id`     BIGINT               DEFAULT NULL COMMENT '父运行ID',
+    `session_id`        BIGINT      NOT NULL COMMENT '会话ID',
+    `message_id`        BIGINT               DEFAULT NULL COMMENT '消息ID',
+    `run_type`          VARCHAR(30) NOT NULL COMMENT '运行类型',
+    `status`            SMALLINT    NOT NULL DEFAULT 1 COMMENT '状态',
+    `model_name`        VARCHAR(100)         DEFAULT NULL COMMENT '模型名称',
+    `prompt_tokens`     INT         NOT NULL DEFAULT 0 COMMENT 'Prompt Token数',
+    `completion_tokens` INT         NOT NULL DEFAULT 0 COMMENT 'Completion Token数',
+    `total_tokens`      INT         NOT NULL DEFAULT 0 COMMENT '总Token数',
+    `latency_ms`        INT                  DEFAULT NULL COMMENT '耗时毫秒',
+    `input_payload`     JSON                 DEFAULT NULL COMMENT '输入载荷',
+    `output_payload`    JSON                 DEFAULT NULL COMMENT '输出载荷',
+    `error_message`     TEXT                 DEFAULT NULL COMMENT '错误信息',
+    `create_time`       DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`       DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    KEY `idx_trace` (`trace_id`),
+    KEY `idx_session_time` (`session_id`, `create_time`),
+    KEY `idx_parent_run` (`parent_run_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent运行Trace表';
+
+CREATE TABLE IF NOT EXISTS `agent_action`
+(
+    `id`              BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '动作ID',
+    `session_id`      BIGINT       NOT NULL COMMENT '会话ID',
+    `message_id`      BIGINT                DEFAULT NULL COMMENT '消息ID',
+    `run_id`          BIGINT                DEFAULT NULL COMMENT '运行ID',
+    `employee_id`     BIGINT       NOT NULL COMMENT '员工ID',
+    `capability_key`  VARCHAR(80)  NOT NULL COMMENT '能力标识',
+    `action_name`     VARCHAR(100) NOT NULL COMMENT '动作名称',
+    `target_type`     VARCHAR(50)           DEFAULT NULL COMMENT '目标类型',
+    `target_id`       BIGINT                DEFAULT NULL COMMENT '目标ID',
+    `input_payload`   JSON         NOT NULL COMMENT '输入载荷',
+    `preview_payload` JSON         NOT NULL COMMENT '预览载荷',
+    `status`          SMALLINT     NOT NULL DEFAULT 1 COMMENT '状态',
+    `idempotency_key` VARCHAR(100) NOT NULL COMMENT '幂等键',
+    `confirmed_at`    DATETIME              DEFAULT NULL COMMENT '确认时间',
+    `executed_at`     DATETIME              DEFAULT NULL COMMENT '执行时间',
+    `rejected_at`     DATETIME              DEFAULT NULL COMMENT '拒绝时间',
+    `error_message`   TEXT                  DEFAULT NULL COMMENT '错误信息',
+    `create_time`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_idempotency_key` (`idempotency_key`),
+    KEY `idx_session_status` (`session_id`, `status`),
+    KEY `idx_employee_status` (`employee_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent待确认动作表';
+
+CREATE TABLE IF NOT EXISTS `agent_memory`
+(
+    `id`               BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '记忆ID',
+    `employee_id`      BIGINT        NOT NULL COMMENT '员工ID',
+    `memory_type`      VARCHAR(30)   NOT NULL COMMENT '记忆类型',
+    `memory_key`       VARCHAR(100)  NOT NULL COMMENT '记忆唯一键',
+    `content`          TEXT          NOT NULL COMMENT '记忆内容',
+    `importance_score` DECIMAL(5, 2) NOT NULL DEFAULT 0 COMMENT '重要性评分',
+    `confidence_score` DECIMAL(5, 2) NOT NULL DEFAULT 0 COMMENT '置信度评分',
+    `source_session_id` BIGINT                DEFAULT NULL COMMENT '来源会话ID',
+    `last_access_time` DATETIME               DEFAULT NULL COMMENT '最近访问时间',
+    `create_time`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_agent_memory_key` (`employee_id`, `memory_type`, `memory_key`),
+    KEY `idx_employee` (`employee_id`),
+    KEY `idx_type` (`employee_id`, `memory_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent长期记忆表';
+
+CREATE TABLE IF NOT EXISTS `agent_context_snapshot`
+(
+    `id`                       BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '快照ID',
+    `session_id`               BIGINT      NOT NULL COMMENT '会话ID',
+    `snapshot_version`         INT         NOT NULL COMMENT '快照版本',
+    `summary_text`             TEXT        NOT NULL COMMENT '摘要内容',
+    `covered_message_start_id` BIGINT      NOT NULL COMMENT '覆盖起始消息ID',
+    `covered_message_end_id`   BIGINT      NOT NULL COMMENT '覆盖结束消息ID',
+    `message_count`            INT         NOT NULL DEFAULT 0 COMMENT '覆盖消息数',
+    `token_count`              INT         NOT NULL DEFAULT 0 COMMENT 'Token数量',
+    `model_name`               VARCHAR(100)         DEFAULT NULL COMMENT '模型名称',
+    `create_time`              DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    UNIQUE KEY `uk_session_version` (`session_id`, `snapshot_version`),
+    KEY `idx_session` (`session_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent上下文快照表';

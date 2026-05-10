@@ -25,6 +25,7 @@ class JobItem(BaseItem):
     id: int
     name: str
     description: Optional[str] = None
+    dept_id: Optional[int] = None
     template_id: Optional[int] = None
     status: int
     dept_name: Optional[str] = None

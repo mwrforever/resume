@@ -1,5 +1,7 @@
 from celery import Celery
 from app.core.config import configure_logging, get_settings
+from app.workers.db.sync_mysql import mysql_manager_sync
+from app.workers.db.sync_redis import redis_manager_sync
 
 settings = get_settings()
 configure_logging(settings)
@@ -40,3 +42,12 @@ celery_app.conf.update(
     worker_pool="threads",
     worker_concurrency=4,
 )
+
+# app/celery/app.py
+
+
+@celery_app.on_after_configure.connect
+def init_db(**kwargs):
+
+    mysql_manager_sync.init_pool()
+    redis_manager_sync.init_client()

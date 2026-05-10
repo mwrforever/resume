@@ -8,8 +8,9 @@ import { MatchBadge } from '@/components/common/match-badge';
 import { employeeJobsApi } from '@/api/employee/jobs';
 import { employeeEvaluationsApi } from '@/api/employee/evaluations';
 import { employeeAnalyticsApi } from '@/api/employee/analytics';
+import { employeeResumesApi } from '@/api/employee/resumes';
 import { MatchDistribution, ResumeWithEvaluation, Job } from '@/types/employee';
-import { Loader2, RotateCcw, X } from 'lucide-react';
+import { Loader2, RotateCcw, X, Download } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 
 export default function EmployeeEvaluations() {
@@ -120,6 +121,23 @@ export default function EmployeeEvaluations() {
   const toggleAll = () => {
     if (allSelected) setSelectedApplicationIds([]);
     else setSelectedApplicationIds(resumes.map((r) => r.application_id));
+  };
+
+  const handleDownload = async (resume: ResumeWithEvaluation) => {
+    try {
+      const res = await employeeResumesApi.getFile(resume.resume_id);
+      const blob = res.data;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = resume.file_name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to download resume:', error);
+    }
   };
 
   return (
@@ -331,6 +349,13 @@ export default function EmployeeEvaluations() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleDownload(resume)}
+                              className="inline-flex items-center gap-1 text-xs text-[#64748B] hover:text-[#2563EB] px-2 py-1 rounded hover:bg-blue-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                            >
+                              <Download size={13} aria-hidden="true" />
+                              下载
+                            </button>
                             {resume.status === 'completed' && resume.match_id && (
                               <Link
                                 to={`/employee/evaluations/${resume.match_id}`}

@@ -6,6 +6,22 @@
 endpoint → service → repository → db/redis → schema
 ```
 
+### 1.0 项目技术栈规范
+
+**后端技术栈：**
+- Python 3.12+、FastAPI、Pydantic v2、SQLAlchemy 2.x Async ORM、aiomysql、redis.asyncio、Celery。
+- AI/Agent 技术栈必须以 LangGraph 作为 Agent 编排运行时，LangChain/LangChain OpenAI 仅作为模型、Prompt、链路组件能力使用，禁止把 Agent 平台实现为单次 LangChain API 包装。
+- LLM 调用必须采用 `model_router → gateway → provider client` 分层：
+  - `model_router`：负责模型路由、重试、fallback、协议选择。
+  - `gateway`：负责协议适配（如 OpenAI-compatible）、请求构造、响应归一化、token usage 提取。
+  - `provider client`：只能封装具体 SDK，不允许承载业务规则。
+- Agent Runtime 必须通过 LangGraph graph/node/state 表达可编排流程，Service 层只负责业务状态、权限、持久化和调用 graph，禁止在 Service 中直接拼装复杂 Agent 流程。
+
+**前端技术栈：**
+- React 19、TypeScript、Vite、Tailwind CSS、React Router、Zustand、Axios、Lucide React。
+- UI 风格必须遵循企业级 HR SaaS 后台：专业蓝色体系、高对比文本、清晰信息层级、扁平化卡片、可观测 Trace 面板、可访问表单控件。
+- 前端接口调用必须经过 `src/api/`，业务页面禁止直接调用 axios。
+
 ### 1.1 后端目录结构（优化后的模块化 schemas）
 
 ```text
@@ -13,7 +29,6 @@ backend/
 ├── main.py                      # 启动入口，委托 app/main.py
 ├── app/
 │   ├── main.py                  # FastAPI应用工厂 + 路由注册 + lifespan管理资源
-│   ├── deps.py                  # 依赖注入（统一管理全绝的依赖注入）
 │   │
 │   ├── core/                     # 核心配置、日志、安全、异常
 │   │   ├── config.py
@@ -22,6 +37,7 @@ backend/
 │   │   └── exceptions.py
 │   │
 │   ├── api/                      # HTTP API层
+│   │   ├── deps.py               # 依赖注入
 │   │   └── v1/
 │   │       ├── router.py
 │   │       └── endpoints/        # 按业务模块拆分
@@ -43,13 +59,13 @@ backend/
 │   │   ├── resume.py
 │   │   └── ...
 │   │
-│   ├── schemas/                  # 按模块拆分 + request/response/dto
-│   │   ├── base.py               # 公共DTO/基础模型
-│   │   ├── user/
+│   ├── schemas/                  # 按模块拆分，每个业务模块内聚 request/response/dto
+│   │   ├── common.py             # 公共响应/分页结构
+│   │   ├── agent/
 │   │   │   ├── request.py
 │   │   │   ├── response.py
 │   │   │   └── dto.py
-│   │   ├── employee/
+│   │   ├── user/
 │   │   │   ├── request.py
 │   │   │   ├── response.py
 │   │   │   └── dto.py
@@ -58,7 +74,7 @@ backend/
 │   ├── services/                 # 业务逻辑层
 │   │   ├── user_service.py
 │   │   ├── employee_service.py
-│   │   └── cache_service.py      # Redis缓存封装
+│   │   └── cache_service.py      # Redis缓存封装，真正进行redis缓存
 │   │
 │   ├── repositories/             # 数据访问层
 │   │   ├── user_repository.py
@@ -69,7 +85,10 @@ backend/
 │   │   ├── mysql.py
 │   │   └── redis.py
 │   │
-│   ├── llm/                       # LLM调用链
+│   ├── llm/                       # LLM/Agent 调用链
+│   │   ├── model_router.py        # 模型路由、fallback、重试
+│   │   ├── gateway.py             # 协议网关、响应归一化
+│   │   ├── graphs/                # LangGraph Agent 编排
 │   │   ├── clients/
 │   │   ├── chains/
 │   │   ├── prompts/
@@ -87,8 +106,7 @@ backend/
 │   │
 │   ├── middleware/               # 中间件
 │   └── utils/                     # 通用工具
-│       ├── cache_utils.py
-│       ├── ai_utils.py
+│       ├── cache_utils.py          # 负责缓存的通用工具方法，如构建key，序列化和反序列化等   
 │       ├── mail_utils.py
 │       ├── storage_utils.py
 │       ├── resume_parser.py

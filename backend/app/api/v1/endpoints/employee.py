@@ -16,7 +16,7 @@ from app.repositories.dept_repository import DeptRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.vo.request.auth_request import EmployeeLoginRequest, EmployeeRegisterRequest, RefreshTokenRequest
 from app.schemas.vo.request.account_management_request import ManagedEmployeeCreate, ManagedEmployeeUpdate
-from app.schemas.vo.response.auth_response import TokenResponse
+from app.schemas.vo.response.auth_response import TokenResponse, RefreshTokenResponse
 from app.schemas.vo.response.account_management_response import ApiResponse, ManagedEmployeeItem, PageData
 
 router = APIRouter()
@@ -70,13 +70,13 @@ async def register(
     }
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=ApiResponse[TokenResponse])
 async def login(
     req: EmployeeLoginRequest,
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache),
     service: AuthService = Depends(get_auth_service)
-) -> TokenResponse:
+) -> ApiResponse[TokenResponse]:
     if req.login_type == "password":
         if not req.password:
             raise HTTPException(status_code=400, detail="密码不能为空")
@@ -95,19 +95,19 @@ async def login(
         raise HTTPException(status_code=400, detail="无效的登录类型")
 
     access_token, refresh_token = service.create_tokens(employee.id, "employee")
-    return TokenResponse(
+    return ApiResponse(data=TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         user_type="employee",
         user_id=employee.id
-    )
+    ))
 
 
-@router.post("/refresh")
+@router.post("/refresh", response_model=ApiResponse[RefreshTokenResponse])
 async def refresh_token(
     req: RefreshTokenRequest,
     service: AuthService = Depends(get_auth_service)
-) -> dict[str, Any]:
+) -> ApiResponse[RefreshTokenResponse]:
     try:
         payload = decode_token(req.refresh_token)
         if payload.get("type") != "refresh":
@@ -123,14 +123,10 @@ async def refresh_token(
         new_access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": user_type})
         new_refresh_token = create_refresh_token({"sub": str(user_id), "type": "refresh", "user_type": user_type})
 
-        return {
-            "code": 200,
-            "message": "success",
-            "data": {
-                "access_token": new_access_token,
-                "refresh_token": new_refresh_token
-            }
-        }
+        return ApiResponse(data=RefreshTokenResponse(
+            access_token=new_access_token,
+            refresh_token=new_refresh_token
+        ))
     except ValueError:
         raise HTTPException(status_code=401, detail="无效的token")
 

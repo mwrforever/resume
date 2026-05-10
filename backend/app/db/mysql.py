@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import settings
+from app.models import Base
 
 
 class MySQLManager:
@@ -43,7 +44,7 @@ class MySQLManager:
         database_url = URL.create(
             drivername="mysql+aiomysql",
             username=settings.DB_USER,
-            password=settings.DB_PASSWORD,
+            password=settings.db_password,
             host=settings.DB_HOST,
             port=settings.DB_PORT,
             database=settings.DB_NAME,
@@ -72,6 +73,8 @@ class MySQLManager:
             autoflush=False,
             expire_on_commit=False,
         )
+        async with self._engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
     async def close_pool(self) -> None:
         """

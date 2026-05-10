@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Pagination } from '@/components/common/pagination';
 import { employeeResumesApi } from '@/api/employee/resumes';
 import { useDebounce, useThrottleCallback } from '@/hooks/use-debounce';
-import { Eye, RefreshCw, RotateCcw, Search } from 'lucide-react';
+import { Eye, Download, RefreshCw, RotateCcw, Search } from 'lucide-react';
 
 const DEFAULT_PAGE_SIZE = 10;
 const ResumePreviewDialog = lazy(async () => {
@@ -77,6 +77,23 @@ export default function EmployeeResumes() {
   const handleReset = () => {
     setSearchInput('');
     setSearchParams(prev => { const next = new URLSearchParams(prev); next.delete('search'); next.set('page', '1'); return next; });
+  };
+
+  const handleDownload = async (resume: Resume) => {
+    try {
+      const res = await employeeResumesApi.getFile(resume.id);
+      const blob = res.data;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = resume.file_name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to download resume:', error);
+    }
   };
 
   return (
@@ -166,14 +183,24 @@ export default function EmployeeResumes() {
                       {new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(resume.create_time))}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => setPreviewResume({ id: resume.id, fileName: resume.file_name })}
-                        aria-label={`预览简历 ${resume.file_name}`}
-                        className="inline-flex items-center gap-1 text-xs text-[#2563EB] hover:underline px-2 py-1 rounded hover:bg-blue-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
-                      >
-                        <Eye size={13} aria-hidden="true" />
-                        预览
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setPreviewResume({ id: resume.id, fileName: resume.file_name })}
+                          aria-label={`预览简历 ${resume.file_name}`}
+                          className="inline-flex items-center gap-1 text-xs text-[#2563EB] hover:underline px-2 py-1 rounded hover:bg-blue-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                        >
+                          <Eye size={13} aria-hidden="true" />
+                          预览
+                        </button>
+                        <button
+                          onClick={() => handleDownload(resume)}
+                          aria-label={`下载简历 ${resume.file_name}`}
+                          className="inline-flex items-center gap-1 text-xs text-[#64748B] hover:text-[#2563EB] px-2 py-1 rounded hover:bg-blue-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                        >
+                          <Download size={13} aria-hidden="true" />
+                          下载
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

@@ -22,6 +22,8 @@ import EmployeeEvaluations from '@/pages/employee/evaluations';
 import EmployeeEvalDetail from '@/pages/employee/eval-detail';
 import EmployeeAccountManagement from '@/pages/employee/account-management';
 import EmployeeDeptManagement from '@/pages/employee/dept-management';
+import EmployeeAgent from '@/pages/employee/agent';
+import EmployeeLlmConfigs from '@/pages/employee/llm-configs';
 
 // Shared pages
 import Auth from '@/pages/auth';
@@ -62,6 +64,8 @@ export default function App() {
         <Route path="/employee/user-management" element={<ProtectedRoute userType="employee"><EmployeeAccountManagement tab="users" /></ProtectedRoute>} />
         <Route path="/employee/employee-management" element={<ProtectedRoute userType="employee"><EmployeeAccountManagement tab="employees" /></ProtectedRoute>} />
         <Route path="/employee/dept-management" element={<ProtectedRoute userType="employee"><EmployeeDeptManagement /></ProtectedRoute>} />
+        <Route path="/employee/agent" element={<ProtectedRoute userType="employee"><EmployeeAgent /></ProtectedRoute>} />
+        <Route path="/employee/llm-configs" element={<ProtectedRoute userType="employee"><EmployeeLlmConfigs /></ProtectedRoute>} />
         <Route path="/employee/account-management" element={<Navigate to="/employee/user-management" replace />} />
 
         <Route path="/" element={<Navigate to="/user/jobs" replace />} />

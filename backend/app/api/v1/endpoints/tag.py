@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from app.deps import get_db
 from app.deps import get_cache
@@ -5,6 +6,9 @@ from app.services.cache_service import CacheService
 from app.utils.cache_utils import TAG_LIST_KEY, TAG_LIST_TTL
 from app.core.exceptions import NotFoundError, ValidationError
 from app.repositories.tag_repository import TagRepository
+from app.schemas.common import ApiResponse, PageData
+from app.schemas.vo.response.tag_response import TagItem
+from app.schemas.vo.request.tag_request import TagCreate, TagUpdate
 
 router = APIRouter()
 

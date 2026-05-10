@@ -12,13 +12,14 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useDebounce } from '@/hooks/use-debounce';
 import type { IDeptItem, IEmployeeImportResult, IManagedEmployee, IManagedUser } from '@/types/employee';
-import { Info, Loader2, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
+import { Info, Loader2, Pencil, Plus, RefreshCw, RotateCcw, Trash2, Upload, X } from 'lucide-react';
 
 type ActiveTab = 'users' | 'employees';
 type DialogMode = 'create' | 'edit';
 type AccountItem = IManagedUser | IManagedEmployee;
 
 const DEFAULT_PAGE_SIZE = 10;
+const REFRESH_THROTTLE_MS = 1500;
 
 function getResponseData<T>(res: unknown, fallback: T): T {
   const wrapper = res as { data?: T | { data?: T } };
@@ -314,6 +315,8 @@ export default function EmployeeAccountManagement({ tab = 'users' }: EmployeeAcc
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const lastRefreshAtRef = useRef(0);
   const [dialogState, setDialogState] = useState<{ mode: DialogMode; item: AccountItem | null } | null>(null);
   const [deptTarget, setDeptTarget] = useState<IManagedEmployee | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AccountItem | null>(null);
@@ -372,11 +375,38 @@ export default function EmployeeAccountManagement({ tab = 'users' }: EmployeeAcc
   const items = activeTab === 'users' ? users : employees;
   const pageTitle = activeTab === 'users' ? '用户管理' : '员工管理';
 
+  const handleRefresh = async () => {
+    const now = Date.now();
+    if (refreshing || now - lastRefreshAtRef.current < REFRESH_THROTTLE_MS) return;
+    lastRefreshAtRef.current = now;
+    setRefreshing(true);
+    try {
+      await loadData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleResetFilters = () => {
+    setSearch('');
+    setStatus('');
+    setPage(1);
+  };
+
+  const hasActiveFilters = search || status;
+
   return (
     <AdminLayout
       breadcrumbs={[{ label: pageTitle }]}
       title={pageTitle}
-      headerAction={<Button onClick={() => setDialogState({ mode: 'create', item: null })} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white"><Plus size={16} className="mr-1.5" />新增{activeTab === 'users' ? '用户' : '员工'}</Button>}
+      headerAction={
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={handleRefresh} disabled={refreshing || loading} className="bg-white">
+            <RefreshCw size={16} className={`mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />刷新
+          </Button>
+          <Button onClick={() => setDialogState({ mode: 'create', item: null })} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white"><Plus size={16} className="mr-1.5" />新增{activeTab === 'users' ? '用户' : '员工'}</Button>
+        </div>
+      }
     >
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索邮箱、姓名、工号…" className="w-64 bg-white" />
@@ -384,6 +414,9 @@ export default function EmployeeAccountManagement({ tab = 'users' }: EmployeeAcc
           <SelectTrigger className="w-32 bg-white"><SelectValue placeholder="全部状态" /></SelectTrigger>
           <SelectContent><SelectItem value="">全部状态</SelectItem><SelectItem value="1">正常</SelectItem><SelectItem value="0">禁用</SelectItem></SelectContent>
         </Select>
+        <Button variant="outline" onClick={handleResetFilters} disabled={!hasActiveFilters} className="bg-white text-[#64748B]">
+          <RotateCcw size={14} className="mr-1" />重置
+        </Button>
       </div>
 
       {activeTab === 'employees' && <ImportPanel onImported={loadData} />}

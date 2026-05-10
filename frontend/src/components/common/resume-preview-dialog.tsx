@@ -6,7 +6,8 @@ import { useAuthStore } from '@/store/auth';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
+const workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url);
+pdfjs.GlobalWorkerOptions.workerSrc = workerSrc.toString();
 
 interface ResumePreviewDialogProps {
   resumeId: number;

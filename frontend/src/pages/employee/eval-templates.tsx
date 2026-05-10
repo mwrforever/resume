@@ -13,10 +13,11 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useDebounce } from '@/hooks/use-debounce';
-import { Bot, Eye, FileText, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Bot, Eye, FileText, Loader2, Pencil, Plus, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react';
 import type { IEvalDimension, IEvalTemplate, ITag } from '@/types/employee';
 
 const DEFAULT_PAGE_SIZE = 10;
+const REFRESH_THROTTLE_MS = 1500;
 const SKILL_TYPE_OPTIONS = [
   { value: 1, label: '必须满足', cls: 'bg-red-100 text-red-700' },
   { value: 2, label: '优先匹配', cls: 'bg-yellow-100 text-yellow-700' },
@@ -422,6 +423,8 @@ export default function EmployeeEvalTemplates() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const lastRefreshAtRef = useRef(0);
   const [dialogState, setDialogState] = useState<{ mode: DialogMode; template: IEvalTemplate | null } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<IEvalTemplate | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -470,14 +473,39 @@ export default function EmployeeEvalTemplates() {
     }
   };
 
+  const handleRefresh = async () => {
+    const now = Date.now();
+    if (refreshing || now - lastRefreshAtRef.current < REFRESH_THROTTLE_MS) return;
+    lastRefreshAtRef.current = now;
+    setRefreshing(true);
+    try {
+      await loadTemplates();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleResetFilters = () => {
+    setSearch('');
+    setStatus('');
+    setPage(1);
+  };
+
+  const hasActiveFilters = search || status;
+
   return (
     <AdminLayout
       breadcrumbs={[{ label: '评估模板' }]}
       title="评估模板"
       headerAction={
-        <Button onClick={() => setDialogState({ mode: 'create', template: null })} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white">
-          <Plus size={16} className="mr-1.5" aria-hidden="true" />新增模板
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={handleRefresh} disabled={refreshing || loading} className="bg-white">
+            <RefreshCw size={16} className={`mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />刷新
+          </Button>
+          <Button onClick={() => setDialogState({ mode: 'create', template: null })} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white">
+            <Plus size={16} className="mr-1.5" aria-hidden="true" />新增模板
+          </Button>
+        </div>
       }
     >
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -490,6 +518,9 @@ export default function EmployeeEvalTemplates() {
             <SelectItem value="0">停用</SelectItem>
           </SelectContent>
         </Select>
+        <Button variant="outline" onClick={handleResetFilters} disabled={!hasActiveFilters} className="bg-white text-[#64748B]">
+          <RotateCcw size={14} className="mr-1" />重置
+        </Button>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-[#E2E8F0] bg-white">

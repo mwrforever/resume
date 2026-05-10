@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { Pagination } from '@/components/common/pagination';
@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Eye, Loader2, Pencil, Plus, Tags as TagsIcon, Trash2, X } from 'lucide-react';
+import { Eye, Loader2, Pencil, Plus, RefreshCw, RotateCcw, Tags as TagsIcon, Trash2, X } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import type { ITag } from '@/types/employee';
 
@@ -23,6 +23,7 @@ const TAG_COLOR_OPTIONS = [
   { value: 'purple', label: '紫色', className: 'border-purple-200 bg-purple-50 text-purple-700' },
 ];
 const DEFAULT_PAGE_SIZE = 10;
+const REFRESH_THROTTLE_MS = 1500;
 const getResponseData = <T,>(res: any, fallback: T): T => res?.data?.data ?? res?.data ?? fallback;
 
 function TagColorBadge({ color }: { color: string }) {
@@ -158,6 +159,8 @@ export default function EmployeeTags() {
   const [tagType, setTagType] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const lastRefreshAtRef = useRef(0);
   const [dialogState, setDialogState] = useState<{ mode: 'create' | 'edit' | 'view'; tag: ITag | null } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ITag | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -194,14 +197,40 @@ export default function EmployeeTags() {
     }
   };
 
+  const handleRefresh = async () => {
+    const now = Date.now();
+    if (refreshing || now - lastRefreshAtRef.current < REFRESH_THROTTLE_MS) return;
+    lastRefreshAtRef.current = now;
+    setRefreshing(true);
+    try {
+      await loadTags();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleResetFilters = () => {
+    setSearch('');
+    setTagType('');
+    setStatus('');
+    setPage(1);
+  };
+
+  const hasActiveFilters = search || tagType || status;
+
   return (
     <AdminLayout
       breadcrumbs={[{ label: '标签管理' }]}
       title="标签管理"
       headerAction={
-        <Button onClick={() => setDialogState({ mode: 'create', tag: null })} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white">
-          <Plus size={16} className="mr-1.5" aria-hidden="true" />新增标签
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={handleRefresh} disabled={refreshing || loading} className="bg-white">
+            <RefreshCw size={16} className={`mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />刷新
+          </Button>
+          <Button onClick={() => setDialogState({ mode: 'create', tag: null })} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white">
+            <Plus size={16} className="mr-1.5" aria-hidden="true" />新增标签
+          </Button>
+        </div>
       }
     >
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -223,6 +252,9 @@ export default function EmployeeTags() {
             <SelectItem value="0">停用</SelectItem>
           </SelectContent>
         </Select>
+        <Button variant="outline" onClick={handleResetFilters} disabled={!hasActiveFilters} className="bg-white text-[#64748B]">
+          <RotateCcw size={14} className="mr-1" />重置
+        </Button>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-[#E2E8F0] bg-white">

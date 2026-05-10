@@ -3,7 +3,7 @@ import asyncio
 from app.core.exceptions import NotFoundError, ValidationError
 from app.repositories.eval_template_repository import EvalTemplateRepository
 from app.schemas.vo.request.eval_template_request import EvalDimensionAiSuggestRequest, JobTemplateAiSuggestRequest, TemplateSkillAiSuggestRequest
-from app.utils.ai.chains import EvalDimensionAiSuggestChain, JobTemplateAiSuggestChain, TemplateSkillAiSuggestChain
+from app.llm.chains.chains import EvalDimensionAiSuggestChain, JobTemplateAiSuggestChain, TemplateSkillAiSuggestChain
 from app.services.cache_service import CacheService
 from app.utils.cache_utils import (
     TEMPLATE_DETAIL_KEY,

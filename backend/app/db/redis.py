@@ -37,7 +37,7 @@ class RedisManager:
         try:
             pong = await cast(Awaitable[bool], client.ping())
 
-            if pong:
+            if not pong:
                 raise RuntimeError("Redis ping failed")
 
         except BaseException:

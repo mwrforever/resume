@@ -2,16 +2,11 @@ import json
 import re
 import logging
 from concurrent.futures import ThreadPoolExecutor
+
+from jinja2 import TemplateError
+
 from app.llm.clients.client import llm_complete
-from app.llm.prompts.prompts import (
-    COMPREHENSIVE_EVAL_PROMPT,
-    DIMENSION_EVAL_WITH_SKILLS_PROMPT,
-    EVAL_DIMENSION_AI_SUGGEST_PROMPT,
-    JOB_AI_SUGGEST_PROMPT,
-    JOB_TEMPLATE_AI_SUGGEST_PROMPT,
-    SKILL_MATCH_PROMPT,
-    TEMPLATE_SKILL_AI_SUGGEST_PROMPT,
-)
+from app.llm.prompts.manager import prompt_manager
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +19,11 @@ class JobAiSuggestChain:
         Returns:
             dict: {comprehensive_description}
         """
-        prompt = JOB_AI_SUGGEST_PROMPT.format(job_name=name, job_description=description or "")
+        prompt = prompt_manager.render("job_ai_suggest", job_name=name, job_description=description or "")
         try:
             raw = llm_complete(prompt, max_retries=2, timeout=90)
             result = self._parse_object(raw)
-        except Exception as e:
+        except RuntimeError as e:
             logger.error(f"岗位AI建议生成失败: {e}")
             result = {}
 
@@ -37,7 +32,7 @@ class JobAiSuggestChain:
         }
 
     def _parse_object(self, result: str) -> dict:
-        match = re.search(r'\{.*\}', result, re.DOTALL)
+        match = re.search(r'\{.*}', result, re.DOTALL)
         if match:
             try:
                 parsed = json.loads(match.group())
@@ -50,7 +45,7 @@ class JobAiSuggestChain:
 
 class JobTemplateAiSuggestChain:
     def suggest(self, job_name: str, job_description: str) -> dict:
-        prompt = JOB_TEMPLATE_AI_SUGGEST_PROMPT.format(job_name=job_name, job_description=job_description or "")
+        prompt = prompt_manager.render("job_template_ai_suggest", job_name=job_name, job_description=job_description or "")
         raw = llm_complete(prompt, max_retries=2, timeout=120)
         result = self._parse_object(raw)
         return {
@@ -74,7 +69,7 @@ class JobTemplateAiSuggestChain:
 
 class EvalDimensionAiSuggestChain:
     def suggest(self, job_name: str, job_description: str) -> dict:
-        prompt = EVAL_DIMENSION_AI_SUGGEST_PROMPT.format(job_name=job_name, job_description=job_description or "")
+        prompt = prompt_manager.render("eval_dimension_ai_suggest", job_name=job_name, job_description=job_description or "")
         raw = llm_complete(prompt, max_retries=2, timeout=90)
         result = self._parse_object(raw)
         return {
@@ -97,7 +92,7 @@ class EvalDimensionAiSuggestChain:
 
 class TemplateSkillAiSuggestChain:
     def suggest(self, dimensions: list[dict]) -> dict:
-        prompt = TEMPLATE_SKILL_AI_SUGGEST_PROMPT.format(dimensions=json.dumps(dimensions, ensure_ascii=False))
+        prompt = prompt_manager.render("template_skill_ai_suggest", dimensions=json.dumps(dimensions, ensure_ascii=False))
         raw = llm_complete(prompt, max_retries=2, timeout=90)
         result = self._parse_object(raw)
         return {
@@ -118,6 +113,7 @@ class TemplateSkillAiSuggestChain:
 
 class ResumeEvalChain:
     def evaluate(self, resume_text: str, job_name: str, job_description: str, dimensions: list, skills: list) -> dict:
+        # 评估链路按“技能命中 -> 维度评分 -> 综合结论”串联，保证后续提示词能引用前序结构化结果。
         skill_hits = self._match_skills(resume_text, job_name, job_description, skills)
         dimension_results = self._evaluate_dimensions(resume_text, job_name, job_description, dimensions, skill_hits)
         weighted_score = self._calculate_weighted_score(dimension_results, dimensions)
@@ -133,7 +129,8 @@ class ResumeEvalChain:
         }
 
     def _match_skills(self, resume_text: str, job_name: str, job_description: str, skills: list) -> list[dict]:
-        prompt = SKILL_MATCH_PROMPT.format(
+        prompt = prompt_manager.render(
+            "skill_match",
             job_name=job_name,
             job_description=job_description or "",
             skills=json.dumps(skills, ensure_ascii=False),
@@ -154,6 +151,7 @@ class ResumeEvalChain:
         if not dimensions:
             return []
         max_workers = min(len(dimensions), 4)
+        # 维度之间无共享写入状态，可并行调用 LLM；限制并发数避免一次评估占满外部模型资源。
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             return list(executor.map(
                 lambda dimension: self._evaluate_dimension(
@@ -176,12 +174,14 @@ class ResumeEvalChain:
     ) -> dict:
         prompt_template = self._render_dimension_template(
             str(dimension.get("prompt_template") or ""),
+            str(dimension.get("dimension_name") or ""),
             resume_text,
             job_name,
             job_description,
             skill_hits,
         )
-        prompt = DIMENSION_EVAL_WITH_SKILLS_PROMPT.format(
+        prompt = prompt_manager.render(
+            "dimension_eval_with_skills",
             job_name=job_name,
             job_description=job_description or "",
             dimension=json.dumps({
@@ -203,20 +203,39 @@ class ResumeEvalChain:
     def _render_dimension_template(
         self,
         prompt_template: str,
+        dimension_name: str,
         resume_text: str,
         job_name: str,
         job_description: str,
         skill_hits: list[dict],
     ) -> str:
         try:
-            return prompt_template.format(
+            # 数据库历史数据可能仍使用 {resume_text} 旧占位符，渲染前先归一为 Jinja2 语法。
+            return prompt_manager.render_text(
+                self._normalize_dimension_template(prompt_template),
+                dimension_name=dimension_name,
                 resume_text=resume_text,
                 job_name=job_name,
                 job_description=job_description or "",
                 skill_hits=json.dumps(skill_hits, ensure_ascii=False),
             )
-        except (KeyError, ValueError, IndexError):
+        except TemplateError:
+            # 用户自定义模板语法错误时保留原文进入外层提示词，避免单个模板阻断整次评估。
             return prompt_template
+
+    def _normalize_dimension_template(self, prompt_template: str) -> str:
+        # 仅替换单大括号旧占位符，避免破坏已经符合 Jinja2 的 {{ resume_text }} 写法。
+        normalized = prompt_template
+        replacements = {
+            "dimension_name": "{{ dimension_name }}",
+            "resume_text": "{{ resume_text }}",
+            "job_name": "{{ job_name }}",
+            "job_description": "{{ job_description }}",
+            "skill_hits": "{{ skill_hits }}",
+        }
+        for key, value in replacements.items():
+            normalized = re.sub(rf"(?<!{{){{{key}}}(?!}})", value, normalized)
+        return normalized
 
     def _evaluate_comprehensive(
         self,
@@ -226,7 +245,8 @@ class ResumeEvalChain:
         dimension_results: list[dict],
         weighted_score: float,
     ) -> dict:
-        prompt = COMPREHENSIVE_EVAL_PROMPT.format(
+        prompt = prompt_manager.render(
+            "comprehensive_eval",
             job_name=job_name,
             job_description=job_description or "",
             skill_hits=json.dumps(skill_hits, ensure_ascii=False),

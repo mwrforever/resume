@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Briefcase, FileText,
   Send, ChevronLeft, ChevronRight, Tags, UserRound, Users, ClipboardList, Layers3,
-  Building2,
+  Building2, Bot, Settings2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -12,6 +12,8 @@ const NAV_GROUPS = [
     label: '工作台',
     items: [
       { href: '/employee/dashboard', icon: LayoutDashboard, label: '工作台' },
+      { href: '/employee/agent', icon: Bot, label: 'Agent 工作台' },
+      { href: '/employee/llm-configs', icon: Settings2, label: '模型配置' },
     ],
   },
   {

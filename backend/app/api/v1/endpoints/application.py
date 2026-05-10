@@ -12,6 +12,7 @@ from app.repositories.job_repository import JobRepository
 from app.repositories.evaluation_repository import EvalRepository
 from app.services.application_service import ApplicationService
 from app.services.eval_template_service import EvalTemplateService
+from app.repositories.eval_template_repository import EvalTemplateRepository
 from app.schemas.vo.request.application_request import ApplyRequest
 from app.schemas.vo.response.application_response import ApiResponse, ApplicationDetail, EmployeeApplicationItem, PageData
 

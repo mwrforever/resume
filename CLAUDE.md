@@ -43,16 +43,10 @@ backend/
 │   │   ├── resume.py
 │   │   └── ...
 │   │
-│   ├── schemas/                  # 按模块拆分 + request/response/dto
+│   ├── schemas/                  # 按模块拆分 + 每个业务内按照request/response/dto拆分,如{业务操作}Request（router层请求参数），{业务操作}Response（router层响应参数），{业务操作}DTO（service层参数）
 │   │   ├── base.py               # 公共DTO/基础模型
-│   │   ├── user/
-│   │   │   ├── request.py
-│   │   │   ├── response.py
-│   │   │   └── dto.py
-│   │   ├── employee/
-│   │   │   ├── request.py
-│   │   │   ├── response.py
-│   │   │   └── dto.py
+│   │   ├── user.py
+│   │   ├── employee.py
 │   │   └── ...                   # 其他业务模块同理
 │   │
 │   ├── services/                 # 业务逻辑层

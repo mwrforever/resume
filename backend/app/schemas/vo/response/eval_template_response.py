@@ -37,7 +37,7 @@ class TemplateSkillItem(BaseModel):
     skill_name: str
     skill_type: int
     match_label: Optional[str] = None
-    is_ai_generated: int = 0
+    is_ai_generated: Optional[int] = 0
 
 
 class TemplateSkillAiSuggestResponse(BaseModel):

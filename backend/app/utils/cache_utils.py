@@ -1,12 +1,5 @@
 # ── verification ──────────────────────────────────────────────────────────
 
-VERIFY_SEND_KEY = "verify:send:{user_type}:{identifier}"
-VERIFY_SEND_TTL = 60
-
-VERIFY_CODE_KEY = "verify:code:{user_type}:{identifier}"
-VERIFY_CODE_TTL = 300
-
-VERIFY_COUNT_KEY = "verify:count:{ip}"
 VERIFY_COUNT_TTL = 60
 VERIFY_COUNT_LIMIT = 5
 
@@ -90,3 +83,14 @@ RESUME_COUNT_ALL_TTL = 300
 
 APPLICATION_EXISTS_KEY = "application:exists:{user_id}:{job_id}"
 APPLICATION_EXISTS_TTL = 300
+
+# ── llm / agent ───────────────────────────────────────────────────────────
+
+LLM_MODEL_OPTIONS_KEY = "llm:model_options:employee:{employee_id}"
+LLM_MODEL_OPTIONS_TTL = 300
+
+AGENT_PROMPT_PREFIX_KEY = "agent:prompt_prefix:{prefix_hash}"
+AGENT_PROMPT_PREFIX_TTL = 21600
+
+AGENT_TOOL_CACHE_KEY = "agent:tool:{tool}:{cache_hash}"
+AGENT_TOOL_CACHE_TTL = 1800

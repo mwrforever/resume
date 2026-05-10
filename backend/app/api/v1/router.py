@@ -12,6 +12,7 @@ from app.api.v1.endpoints import (
     dept,
     tag,
     analytics,
+    agent,
     system,
     verification,
 )
@@ -61,6 +62,10 @@ api_router.include_router(tag.router, prefix="/employee/tags", tags=["标签"])
 
 # 统计分析
 api_router.include_router(analytics.router, prefix="/employee/analytics", tags=["统计分析"])
+
+# Agent Runtime
+api_router.include_router(agent.llm_router, prefix="/employee", tags=["LLM配置"])
+api_router.include_router(agent.agent_router, prefix="/employee/agent", tags=["Agent Runtime"])
 
 # 系统
 api_router.include_router(system.router, tags=["系统"])

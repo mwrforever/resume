@@ -1,19 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import json
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.core.config import BASE_DIR, get_settings
 from app.core.exceptions import NotFoundError, ValidationError
-from app.db.redis import redis_manager
-from app.services.cache_service import CacheService
 from app.utils.cache_utils import (
     EVAL_RECENT_KEY,
     EVAL_PENDING_COUNT_KEY,
@@ -22,23 +18,9 @@ from app.utils.cache_utils import (
 from app.llm.chains.chains import ResumeEvalChain
 from app.utils.resume_parser import extract_resume_text
 from app.workers.celery_app import celery_app
+from app.workers.db import mysql_manager_sync, redis_manager_sync
 
 logger = logging.getLogger(__name__)
-
-_cache_service: CacheService | None = None
-
-
-def _get_cache() -> CacheService:
-    global _cache_service
-    if _cache_service is None:
-        _cache_service = CacheService(redis_manager.client)
-    return _cache_service
-
-
-def _create_sync_engine() -> Engine:
-    settings = get_settings()
-    database_url = settings.database_url.replace("mysql+aiomysql://", "mysql+pymysql://", 1)
-    return create_engine(database_url, echo=False, pool_pre_ping=True)
 
 
 def _get_label(score: float) -> str:
@@ -431,20 +413,18 @@ def _evaluate_application(context: dict[str, Any]) -> dict[str, Any]:
 def _sync_eval_logic(application_ids: list[int]) -> dict[str, Any]:
     logger.info(f"开始评估 {len(application_ids)} 条投递")
 
-    engine = _create_sync_engine()
-    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
     results: list[dict[str, Any]] = []
 
     try:
         for application_id in application_ids:
             try:
-                with session_factory() as session:
+                with mysql_manager_sync.session() as session:
                     context = _load_evaluation_context(session, application_id)
                     session.rollback()
 
                 result = _evaluate_application(context)
 
-                with session_factory() as session:
+                with mysql_manager_sync.session() as session:
                     match_id = _save_evaluation_results(
                         session,
                         int(result["application_id"]),
@@ -473,23 +453,18 @@ def _sync_eval_logic(application_ids: list[int]) -> dict[str, Any]:
                 })
         _invalidate_eval_cache()
     finally:
-        engine.dispose()
+        pass
 
     return {"status": "completed", "count": len(application_ids), "results": results}
 
 
 def _invalidate_eval_cache() -> None:
-    """评估完成后清除缓存（Celery同步上下文调用async方法）"""
+    """评估完成后清除缓存（使用同步Redis客户端）"""
     try:
-        cache = _get_cache()
-        if cache:
-            asyncio.get_event_loop().run_until_complete(
-                asyncio.gather(
-                    cache.delete(EVAL_RECENT_KEY),
-                    cache.delete(EVAL_PENDING_COUNT_KEY),
-                    cache.delete(EVAL_AVG_SCORE_KEY),
-                )
-            )
+        client = redis_manager_sync.client
+        client.delete(EVAL_RECENT_KEY)
+        client.delete(EVAL_PENDING_COUNT_KEY)
+        client.delete(EVAL_AVG_SCORE_KEY)
     except Exception as exc:
         logger.warning(f"评估完成但缓存清除失败: {exc}")
 

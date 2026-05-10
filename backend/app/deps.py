@@ -1,6 +1,6 @@
 from fastapi import Request
 
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_optional
 from app.db.mysql import mysql_manager
 from app.services.cache_service import CacheService
 
@@ -18,5 +18,6 @@ __all__ = [
     "get_db",
     "get_cache",
     "get_current_user",
+    "get_current_user_optional",
     "CacheService",
 ]

@@ -7,7 +7,7 @@ from app.models.eval_template_skill import EvalTemplateSkill
 from app.models.eval_template_tag import EvalTemplateTag
 from app.models.job_position import JobPosition
 from app.models.sys_tag import SysTag
-from app.utils.ai.prompts import DIMENSION_EVAL_PROMPT
+from app.llm.prompts.manager import prompt_manager
 
 
 class EvalTemplateRepository:
@@ -43,7 +43,8 @@ class EvalTemplateRepository:
         dimension = EvalDimension(
             dimension_name=dimension_name,
             description=description,
-            default_prompt_template=default_prompt_template or DIMENSION_EVAL_PROMPT,
+            # 维度未传自定义模板时落到 YAML 默认模板，保证后续评估链路始终有可渲染提示词。
+            default_prompt_template=default_prompt_template or prompt_manager.get_template("dimension_eval"),
             sort_order=sort_order,
             status=status,
         )
@@ -54,7 +55,8 @@ class EvalTemplateRepository:
 
     async def update_dimension(self, dimension_id: int, **kwargs) -> EvalDimension:
         if "default_prompt_template" in kwargs and not kwargs["default_prompt_template"]:
-            kwargs["default_prompt_template"] = DIMENSION_EVAL_PROMPT
+            # 前端允许清空模板字段，入库前恢复默认模板，避免保存空字符串导致评估提示词缺失。
+            kwargs["default_prompt_template"] = prompt_manager.get_template("dimension_eval")
         await self.db.execute(
             update(EvalDimension).where(EvalDimension.id == dimension_id, EvalDimension.is_deleted == 0).values(**kwargs)
         )
@@ -139,11 +141,12 @@ class EvalTemplateRepository:
         await self.db.execute(delete(EvalTemplateTag).where(EvalTemplateTag.template_id == template_id))
         for idx, item in enumerate(dimensions):
             dimension = await self.get_dimension(int(item["dimension_id"]))
+            # 模板维度优先使用用户覆盖模板；未覆盖时继承维度库默认模板，最后再兜底 YAML 默认模板。
             self.db.add(EvalTemplateDimension(
                 template_id=template_id,
                 dimension_id=item["dimension_id"],
                 weight=item["weight"],
-                prompt_template=item.get("prompt_template") or (dimension.default_prompt_template if dimension else DIMENSION_EVAL_PROMPT),
+                prompt_template=item.get("prompt_template") or (dimension.default_prompt_template if dimension else prompt_manager.get_template("dimension_eval")),
                 sort_order=item.get("sort_order", idx),
             ))
         for item in skills:

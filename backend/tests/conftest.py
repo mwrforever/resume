@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from app.main import app
 from app.models import Base
 from app.utils.security import create_access_token
-from app.infrastructure.config import get_settings
+from app.core.config import get_settings
 
 
 settings = get_settings()
@@ -37,7 +37,7 @@ async def _ensure_test_schema(engine) -> None:
 @pytest_asyncio.fixture(scope="function")
 async def client():
     """Create async test client with proper cleanup"""
-    from app.infrastructure.client import get_db
+    from app.deps import get_db
 
     engine = create_async_engine(TEST_DATABASE_URL, echo=False, pool_pre_ping=True, pool_size=5, max_overflow=0)
     await _ensure_test_schema(engine)

@@ -16,8 +16,8 @@ class EvalResult(BaseItem):
     job_id: int
     final_score: float
     final_label: str
-    advantage_comment: Optional[str] = None
-    disadvantage_comment: Optional[str] = None
+    advantage_comment: str = ""
+    disadvantage_comment: str = ""
     dimensions: list[dict]
     skill_hits: list[dict]
 

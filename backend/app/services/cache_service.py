@@ -9,11 +9,12 @@ logger = logging.getLogger(__name__)
 LUA_IP_COUNT = """
 local key = KEYS[1]
 local limit = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
 if not limit then return 0 end
 
 local count = redis.call('INCR', key)
 if count == 1 then
-    redis.call('EXPIRE', key, 60)
+    redis.call('EXPIRE', key, ttl)
 end
 if count > limit then
     return 0
@@ -95,7 +96,7 @@ class CacheService:
         result = await self._script_verify_code(keys=[key], args=[code])
         return result
 
-    async def check_ip_count(self, ip: str, limit: int = 5) -> bool:
+    async def check_ip_count(self, ip: str, limit: int = 5, ttl: int = 60) -> bool:
         key = f"verify:count:{ip}"
-        result = await self._script_ip_count(keys=[key], args=[limit])
+        result = await self._script_ip_count(keys=[key], args=[limit, ttl])
         return result == 1

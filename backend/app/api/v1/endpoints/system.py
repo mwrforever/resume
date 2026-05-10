@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
@@ -8,6 +9,8 @@ from app.utils.storage_utils import resolve_storage_file
 
 router = APIRouter()
 
+STORAGE_DIR = Path(__file__).resolve().parents[2] / "note"
+
 
 @router.get("/")
 async def root() -> dict[str, str]:
@@ -15,9 +18,9 @@ async def root() -> dict[str, str]:
 
 
 @router.get("/preview/{file_path:path}", response_model=None)
-async def preview_resume(file_path: str, storage_path: str = ""):
+async def preview_resume(file_path: str):
     try:
-        full_path = resolve_storage_file(storage_path, file_path)
+        full_path = resolve_storage_file(str(STORAGE_DIR), file_path)
     except ValueError:
         return JSONResponse(
             status_code=400,

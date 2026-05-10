@@ -4,6 +4,7 @@ import random
 from fastapi import HTTPException
 
 from app.services.cache_service import CacheService
+from app.utils.cache_utils import VERIFY_COUNT_TTL
 from app.utils.email.email_service import send_verification_email
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ async def send_verification_code(
     if not cooldown_ok:
         raise HTTPException(status_code=429, detail="发送太频繁，请稍后再试")
 
-    ip_ok = await cache.check_ip_count(ip, limit=5)
+    ip_ok = await cache.check_ip_count(ip, limit=5, ttl=VERIFY_COUNT_TTL)
     if not ip_ok:
         raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
 

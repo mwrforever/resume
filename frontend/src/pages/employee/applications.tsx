@@ -7,12 +7,13 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DepartmentMultiSelect } from '@/components/employee/department-multi-select';
 import { employeeApplicationsApi } from '@/api/employee/applications';
+import { employeeResumesApi } from '@/api/employee/resumes';
 import { employeeEvaluationsApi } from '@/api/employee/evaluations';
 import { employeeJobsApi } from '@/api/employee/jobs';
 import { deptApi } from '@/api/employee/depts';
 import { useDebounce, useThrottleCallback } from '@/hooks/use-debounce';
 import type { IDeptItem, Job } from '@/types/employee';
-import { BarChart2, ChevronDown, Eye, Loader2, RefreshCw, RotateCcw, Search, X, Zap } from 'lucide-react';
+import { BarChart2, ChevronDown, Download, Eye, Loader2, RefreshCw, RotateCcw, Search, X, Zap } from 'lucide-react';
 
 const DEFAULT_PAGE_SIZE = 10;
 const ResumePreviewDialog = lazy(async () => {
@@ -249,6 +250,24 @@ export default function EmployeeApplications() {
       console.error('Failed to submit batch evaluation:', error);
     } finally {
       setBatchSubmitting(false);
+    }
+  };
+
+  const handleDownload = async (app: Application) => {
+    try {
+      const res = await employeeResumesApi.getFile(app.resume_id);
+      const blob = res.data;
+      const fileName = app.resume_file_name ?? `resume_${app.resume_id}.pdf`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to download resume:', error);
     }
   };
 
@@ -517,6 +536,13 @@ export default function EmployeeApplications() {
                         >
                           <Eye size={13} aria-hidden="true" />
                           预览
+                        </button>
+                        <button
+                          onClick={() => handleDownload(app)}
+                          className="inline-flex items-center gap-1 text-xs text-[#64748B] hover:text-[#2563EB] px-2 py-1 rounded hover:bg-blue-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                        >
+                          <Download size={13} aria-hidden="true" />
+                          下载
                         </button>
                         {isSubmitted ? (
                           <span className="text-xs text-green-600 px-2">已提交</span>
