@@ -10,6 +10,8 @@ from app.core.exceptions import BizError
 from app.deps import get_cache, get_current_user, get_db
 from app.repositories.agent_repository import AgentRepository
 from app.repositories.agent_memory_repository import AgentMemoryRepository
+from app.repositories.agent_user_model_runtime_config_repository import AgentUserModelRuntimeConfigRepository
+from app.repositories.agent_workspace_preference_repository import AgentWorkspacePreferenceRepository
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.dept_repository import DeptRepository
 from app.repositories.employee_repository import EmployeeRepository
@@ -17,9 +19,10 @@ from app.repositories.evaluation_repository import EvalRepository
 from app.repositories.job_repository import JobRepository
 from app.repositories.llm_config_repository import LlmConfigRepository
 from app.schemas.common import ApiResponse, PageData
-from app.schemas.agent.request import AgentActionReject, AgentMessageCreate, AgentModelSelect, AgentSessionCreate, AgentSessionUpdate, LlmConfigCreate, LlmConfigUpdate
-from app.schemas.agent.response import AgentActionItem, AgentReply, AgentRunItem, AgentSessionDetail, AgentSessionItem, LlmConfigItem, LlmModelOption
+from app.schemas.agent.request import AgentActionReject, AgentMessageCreate, AgentModelSelect, AgentRuntimeConfigUpdate, AgentSessionCreate, AgentSessionUpdate, LlmConfigCreate, LlmConfigUpdate
+from app.schemas.agent.response import AgentActionItem, AgentReply, AgentRunItem, AgentSessionDetail, AgentSessionItem, AgentUserModelRuntimeConfigItem, LlmConfigItem, LlmModelOption
 from app.services.agent_context_service import AgentContextService
+from app.services.agent_runtime_config_service import AgentRuntimeConfigService
 from app.services.agent_service import AgentService
 from app.services.cache_service import CacheService
 from app.services.llm_config_service import LlmConfigService
@@ -36,13 +39,31 @@ def get_llm_service(db: AsyncSession = Depends(get_db), cache: CacheService = De
 def get_agent_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> AgentService:
     llm_service = LlmConfigService(LlmConfigRepository(db), EmployeeRepository(db), DeptRepository(db), cache)
     context_service = AgentContextService(AgentMemoryRepository(db), cache)
+    runtime_config_service = AgentRuntimeConfigService(
+        AgentUserModelRuntimeConfigRepository(db),
+        AgentWorkspacePreferenceRepository(db),
+        llm_service,
+    )
     return AgentService(
         AgentRepository(db),
         llm_service,
         context_service,
+        runtime_config_service=runtime_config_service,
         job_repo=JobRepository(db),
         app_repo=ApplicationRepository(db),
         eval_repo=EvalRepository(db),
+    )
+
+
+def get_agent_runtime_config_service(
+    db: AsyncSession = Depends(get_db),
+    cache: CacheService = Depends(get_cache),
+) -> AgentRuntimeConfigService:
+    llm_service = LlmConfigService(LlmConfigRepository(db), EmployeeRepository(db), DeptRepository(db), cache)
+    return AgentRuntimeConfigService(
+        AgentUserModelRuntimeConfigRepository(db),
+        AgentWorkspacePreferenceRepository(db),
+        llm_service,
     )
 
 
@@ -104,6 +125,34 @@ async def test_llm_config(
     current_user: dict = Depends(get_current_user),
 ) -> ApiResponse[LlmConfigItem]:
     return ApiResponse(message="测试完成", data=await service.test_config(config_id, current_user))
+
+
+@agent_router.get("/runtime-config", response_model=ApiResponse[AgentUserModelRuntimeConfigItem])
+async def get_recent_runtime_config(
+    service: AgentRuntimeConfigService = Depends(get_agent_runtime_config_service),
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse[AgentUserModelRuntimeConfigItem]:
+    return ApiResponse(data=await service.get_recent_or_default(current_user))
+
+
+@agent_router.get("/runtime-configs/{model_name}", response_model=ApiResponse[AgentUserModelRuntimeConfigItem])
+async def get_model_runtime_config(
+    model_name: str,
+    service: AgentRuntimeConfigService = Depends(get_agent_runtime_config_service),
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse[AgentUserModelRuntimeConfigItem]:
+    return ApiResponse(data=await service.get_or_init_model_config(current_user, model_name))
+
+
+@agent_router.put("/runtime-configs/{model_name}", response_model=ApiResponse[AgentUserModelRuntimeConfigItem])
+async def update_model_runtime_config(
+    model_name: str,
+    body: AgentRuntimeConfigUpdate,
+    service: AgentRuntimeConfigService = Depends(get_agent_runtime_config_service),
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse[AgentUserModelRuntimeConfigItem]:
+    data = await service.update_model_config(current_user, model_name, body)
+    return ApiResponse(message="保存成功", data=data)
 
 
 @agent_router.post("/sessions", response_model=ApiResponse[AgentSessionItem])

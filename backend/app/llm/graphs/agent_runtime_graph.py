@@ -51,6 +51,9 @@ class AgentRuntimeGraph:
 
     async def _planner_node(self, state: dict[str, Any]) -> dict[str, Any]:
         graph_state = AgentGraphStateDTO.model_validate(state)
+        if not graph_state.runtime_config.enable_tools:
+            logger.info("Agent规划节点跳过工具调用：model=%s", graph_state.runtime_config.model_name)
+            return graph_state.model_copy(update={"tool_calls": []}).model_dump()
         tool_calls = builtin_agent_tools.plan_tools(graph_state.prompt, graph_state.tool_context)
         logger.info("Agent规划节点完成：tool_count=%s prompt_prefix_hash=%s", len(tool_calls), graph_state.tool_context.get("prompt_prefix_hash"))
         return graph_state.model_copy(update={"tool_calls": tool_calls}).model_dump()

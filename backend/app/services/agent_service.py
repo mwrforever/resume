@@ -14,7 +14,7 @@ from app.repositories.agent_repository import AgentRepository
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.evaluation_repository import EvalRepository
 from app.repositories.job_repository import JobRepository
-from app.schemas.agent.dto import AgentGraphStateDTO, LLMResultDTO
+from app.schemas.agent.dto import AgentGraphStateDTO, LLMResultDTO, LLMRuntimeConfigDTO
 from app.schemas.agent.request import (
     AgentActionReject,
     AgentMessageCreate,
@@ -31,6 +31,7 @@ from app.schemas.agent.response import (
     AgentStreamEvent,
 )
 from app.services.agent_context_service import AgentContextService
+from app.services.agent_runtime_config_service import AgentRuntimeConfigService
 from app.services.llm_config_service import LlmConfigService
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class AgentService:
         agent_repo: AgentRepository,
         llm_service: LlmConfigService,
         context_service: AgentContextService | None = None,
+        runtime_config_service: AgentRuntimeConfigService | None = None,
         runtime_graph: AgentRuntimeGraph | None = None,
         job_repo: JobRepository | None = None,
         app_repo: ApplicationRepository | None = None,
@@ -51,6 +53,7 @@ class AgentService:
         self._agent_repo = agent_repo
         self._llm_service = llm_service
         self._context_service = context_service
+        self._runtime_config_service = runtime_config_service
         self._runtime_graph = runtime_graph or AgentRuntimeGraph()
         self._job_repo = job_repo
         self._app_repo = app_repo
@@ -61,7 +64,7 @@ class AgentService:
         employee_id = self._get_employee_id(current_user)
         selected_model_source = None
         if body.selected_model_name:
-            runtime_config = await self._llm_service.get_runtime_config(current_user, body.selected_model_name)
+            runtime_config = await self._build_runtime_config(current_user, body.selected_model_name)
             selected_model_source = runtime_config.source
         session = await self._agent_repo.create_session(
             session_key=uuid.uuid4().hex,
@@ -102,7 +105,9 @@ class AgentService:
     # 更新会话选中的模型；空模型表示使用配置文件默认模型
     async def select_model(self, session_id: int, model_name: str | None, current_user: dict) -> AgentSessionItem:
         session = await self._get_session(session_id, current_user)
-        runtime_config = await self._llm_service.get_runtime_config(current_user, model_name)
+        runtime_config = await self._build_runtime_config(current_user, model_name)
+        if self._runtime_config_service:
+            await self._runtime_config_service.select_model(current_user, model_name)
         updated = await self._agent_repo.update_session(
             session.id,
             selected_model_name=model_name,
@@ -128,16 +133,18 @@ class AgentService:
     # 处理用户消息发送，持久化消息、运行记录并调用 Agent Runtime 生成回复
     async def send_message(self, session_id: int, body: AgentMessageCreate, current_user: dict) -> AgentReply:
         session = await self._get_session(session_id, current_user)
-        runtime_config = await self._llm_service.get_runtime_config(current_user, session.selected_model_name)
-        user_message, run = await self._create_user_message_run(session, body)
-        prompt, session_title, _ = await self._prepare_prompt(session, body, user_message, run)
+        runtime_config = await self._build_runtime_config(current_user, session.selected_model_name)
+        runtime_snapshot = self._runtime_config_snapshot(runtime_config)
+        user_message, run = await self._create_user_message_run(session, body, runtime_snapshot)
+        prompt, session_title, _ = await self._prepare_prompt(session, body, user_message, run, runtime_snapshot)
         return await self._execute_graph(runtime_config, prompt, user_message, session, run, session_title)
 
     async def stream_message(self, session_id: int, body: AgentMessageCreate, current_user: dict) -> AsyncIterator[AgentStreamEvent]:
         session = await self._get_session(session_id, current_user)
-        runtime_config = await self._llm_service.get_runtime_config(current_user, session.selected_model_name)
-        user_message, run = await self._create_user_message_run(session, body)
-        prompt, session_title, replay_payload = await self._prepare_prompt(session, body, user_message, run)
+        runtime_config = await self._build_runtime_config(current_user, session.selected_model_name)
+        runtime_snapshot = self._runtime_config_snapshot(runtime_config)
+        user_message, run = await self._create_user_message_run(session, body, runtime_snapshot)
+        prompt, session_title, replay_payload = await self._prepare_prompt(session, body, user_message, run, runtime_snapshot)
         yield AgentStreamEvent(event="user_message", data={"message": AgentMessageItem.model_validate(user_message).model_dump(mode="json")})
         yield AgentStreamEvent(event="run_started", data={"run": AgentRunItem.model_validate(run).model_dump(mode="json")})
         if replay_payload:
@@ -168,7 +175,7 @@ class AgentService:
             logger.exception("Agent流式消息执行失败：session_id=%s run_id=%s", session.id, run.id)
             latency_ms = int((time.perf_counter() - started_at) * 1000)
             reply = await self._build_reply(
-                session, user_message, run.id, runtime_config.model_name, latency_ms, str(exc), session_title, failed=True
+                session, user_message, run.id, runtime_config.model_name, latency_ms, str(exc), session_title, failed=True, use_memory=runtime_config.enable_memory
             )
             yield AgentStreamEvent(event="error", data={"message": str(exc), "reply": reply.model_dump(mode="json")})
             return
@@ -186,11 +193,12 @@ class AgentService:
             failed=False,
             llm_result=llm_result,
             tool_results=tool_results,
+            use_memory=runtime_config.enable_memory,
         )
         yield AgentStreamEvent(event="final", data={"reply": reply.model_dump(mode="json")})
 
     # 创建用户消息与运行记录，确保后续 Prompt 构建和 Trace 回放有稳定关联
-    async def _create_user_message_run(self, session, body: AgentMessageCreate):
+    async def _create_user_message_run(self, session, body: AgentMessageCreate, runtime_snapshot: dict[str, Any]):
         user_message = await self._agent_repo.create_message(
             session_id=session.id,
             role="user",
@@ -204,7 +212,7 @@ class AgentService:
             message_id=user_message.id,
             run_type="llm",
             status=1,
-            input_payload={"message_id": user_message.id, "content": body.content, "context_refs": body.context_refs},
+            input_payload={"message_id": user_message.id, "content": body.content, "context_refs": body.context_refs, "runtime_config": runtime_snapshot},
         )
         return user_message, run
 
@@ -215,9 +223,10 @@ class AgentService:
         body: AgentMessageCreate,
         user_message,
         run,
+        runtime_snapshot: dict[str, Any],
     ) -> tuple[str, str | None, dict | None]:
         session_title = self._build_session_title(body.content) if user_message.sort_order == 1 else None
-        if not self._context_service:
+        if not runtime_snapshot.get("enable_memory") or not self._context_service:
             return body.content, session_title, None
 
         await self._context_service.upsert_preference_memory(session.employee_id, session.id, body.content)
@@ -239,6 +248,7 @@ class AgentService:
             memories=memories,
             user_message_id=user_message.id,
         )
+        replay_payload["runtime_config"] = runtime_snapshot
         await self._agent_repo.update_run(
             run.id,
             input_payload=replay_payload,
@@ -354,16 +364,16 @@ class AgentService:
         except (RuntimeError, ValueError) as exc:
             latency_ms = int((time.perf_counter() - started_at) * 1000)
             return await self._build_reply(
-                session, user_message, run.id, runtime_config.model_name, latency_ms, str(exc), session_title, failed=True
+                session, user_message, run.id, runtime_config.model_name, latency_ms, str(exc), session_title, failed=True, use_memory=runtime_config.enable_memory
             )
         if graph_result.error_message or not graph_result.result:
             latency_ms = int((time.perf_counter() - started_at) * 1000)
             return await self._build_reply(
-                session, user_message, run.id, runtime_config.model_name, latency_ms, graph_result.error_message or "模型调用失败", session_title, failed=True
+                session, user_message, run.id, runtime_config.model_name, latency_ms, graph_result.error_message or "模型调用失败", session_title, failed=True, use_memory=runtime_config.enable_memory
             )
         latency_ms = int((time.perf_counter() - started_at) * 1000)
         return await self._build_reply(
-            session, user_message, run.id, graph_result.result.model_name, latency_ms, None, session_title, failed=False, llm_result=graph_result.result
+            session, user_message, run.id, graph_result.result.model_name, latency_ms, None, session_title, failed=False, llm_result=graph_result.result, use_memory=runtime_config.enable_memory
         )
 
     # 构造 Agent 回复，统一更新运行记录、消息记录和会话状态
@@ -380,6 +390,7 @@ class AgentService:
         failed: bool,
         llm_result=None,
         tool_results: list[dict[str, Any]] | None = None,
+        use_memory: bool = True,
     ) -> AgentReply:
         status = 3 if failed else 2
         content = error_text or (llm_result.content if llm_result else None)
@@ -419,7 +430,7 @@ class AgentService:
         session_status = 5 if failed else 1
         updated_session = await self._update_session_status(session.id, session_title, session_status)
 
-        memories, session_window, snapshot = await self._build_context_data(session, model_name if not failed else None)
+        memories, session_window, snapshot = await self._build_context_data(session, model_name) if not failed and use_memory else ([], None, None)
 
         if not updated_run:
             raise NotFoundError("执行记录不存在")
@@ -454,6 +465,48 @@ class AgentService:
         session_window = await self._context_service.build_session_window(session.id, messages, session.employee_id, touch_access_time=True)
         memories = await self._context_service.list_memories(session.employee_id)
         return memories, session_window, snapshot
+
+    # 合并模型连接配置和员工个人运行参数，确保 Agent 调用使用用户保存的模型运行设置
+    async def _build_runtime_config(self, current_user: dict, model_name: str | None) -> LLMRuntimeConfigDTO:
+        runtime_config = await self._llm_service.get_runtime_config(current_user, model_name)
+        if not self._runtime_config_service or runtime_config.source == "env":
+            return runtime_config
+        personal_config = await self._runtime_config_service.get_or_init_model_config(current_user, model_name)
+        return runtime_config.model_copy(
+            update={
+                "enable_thinking": personal_config.enable_thinking,
+                "enable_tools": personal_config.enable_tools,
+                "enable_prompt_cache": personal_config.enable_prompt_cache,
+                "enable_memory": personal_config.enable_memory,
+                "temperature": personal_config.temperature,
+                "top_p": personal_config.top_p,
+                "max_tokens": personal_config.max_tokens,
+                "presence_penalty": personal_config.presence_penalty,
+                "frequency_penalty": personal_config.frequency_penalty,
+                "extra_body": personal_config.extra_body,
+            }
+        )
+
+    # 记录实际提交给模型的非敏感运行参数快照，便于 Trace 面板排查运行差异
+    def _runtime_config_snapshot(self, runtime_config: LLMRuntimeConfigDTO) -> dict[str, Any]:
+        return {
+            "model_name": runtime_config.model_name,
+            "source": runtime_config.source,
+            "base_url": runtime_config.base_url,
+            "fallback_model_name": runtime_config.fallback_model_name,
+            "enable_thinking": runtime_config.enable_thinking,
+            "enable_tools": runtime_config.enable_tools,
+            "enable_prompt_cache": runtime_config.enable_prompt_cache,
+            "enable_memory": runtime_config.enable_memory,
+            "temperature": runtime_config.temperature,
+            "top_p": runtime_config.top_p,
+            "max_tokens": runtime_config.max_tokens,
+            "presence_penalty": runtime_config.presence_penalty,
+            "frequency_penalty": runtime_config.frequency_penalty,
+            "timeout_seconds": runtime_config.timeout_seconds,
+            "max_retries": runtime_config.max_retries,
+            "extra_body": runtime_config.extra_body,
+        }
 
     # 查询指定会话的运行 Trace 记录
     async def list_runs(self, session_id: int, current_user: dict) -> list[AgentRunItem]:

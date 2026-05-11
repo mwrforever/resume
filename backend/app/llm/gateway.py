@@ -20,13 +20,7 @@ class OpenAICompatibleGateway:
 
     async def complete_once(self, prompt: str, runtime_config: LLMRuntimeConfigDTO) -> LLMResultDTO:
         try:
-            response = await ChatOpenAI(
-                model=self._normalize_model_name(runtime_config.model_name),
-                api_key=runtime_config.api_key or settings.openai_api_key,
-                base_url=runtime_config.base_url or settings.OPENAI_API_BASE,
-                timeout=runtime_config.timeout_seconds,
-                extra_body=runtime_config.extra_body or {"enable_thinking": False},
-            ).ainvoke(prompt)
+            response = await ChatOpenAI(**self._chat_kwargs(runtime_config)).ainvoke(prompt)
         except LLM_GATEWAY_ERRORS as exc:
             raise LLMGatewayError(str(exc)) from exc
         return self._extract_result(response, runtime_config.model_name)
@@ -36,13 +30,7 @@ class OpenAICompatibleGateway:
         usage_metadata: dict = {}
         response_metadata: dict = {}
         try:
-            async for chunk in ChatOpenAI(
-                model=self._normalize_model_name(runtime_config.model_name),
-                api_key=runtime_config.api_key or settings.openai_api_key,
-                base_url=runtime_config.base_url or settings.OPENAI_API_BASE,
-                timeout=runtime_config.timeout_seconds,
-                extra_body=runtime_config.extra_body or {"enable_thinking": False},
-            ).astream(prompt):
+            async for chunk in ChatOpenAI(**self._chat_kwargs(runtime_config)).astream(prompt):
                 raw_delta = chunk.content
                 delta = raw_delta if isinstance(raw_delta, str) else str(raw_delta or "")
                 if delta:
@@ -70,6 +58,23 @@ class OpenAICompatibleGateway:
 
     def _normalize_model_name(self, model_name: str) -> str:
         return model_name.removeprefix("openai/")
+
+    def _chat_kwargs(self, runtime_config: LLMRuntimeConfigDTO) -> dict:
+        extra_body = dict(runtime_config.extra_body or {})
+        extra_body["enable_thinking"] = runtime_config.enable_thinking
+        extra_body["enable_prompt_cache"] = runtime_config.enable_prompt_cache
+        return {
+            "model": self._normalize_model_name(runtime_config.model_name),
+            "api_key": runtime_config.api_key or settings.openai_api_key,
+            "base_url": runtime_config.base_url or settings.OPENAI_API_BASE,
+            "timeout": runtime_config.timeout_seconds,
+            "temperature": runtime_config.temperature,
+            "top_p": runtime_config.top_p,
+            "max_tokens": runtime_config.max_tokens,
+            "presence_penalty": runtime_config.presence_penalty,
+            "frequency_penalty": runtime_config.frequency_penalty,
+            "extra_body": extra_body,
+        }
 
     def _strip_thinking(self, text: str) -> str:
         return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
