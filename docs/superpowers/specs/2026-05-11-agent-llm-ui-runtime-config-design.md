@@ -4,7 +4,7 @@
 
 本次重构覆盖两个区域：员工端 Agent 工作台与模型配置管理。目标是把当前“可用但信息分散”的 Agent/LLM 体验升级为企业级 HR SaaS 的专业 Agent 控制台：主对话区域优先、运行过程可观测、模型参数可配置且真实生效，并支持模型配置列表后端分页与前端滚动加载。
 
-已确认的产品方向：采用 B 方案，即“ChatGPT 主对话 + 可折叠 Trace/配置面板”。左侧会话列表也需要支持折叠收起。模型运行参数采用“用户默认配置 + 会话覆盖”的持久化模型。
+已确认的产品方向：采用 B 方案，即“ChatGPT 主对话 + 可折叠 Trace/配置面板”。左侧会话列表也需要支持折叠收起。模型运行参数采用“模型默认参数 + 用户个人模型参数”的持久化模型：模型创建时保存默认参数，用户选择某个模型时异步初始化并保存一份个人对该模型的参数配置，后续工作台默认继续使用用户上次选择的模型。
 
 ## 2. 范围
 
@@ -15,8 +15,8 @@
 - Agent 工作台右侧功能面板支持展开/折叠，并按配置、工具、记忆、Trace、指标分组。
 - Agent 回复内容使用项目已集成的 `react-markdown` 渲染。
 - Agent 流式生成过程展示动态状态，并把工具调用以内联时间线方式展示在当前回复附近。
-- 新增模型运行参数持久化能力：用户默认配置 + 会话级覆盖。
-- Agent 发送消息时使用会话级运行配置，配置真实影响本次模型调用、工具调用和记忆上下文行为。
+- 新增模型运行参数持久化能力：模型默认参数 + 用户个人模型参数。
+- Agent 发送消息时使用当前员工对选中模型的个人运行配置，配置真实影响本次模型调用、工具调用、前缀缓存和记忆上下文行为。
 - 模型配置管理列表改为后端分页接口 + 前端无限滚动加载，并对触底、搜索、筛选、刷新做节流和防重复请求。
 - 模型参数配置控件化：布尔值用 Switch，数值用 Slider + 手动输入，枚举/多选用下拉选择 + 自定义输入。
 
@@ -29,17 +29,15 @@
 
 ## 3. 数据模型设计
 
-### 3.1 新增用户默认运行配置表
+### 3.1 模型默认运行参数
 
-新增 `agent_runtime_preference` 表，用于保存员工默认 Agent 运行配置。
+模型创建时需要保存一份模型默认运行参数。该默认参数属于 `llm_model_config` 对应的模型连接配置，用于给首次使用该模型的员工初始化个人模型参数。
 
 建议字段：
 
-- `id`：主键。
-- `employee_id`：员工 ID，唯一。
-- `selected_model_name`：默认模型名称，空值表示配置文件默认模型。
 - `enable_thinking`：是否开启思考模式。
 - `enable_tools`：是否启用工具调用。
+- `enable_prompt_cache`：是否启用 LLM 前缀缓存。
 - `enable_memory`：是否启用上下文记忆。
 - `temperature`：生成随机性。
 - `top_p`：核采样参数。
@@ -49,20 +47,40 @@
 - `extra_body`：高级扩展参数 JSON。
 - `create_time`、`update_time`：审计时间。
 
-唯一约束：`employee_id` 唯一。该表只保存用户默认偏好，不存储 API Key 或 Base URL。默认值建议为：`enable_thinking=false`、`enable_tools=true`、`enable_memory=true`、`temperature=0.7`、`top_p=0.9`、`max_tokens=2048`、`presence_penalty=0`、`frequency_penalty=0`。
+这些字段可以直接扩展到 `llm_model_config`，也可以单独新增 `llm_model_default_runtime_config` 表并通过 `llm_config_id` 关联。推荐直接扩展 `llm_model_config`，因为默认参数随模型连接配置一起创建、编辑、软删除，权限边界一致。默认值建议为：`enable_thinking=false`、`enable_tools=true`、`enable_prompt_cache=false`、`enable_memory=true`、`temperature=0.7`、`top_p=0.9`、`max_tokens=2048`、`presence_penalty=0`、`frequency_penalty=0`。
 
-### 3.2 会话级运行配置
+### 3.2 用户个人模型运行配置
 
-会话需要保存从用户默认配置继承而来的可覆盖运行配置。优先方案是在 `agent_session` 增加会话级配置字段：
+新增 `agent_user_model_runtime_config` 表，用于保存“某个员工对某个模型”的个人运行配置。该配置属于用户个人与模型组合，不属于会话。用户在工作台选择某个模型时，如果该员工尚无该模型个人配置，则后端异步或快速 upsert 一份记录，默认值从该模型创建时的默认运行参数复制而来。
+
+建议字段：
+
+- `id`：主键。
+- `employee_id`：员工 ID。
+- `model_name`：模型名称；空值用约定值 `__env_default__` 表示配置文件默认模型。
+- `model_source`：模型来源，如 `env`、`employee`、`dept`。
+- `llm_config_id`：模型连接配置 ID；配置文件默认模型为空。
+- `enable_thinking`：是否开启思考模式。
+- `enable_tools`：是否启用工具调用。
+- `enable_prompt_cache`：是否启用 LLM 前缀缓存。
+- `enable_memory`：是否启用上下文记忆。
+- `temperature`、`top_p`、`max_tokens`、`presence_penalty`、`frequency_penalty`：生成参数。
+- `extra_body`：高级运行参数 JSON。
+- `last_used_at`：该用户最近使用此模型的时间。
+- `create_time`、`update_time`：审计时间。
+
+唯一约束：`employee_id + model_name + model_source`。用户再次进入工作台时，默认选择 `last_used_at` 最新的个人模型配置；如果没有任何个人模型配置，则使用配置文件默认模型，并按系统默认参数创建个人配置。
+
+### 3.3 会话模型选择快照
+
+会话不再保存完整运行参数。会话只保留当前或历史选中的模型信息，用于打开会话时恢复上下文和展示：
 
 - 复用现有 `selected_model_name`、`selected_model_source`。
-- 新增 `enable_thinking`、`enable_tools`、`enable_memory`。
-- 新增 `temperature`、`top_p`、`max_tokens`、`presence_penalty`、`frequency_penalty`。
-- 新增 `extra_body`。
+- 如需更强 Trace 展示，可新增 `selected_user_model_config_id`，指向用户个人模型配置。
 
-这样每个会话可以独立保存自己的模型和参数。用户默认配置变化只影响新会话，不影响已有会话，避免历史会话打开后配置漂移。
+会话运行时读取“当前员工 + 会话选中模型”的个人模型参数。个人模型参数变化会影响下一次运行；每次运行仍会把实际参数写入 `agent_run.input_payload`，保证历史 Trace 可复现。
 
-### 3.3 运行 Trace 快照
+### 3.4 运行 Trace 快照
 
 每次 Agent run 的 `input_payload` 中写入本次实际使用的运行配置快照：
 
@@ -70,6 +88,7 @@
 - `runtime_config.model_source`
 - `runtime_config.enable_thinking`
 - `runtime_config.enable_tools`
+- `runtime_config.enable_prompt_cache`
 - `runtime_config.enable_memory`
 - `runtime_config.temperature`
 - `runtime_config.top_p`
@@ -78,7 +97,7 @@
 - `runtime_config.frequency_penalty`
 - `runtime_config.extra_body`
 
-该快照用于 Trace 回放和问题排查，不依赖后续用户默认配置变化。
+该快照用于 Trace 回放和问题排查，不依赖后续模型默认参数或用户个人模型参数变化。
 
 ## 4. 后端设计
 
@@ -88,12 +107,12 @@
 
 新增或调整：
 
-- `models/agent_runtime_preference.py`
-- `repositories/agent_runtime_preference_repository.py`
+- `models/agent_user_model_runtime_config.py`
+- `repositories/agent_user_model_runtime_config_repository.py`
 - `services/agent_runtime_config_service.py`
 - `schemas/agent/request.py` 增加运行配置请求结构。
 - `schemas/agent/response.py` 增加运行配置响应结构。
-- `api/v1/endpoints/agent.py` 增加用户默认运行配置与会话运行配置接口。
+- `api/v1/endpoints/agent.py` 增加用户个人模型运行配置、最近使用模型与会话模型选择接口。
 - `repositories/llm_config_repository.py` 增加分页查询与计数方法。
 - `services/llm_config_service.py` 增加分页列表方法。
 
@@ -117,23 +136,27 @@
 
 新增接口：
 
-- `GET /employee/agent/runtime-preference`：获取当前员工默认运行配置；没有记录时返回系统默认值。
-- `PUT /employee/agent/runtime-preference`：保存当前员工默认运行配置。
-- `GET /employee/agent/sessions/{session_id}/runtime-config`：获取会话运行配置。
-- `PUT /employee/agent/sessions/{session_id}/runtime-config`：更新会话运行配置。
+- `GET /employee/agent/model-runtime-configs/recent`：获取当前员工最近使用的个人模型配置；没有记录时返回配置文件默认模型与系统默认参数。
+- `GET /employee/agent/model-runtime-configs/{model_name}`：获取当前员工对指定模型的个人运行配置；没有记录时从模型默认参数初始化后返回。
+- `PUT /employee/agent/model-runtime-configs/{model_name}`：保存当前员工对指定模型的个人运行配置。
+- `PUT /employee/agent/model-runtime-configs/{model_name}/select`：选择模型并刷新该模型的 `last_used_at`，用于下次进入工作台恢复上次模型。
+- `PUT /employee/agent/sessions/{session_id}/model`：更新会话选中模型，同时异步确保用户个人模型配置存在并刷新 `last_used_at`。
 
-会话创建逻辑调整：创建会话时读取用户默认配置，并写入 `agent_session` 的会话级配置字段。
+模型名称在路径中需要 URL 编码。若模型名称为空表示配置文件默认模型，前端使用约定值 `__env_default__` 与后端交互，后端内部再转换为空模型名。
 
 ### 4.4 Agent 执行逻辑
 
 Agent 执行时按以下顺序解析运行配置：
 
-1. 读取当前会话级运行配置。
-2. 根据 `selected_model_name` 调用现有 `LlmConfigService.get_runtime_config()` 获取模型连接信息。
-3. 将会话级生成参数合并到 `LLMRuntimeConfigDTO.extra_body`，其中 `enable_thinking` 显式覆盖同名扩展参数。
-4. 如果 `enable_memory=false`，跳过偏好记忆写入、长期记忆读取和 session window prompt 拼接，仅使用用户原始输入作为 prompt。
-5. 如果 `enable_tools=false`，传给 LangGraph 的 `tool_context` 标记禁用工具，并让 graph 的 planner/tools 节点跳过工具计划与执行。
-6. 将最终运行配置快照写入 `agent_run.input_payload`。
+1. 读取会话选中的 `selected_model_name`；如果会话没有选中模型，则读取当前员工 `last_used_at` 最新的个人模型配置。
+2. 根据模型名调用现有 `LlmConfigService.get_runtime_config()` 获取模型连接信息。
+3. 读取或初始化当前员工对该模型的个人运行配置，初始化来源为模型创建时保存的默认运行参数。
+4. 将个人生成参数合并到 `LLMRuntimeConfigDTO.extra_body`，其中 `enable_thinking` 显式覆盖同名扩展参数。
+5. 如果 `enable_memory=false`，跳过偏好记忆写入、长期记忆读取和 session window prompt 拼接，仅使用用户原始输入作为 prompt。
+6. 如果 `enable_prompt_cache=false`，不读取也不写入 LLM 前缀缓存；如果为 true，才启用 prompt prefix cache 的 key 构建、读取、命中记录和写入。
+7. 如果 `enable_tools=false`，传给 LangGraph 的 `tool_context` 标记禁用工具，并让 graph 的 planner/tools 节点跳过工具计划与执行。
+8. 刷新该个人模型配置的 `last_used_at`。
+9. 将最终运行配置快照写入 `agent_run.input_payload`。
 
 需要保留现有错误兜底：模型调用失败仍构建失败回复，SSE 返回 `error` 事件。
 
@@ -161,7 +184,7 @@ Agent 执行时按以下顺序解析运行配置：
 - `AgentComposer`：底部输入区。
 - `AgentToolCallTimeline`：工具调用内联动效时间线。
 - `AgentTracePanel`：右侧 Trace/工具/记忆/指标分组面板。
-- `AgentRuntimeConfigPanel`：会话运行配置编辑。
+- `AgentRuntimeConfigPanel`：当前用户对选中模型的个人运行配置编辑。
 - `AgentActionCard`：保留现有 Action 确认卡片能力。
 
 拆分目标是降低 `employee/agent.tsx` 文件复杂度，不做过度抽象。
@@ -195,25 +218,26 @@ Agent 执行时按以下顺序解析运行配置：
 
 ### 5.5 Agent 配置真实生效
 
-右侧配置面板展示并保存会话运行配置：
+右侧配置面板展示并保存当前员工对选中模型的个人运行配置：
 
 - 模型选择：下拉选择 + 配置文件默认模型。
 - 思考模式：Switch。
 - 工具调用：Switch。
+- 前缀缓存：Switch。
 - 上下文记忆：Switch。
 - `temperature`、`top_p`、`max_tokens`、`presence_penalty`、`frequency_penalty`：Slider + 数字输入。
 - 高级扩展参数：折叠 JSON 编辑。
 
-保存策略：配置变更先更新本地状态，再调用会话运行配置接口保存。保存中、成功、失败都要有轻量反馈。
+保存策略：切换模型时先更新会话选中模型，并异步确保个人模型配置存在、刷新 `last_used_at`；参数变更保存到当前员工对该模型的个人配置。保存中、成功、失败都要有轻量反馈。
 
 ### 5.6 模型配置管理页面
 
 模型配置管理页面拆成两个清晰区域：
 
 - 模型连接配置：维护 `llm_model_config` 中的 API Base URL、API Key、模型名、兜底模型、状态和权限归属。
-- 默认运行参数：维护 `agent_runtime_preference` 中的当前默认模型、思考模式、工具、记忆和生成参数。
+- 模型默认运行参数：维护模型创建时的默认思考模式、工具、前缀缓存、记忆和生成参数。
 
-`llm_model_config.extra_body` 仅保留协议兼容所需的高级连接扩展，不再作为主要的大模型生成参数配置入口。用户可见的 temperature、top_p、max_tokens、思考模式等运行参数统一保存到新运行配置表，并由新会话继承。
+`llm_model_config.extra_body` 仅保留协议兼容所需的高级连接扩展，不再作为主要的大模型生成参数配置入口。用户可见的 temperature、top_p、max_tokens、思考模式、前缀缓存等运行参数在模型创建时保存为模型默认参数；员工首次选择该模型时复制为个人模型参数。
 
 模型连接配置列表区改为后端分页 + 无限滚动：
 
@@ -231,9 +255,8 @@ Agent 执行时按以下顺序解析运行配置：
 - 高级连接参数：协议扩展 JSON，默认折叠。
 - 测试连接：显示未测试、测试中、成功、失败。
 
-默认运行参数区使用控件化表单：
+模型默认运行参数区使用控件化表单：
 
-- 当前默认模型：下拉选择 + 配置文件默认模型。
 - 布尔参数：Switch。
 - 数值参数：Slider + 数字输入 + 推荐值标记。
 - 高级运行参数：扩展 JSON，默认折叠。
@@ -245,24 +268,32 @@ Agent 执行时按以下顺序解析运行配置：
 ### 6.1 新会话创建
 
 1. 前端创建本地会话。
-2. 用户首次发送消息时调用创建会话接口。
-3. 后端读取当前员工 `agent_runtime_preference`。
-4. 会话继承默认模型和参数。
+2. 后端读取当前员工最近使用的个人模型配置。
+3. 如果没有最近使用记录，则使用配置文件默认模型并创建个人模型配置。
+4. 会话记录选中的模型名称和模型来源，不复制完整运行参数。
 5. 前端拿到已持久化会话后，继续发送 SSE 消息。
 
-### 6.2 会话配置修改
+### 6.2 模型选择与个人参数初始化
 
-1. 用户在右侧配置面板修改参数。
-2. 前端调用 `PUT /employee/agent/sessions/{session_id}/runtime-config`。
-3. 后端校验会话归属后保存会话配置。
-4. 下一次消息发送使用新配置。
+1. 用户在工作台选择模型。
+2. 前端调用 `PUT /employee/agent/sessions/{session_id}/model` 更新会话选中模型。
+3. 后端校验会话归属和模型可见性。
+4. 后端确保 `agent_user_model_runtime_config` 中存在该员工对该模型的个人配置；不存在时从模型默认参数复制。
+5. 后端刷新 `last_used_at`，下次进入工作台继续默认选择该模型。
 
-### 6.3 默认配置修改
+### 6.3 个人模型参数修改
 
-1. 用户在模型配置管理或 Agent 设置入口修改默认运行配置。
-2. 前端调用 `PUT /employee/agent/runtime-preference`。
-3. 后端 upsert 员工默认配置。
-4. 后续新会话继承该默认配置；已有会话不被自动覆盖。
+1. 用户在右侧配置面板修改当前模型的运行参数。
+2. 前端调用 `PUT /employee/agent/model-runtime-configs/{model_name}`。
+3. 后端保存当前员工对该模型的个人参数配置。
+4. 下一次使用该模型发送消息时使用新的个人配置。
+
+### 6.4 模型默认参数修改
+
+1. 管理者或有权限员工在模型配置管理页面修改模型默认运行参数。
+2. 后端更新模型默认参数。
+3. 该修改只影响之后首次选择该模型、尚未生成个人模型配置的员工。
+4. 已存在的用户个人模型配置不被覆盖，避免用户偏好被管理员修改意外重置。
 
 ## 7. 错误处理
 
@@ -276,11 +307,14 @@ Agent 执行时按以下顺序解析运行配置：
 
 ### 8.1 后端
 
-- `agent_runtime_preference` repository/service 的创建、读取、更新测试。
+- `agent_user_model_runtime_config` repository/service 的初始化、读取、更新和最近使用模型测试。
 - LLM 配置分页接口：keyword、biz_type、status、page/page_size 测试。
-- 会话创建继承默认配置测试。
-- 会话配置覆盖后 Agent 运行使用会话配置测试。
+- 模型创建时默认运行参数保存测试。
+- 用户首次选择模型时从模型默认参数复制个人模型配置测试。
+- 再次进入工作台恢复上次使用模型测试。
+- Agent 运行使用当前员工对选中模型的个人参数测试。
 - `enable_memory=false` 时不拼接记忆上下文。
+- `enable_prompt_cache=false` 时不读写前缀缓存。
 - `enable_tools=false` 时不执行工具节点。
 
 ### 8.2 前端
@@ -303,9 +337,10 @@ Agent 执行时按以下顺序解析运行配置：
 
 预计影响文件：
 
-- `backend/app/models/agent_runtime_preference.py`
+- `backend/app/models/agent_user_model_runtime_config.py`
 - `backend/app/models/agent_session.py`
-- `backend/app/repositories/agent_runtime_preference_repository.py`
+- `backend/app/models/llm_model_config.py`
+- `backend/app/repositories/agent_user_model_runtime_config_repository.py`
 - `backend/app/repositories/agent_repository.py`
 - `backend/app/repositories/llm_config_repository.py`
 - `backend/app/services/agent_runtime_config_service.py`
@@ -328,7 +363,7 @@ Agent 执行时按以下顺序解析运行配置：
 2. 后端改造 Agent 会话创建、配置保存、消息执行配置解析。
 3. 后端改造 LLM 配置分页列表。
 4. 前端补齐类型和 API 方法。
-5. 前端拆分 Agent 工作台组件并接入会话运行配置。
+5. 前端拆分 Agent 工作台组件并接入用户个人模型运行配置。
 6. 前端重构模型配置管理列表与表单控件。
 7. 运行后端和前端验证命令。
 
@@ -338,5 +373,7 @@ Agent 执行时按以下顺序解析运行配置：
 - 左侧会话列表可折叠。
 - 右侧 Trace/配置面板可折叠。
 - Agent 配置必须真实生效。
-- 模型参数配置使用“用户默认配置 + 会话覆盖”。
+- LLM 前缀缓存必须有显式配置开关，关闭时不读写缓存。
+- 模型参数配置使用“模型默认参数 + 用户个人模型参数”，不属于会话。
+- 用户选择模型时异步或快速保存个人模型配置，并刷新最近使用时间；下次进入工作台继续使用上次模型。
 - 模型配置管理使用后端分页，并在前端做滚动加载和节流。
