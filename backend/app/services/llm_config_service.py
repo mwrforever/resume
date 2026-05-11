@@ -18,6 +18,20 @@ from app.utils.cache_utils import LLM_MODEL_OPTIONS_KEY, LLM_MODEL_OPTIONS_TTL
 from app.utils.secret_crypto import decrypt_secret, encrypt_secret, mask_secret
 
 
+DEFAULT_RUNTIME_PARAMS = {
+    "enable_thinking": False,
+    "enable_tools": True,
+    "enable_prompt_cache": False,
+    "enable_memory": True,
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "max_tokens": 2048,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
+    "extra_body": None,
+}
+
+
 # 负责员工和部门模型配置的权限校验、可用模型路由和运行时配置构建
 class LlmConfigService:
     def __init__(
@@ -172,6 +186,24 @@ class LlmConfigService:
                     raise NotFoundError("模型配置不存在")
                 return self._to_runtime_config(config, option.source)
         raise NotFoundError("模型不可用")
+
+    # 获取模型创建时保存的默认运行参数，用于初始化员工个人模型配置
+    async def get_default_runtime_params(self, config_id: int) -> dict:
+        config = await self.llm_repo.get_by_id(config_id)
+        if not config:
+            raise NotFoundError("模型配置不存在")
+        return {
+            "enable_thinking": bool(config.enable_thinking),
+            "enable_tools": bool(config.enable_tools),
+            "enable_prompt_cache": bool(config.enable_prompt_cache),
+            "enable_memory": bool(config.enable_memory),
+            "temperature": float(config.temperature),
+            "top_p": float(config.top_p),
+            "max_tokens": int(config.max_tokens),
+            "presence_penalty": float(config.presence_penalty),
+            "frequency_penalty": float(config.frequency_penalty),
+            "extra_body": config.extra_body,
+        }
 
     # 汇总员工个人和所属部门的启用模型配置，并按来源优先级去重
     async def _build_model_options(self, employee_id: int) -> list[LlmModelOption]:
