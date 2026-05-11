@@ -9,6 +9,15 @@ export interface ILlmConfigItem {
   model_name: string;
   fallback_model_name?: string | null;
   extra_body?: Record<string, unknown> | null;
+  enable_thinking: boolean;
+  enable_tools: boolean;
+  enable_prompt_cache: boolean;
+  enable_memory: boolean;
+  temperature: number;
+  top_p: number;
+  max_tokens: number;
+  presence_penalty: number;
+  frequency_penalty: number;
   timeout_seconds: number;
   max_retries: number;
   status: number;
@@ -30,6 +39,15 @@ export interface ILlmConfigPayload {
   model_name: string;
   fallback_model_name?: string | null;
   extra_body?: Record<string, unknown> | null;
+  enable_thinking: boolean;
+  enable_tools: boolean;
+  enable_prompt_cache: boolean;
+  enable_memory: boolean;
+  temperature: number;
+  top_p: number;
+  max_tokens: number;
+  presence_penalty: number;
+  frequency_penalty: number;
   timeout_seconds: number;
   max_retries: number;
   status: number;
@@ -44,6 +62,29 @@ export interface ILlmModelOption {
   config_name: string;
   base_url: string;
 }
+
+export interface IAgentRuntimeConfig {
+  id?: number | null;
+  employee_id: number;
+  model_name: string;
+  model_source: 'employee' | 'dept' | 'env';
+  llm_config_id?: number | null;
+  enable_thinking: boolean;
+  enable_tools: boolean;
+  enable_prompt_cache: boolean;
+  enable_memory: boolean;
+  temperature: number;
+  top_p: number;
+  max_tokens: number;
+  presence_penalty: number;
+  frequency_penalty: number;
+  extra_body?: Record<string, unknown> | null;
+  last_used_at?: string | null;
+  create_time?: string | null;
+  update_time?: string | null;
+}
+
+export type IAgentRuntimeConfigPayload = Pick<IAgentRuntimeConfig, 'enable_thinking' | 'enable_tools' | 'enable_prompt_cache' | 'enable_memory' | 'temperature' | 'top_p' | 'max_tokens' | 'presence_penalty' | 'frequency_penalty' | 'extra_body'>;
 
 export interface IAgentSessionItem {
   id: number;

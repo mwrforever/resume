@@ -1,5 +1,5 @@
 ﻿import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, AlertCircle, BarChart3, Bot, Brain, ChevronLeft, ChevronRight, Clock3, Cpu, MessageSquare, Pencil, Plus, RefreshCw, Search, Send, Trash2, UserRound, X } from 'lucide-react';
+import { Activity, AlertCircle, BarChart3, Bot, Brain, ChevronLeft, ChevronRight, Clock3, Cpu, MessageSquare, Pencil, Plus, RefreshCw, Search, Send, SlidersHorizontal, Trash2, UserRound, X } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { Pagination } from '@/components/common/pagination';
 import { AdminLayout } from '@/components/layout/admin-layout';
@@ -12,10 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { employeeAgentApi, employeeLlmApi } from '@/api/employee/agent';
 import { useAuthStore } from '@/store/auth';
-import type { IAgentActionStreamItem, IAgentMemoryItem, IAgentMessageItem, IAgentReply, IAgentRunItem, IAgentSessionItem, IAgentSessionWindowItem, IAgentToolStreamItem, ILlmModelOption } from '@/types/agent';
+import type { IAgentActionStreamItem, IAgentMemoryItem, IAgentMessageItem, IAgentReply, IAgentRunItem, IAgentRuntimeConfig, IAgentRuntimeConfigPayload, IAgentSessionItem, IAgentSessionWindowItem, IAgentToolStreamItem, ILlmModelOption } from '@/types/agent';
 
 type WorkspaceSession = IAgentSessionItem & { isLocal?: boolean };
-type PanelDialogType = 'metrics' | 'memories' | 'runs' | null;
+type PanelDialogType = 'metrics' | 'memories' | 'runs' | 'runtime' | null;
 type BadgeVariant = BadgeProps['variant'];
 
 const DEFAULT_MODEL_VALUE = '__default__';
@@ -23,8 +23,8 @@ const runStatusLabel: Record<number, string> = { 1: '执行中', 2: '成功', 3:
 const actionStatusLabelMap: Record<number, string> = { 1: '待确认', 3: '已确认', 4: '已拒绝' };
 const applicationStatusLabelMap: Record<number, string> = { 1: '待处理', 2: '已查看', 3: '面试中', 4: '已拒绝', 5: '已录用' };
 const hiddenScrollClass = '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden';
-const featureButtons = [{ type: 'metrics' as const, icon: Activity, label: '指标' }, { type: 'memories' as const, icon: Brain, label: '记忆' }, { type: 'runs' as const, icon: Cpu, label: 'Trace' }];
-const collapsedButtons = [{ type: 'metrics' as const, icon: BarChart3 }, { type: 'memories' as const, icon: Brain }, { type: 'runs' as const, icon: Cpu }];
+const featureButtons = [{ type: 'metrics' as const, icon: Activity, label: '指标' }, { type: 'memories' as const, icon: Brain, label: '记忆' }, { type: 'runs' as const, icon: Cpu, label: 'Trace' }, { type: 'runtime' as const, icon: SlidersHorizontal, label: '配置' }];
+const collapsedButtons = [{ type: 'metrics' as const, icon: BarChart3 }, { type: 'memories' as const, icon: Brain }, { type: 'runs' as const, icon: Cpu }, { type: 'runtime' as const, icon: SlidersHorizontal }];
 
 function getRunStatusVariant(status: number): BadgeVariant {
   if (status === 2) return 'success';
@@ -110,6 +110,14 @@ interface FeatureDialogProps {
   toolEvents: IAgentToolStreamItem[];
   totalTokens: number;
   latestRun?: IAgentRunItem;
+  runtimeConfig: IAgentRuntimeConfig | null;
+  runtimeConfigText: string;
+  runtimeSaving: boolean;
+  runtimeError: string;
+  selectedModelName: string | null;
+  onRuntimeChange: (patch: Partial<IAgentRuntimeConfigPayload>) => void;
+  onRuntimeTextChange: (value: string) => void;
+  onRuntimeSave: () => void;
   onClose: () => void;
 }
 
@@ -207,8 +215,34 @@ function RunsPanel({ runs, toolEvents }: Pick<FeatureDialogProps, 'runs' | 'tool
   );
 }
 
-function FeatureDialog({ type, runs, memories, toolEvents, totalTokens, latestRun, onClose }: FeatureDialogProps) {
-  const titleMap: Record<Exclude<PanelDialogType, null>, string> = { metrics: '运行指标', memories: '长期记忆', runs: 'Trace 记录' };
+function RuntimeConfigPanel({ runtimeConfig, runtimeConfigText, runtimeSaving, runtimeError, selectedModelName, onRuntimeChange, onRuntimeTextChange, onRuntimeSave }: Pick<FeatureDialogProps, 'runtimeConfig' | 'runtimeConfigText' | 'runtimeSaving' | 'runtimeError' | 'selectedModelName' | 'onRuntimeChange' | 'onRuntimeTextChange' | 'onRuntimeSave'>) {
+  if (!selectedModelName) return <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-6 text-sm text-slate-600">配置文件默认模型由后端配置文件管理，不会写入个人运行参数表。</div>;
+  if (!runtimeConfig) return <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-6 text-sm text-slate-600">请选择已创建模型后加载运行参数。</div>;
+  return (
+    <div className="space-y-4">
+      {runtimeError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{runtimeError}</div>}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="space-y-1.5"><Label>思考模式</Label><Select value={String(runtimeConfig.enable_thinking)} onValueChange={(value) => onRuntimeChange({ enable_thinking: value === 'true' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="false">关闭</SelectItem><SelectItem value="true">开启</SelectItem></SelectContent></Select></div>
+        <div className="space-y-1.5"><Label>工具调用</Label><Select value={String(runtimeConfig.enable_tools)} onValueChange={(value) => onRuntimeChange({ enable_tools: value === 'true' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="true">开启</SelectItem><SelectItem value="false">关闭</SelectItem></SelectContent></Select></div>
+        <div className="space-y-1.5"><Label>Prompt Cache</Label><Select value={String(runtimeConfig.enable_prompt_cache)} onValueChange={(value) => onRuntimeChange({ enable_prompt_cache: value === 'true' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="false">关闭</SelectItem><SelectItem value="true">开启</SelectItem></SelectContent></Select></div>
+        <div className="space-y-1.5"><Label>上下文记忆</Label><Select value={String(runtimeConfig.enable_memory)} onValueChange={(value) => onRuntimeChange({ enable_memory: value === 'true' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="true">开启</SelectItem><SelectItem value="false">关闭</SelectItem></SelectContent></Select></div>
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+        <div className="space-y-1.5"><Label>Temperature</Label><Input type="number" min={0} max={2} step={0.01} value={runtimeConfig.temperature} onChange={(event) => onRuntimeChange({ temperature: Number(event.target.value) })} /></div>
+        <div className="space-y-1.5"><Label>Top P</Label><Input type="number" min={0} max={1} step={0.01} value={runtimeConfig.top_p} onChange={(event) => onRuntimeChange({ top_p: Number(event.target.value) })} /></div>
+        <div className="space-y-1.5"><Label>Max Tokens</Label><Input type="number" min={1} max={32000} value={runtimeConfig.max_tokens} onChange={(event) => onRuntimeChange({ max_tokens: Number(event.target.value) })} /></div>
+        <div className="space-y-1.5"><Label>Presence</Label><Input type="number" min={-2} max={2} step={0.01} value={runtimeConfig.presence_penalty} onChange={(event) => onRuntimeChange({ presence_penalty: Number(event.target.value) })} /></div>
+        <div className="space-y-1.5"><Label>Frequency</Label><Input type="number" min={-2} max={2} step={0.01} value={runtimeConfig.frequency_penalty} onChange={(event) => onRuntimeChange({ frequency_penalty: Number(event.target.value) })} /></div>
+      </div>
+      <div className="space-y-1.5"><Label>高级参数 JSON</Label><Textarea value={runtimeConfigText} onChange={(event) => onRuntimeTextChange(event.target.value)} className="min-h-[120px] font-mono text-xs" /></div>
+      <div className="flex justify-end"><Button type="button" onClick={onRuntimeSave} disabled={runtimeSaving}>{runtimeSaving ? '保存中...' : '保存个人参数'}</Button></div>
+    </div>
+  );
+}
+
+function FeatureDialog(props: FeatureDialogProps) {
+  const { type, runs, memories, toolEvents, totalTokens, latestRun, onClose } = props;
+  const titleMap: Record<Exclude<PanelDialogType, null>, string> = { metrics: '运行指标', memories: '长期记忆', runs: 'Trace 记录', runtime: '运行配置' };
 
   return (
     <Dialog open={!!type} onOpenChange={(value) => !value && onClose()} containerClassName="max-w-3xl rounded-2xl">
@@ -220,6 +254,7 @@ function FeatureDialog({ type, runs, memories, toolEvents, totalTokens, latestRu
         {type === 'metrics' && <MetricsPanel runs={runs} totalTokens={totalTokens} latestRun={latestRun} />}
         {type === 'memories' && <MemoriesPanel memories={memories} />}
         {type === 'runs' && <RunsPanel runs={runs} toolEvents={toolEvents} />}
+        {type === 'runtime' && <RuntimeConfigPanel {...props} />}
       </DialogContent>
     </Dialog>
   );
@@ -316,6 +351,10 @@ export default function EmployeeAgent() {
   const [, setSessionWindow] = useState<IAgentSessionWindowItem | null>(null);
   const [models, setModels] = useState<ILlmModelOption[]>([]);
   const [selectedModelName, setSelectedModelName] = useState<string | null>(null);
+  const [runtimeConfig, setRuntimeConfig] = useState<IAgentRuntimeConfig | null>(null);
+  const [runtimeConfigText, setRuntimeConfigText] = useState('');
+  const [runtimeSaving, setRuntimeSaving] = useState(false);
+  const [runtimeError, setRuntimeError] = useState('');
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [loadingSessionId, setLoadingSessionId] = useState<number | null>(null);
@@ -343,6 +382,19 @@ export default function EmployeeAgent() {
   const loadModels = useCallback(async () => {
     const res = await employeeLlmApi.listOptions();
     setModels(res.data || []);
+  }, []);
+
+  const loadRuntimeConfig = useCallback(async (modelName: string | null) => {
+    setRuntimeError('');
+    if (!modelName) {
+      const res = await employeeAgentApi.getRuntimeConfig();
+      setRuntimeConfig(res.data);
+      setRuntimeConfigText(res.data.extra_body ? JSON.stringify(res.data.extra_body, null, 2) : '');
+      return;
+    }
+    const res = await employeeAgentApi.getModelRuntimeConfig(modelName);
+    setRuntimeConfig(res.data);
+    setRuntimeConfigText(res.data.extra_body ? JSON.stringify(res.data.extra_body, null, 2) : '');
   }, []);
 
   const clearConversation = () => { setMessages([]); setRuns([]); setMemories([]); setToolEvents([]); setActions([]); setSessionWindow(null); setInput(''); };
@@ -389,6 +441,7 @@ export default function EmployeeAgent() {
   }, []);
 
   useEffect(() => { loadSessions(); loadModels(); }, [loadModels, loadSessions]);
+  useEffect(() => { loadRuntimeConfig(selectedModelName).catch(() => setRuntimeConfig(null)); }, [loadRuntimeConfig, selectedModelName]);
 
   const saveSession = async (title: string) => {
     if (!renameTarget) return;
@@ -420,6 +473,38 @@ export default function EmployeeAgent() {
     const res = await employeeAgentApi.selectModel(currentSession.id, modelName);
     replaceSession(res.data);
     await loadSessions();
+  };
+
+  const updateRuntimeConfig = (patch: Partial<IAgentRuntimeConfigPayload>) => {
+    setRuntimeConfig((prev) => prev ? { ...prev, ...patch } : prev);
+  };
+
+  const saveRuntimeConfig = async () => {
+    if (!selectedModelName || !runtimeConfig) return;
+    setRuntimeSaving(true);
+    setRuntimeError('');
+    try {
+      const extraBody = runtimeConfigText.trim() ? JSON.parse(runtimeConfigText) as Record<string, unknown> : null;
+      const payload: IAgentRuntimeConfigPayload = {
+        enable_thinking: runtimeConfig.enable_thinking,
+        enable_tools: runtimeConfig.enable_tools,
+        enable_prompt_cache: runtimeConfig.enable_prompt_cache,
+        enable_memory: runtimeConfig.enable_memory,
+        temperature: runtimeConfig.temperature,
+        top_p: runtimeConfig.top_p,
+        max_tokens: runtimeConfig.max_tokens,
+        presence_penalty: runtimeConfig.presence_penalty,
+        frequency_penalty: runtimeConfig.frequency_penalty,
+        extra_body: extraBody,
+      };
+      const res = await employeeAgentApi.updateModelRuntimeConfig(selectedModelName, payload);
+      setRuntimeConfig(res.data);
+      setRuntimeConfigText(res.data.extra_body ? JSON.stringify(res.data.extra_body, null, 2) : '');
+    } catch (error) {
+      setRuntimeError(error instanceof SyntaxError ? '高级参数 JSON 格式不正确。' : '保存个人运行参数失败，请稍后重试。');
+    } finally {
+      setRuntimeSaving(false);
+    }
   };
 
   const sendMessage = async (event: FormEvent) => {
@@ -474,7 +559,10 @@ export default function EmployeeAgent() {
         }
         if (streamEvent.event === 'final' || streamEvent.event === 'error') {
           const reply = streamEvent.data.reply as IAgentReply | undefined;
-          if (!reply) return;
+          if (!reply) {
+            if (streamEvent.event === 'error' && typeof streamEvent.data.message === 'string') throw new Error(streamEvent.data.message);
+            return;
+          }
           const nextSession = reply.session || { ...persistedSession, title: buildLocalTitle(content), context_summary: buildLocalTitle(content) };
           replaceSession(nextSession, oldSessionId);
           setMessages((prev) => [...prev.filter((message) => message.id !== streamingMessageId && message.id !== reply.user_message.id && message.id !== reply.agent_message.id), reply.user_message, reply.agent_message]);
@@ -484,9 +572,9 @@ export default function EmployeeAgent() {
         }
       });
       await loadSessions();
-    } catch {
+    } catch (error) {
       setInput(content);
-      setErrorMessage('消息发送失败，请检查模型配置或稍后重试。');
+      setErrorMessage(error instanceof Error ? error.message : '消息发送失败，请检查模型配置或稍后重试。');
     } finally { setSending(false); }
   };
 
@@ -537,7 +625,23 @@ export default function EmployeeAgent() {
         <aside className={`relative min-h-0 overflow-hidden transition-[width] duration-200 ${rightPanelOpen ? 'w-full xl:w-[120px]' : 'w-14'}`}><div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 shadow-sm shadow-slate-200/70 backdrop-blur">{rightPanelOpen ? <div className="grid flex-1 content-start gap-2 p-3">{featureButtons.map((item) => <button key={item.type} type="button" onClick={() => setPanelDialog(item.type)} className="flex flex-col items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-3 text-xs font-semibold text-slate-600 shadow-sm hover:border-primary/30 hover:bg-sky-50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><item.icon size={18} aria-hidden="true" />{item.label}</button>)}</div> : <div className="flex flex-1 flex-col items-center gap-3 py-4 text-slate-400">{collapsedButtons.map((item) => <button key={item.type} type="button" onClick={() => setPanelDialog(item.type)} className="rounded-lg p-2 hover:bg-sky-50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><item.icon size={18} aria-hidden="true" /></button>)}</div>}</div></aside>
       </div>
       <SessionDialog open={!!renameTarget} initialTitle={renameTarget?.title ?? ''} saving={savingSession} onClose={() => setRenameTarget(null)} onSubmit={saveSession} />
-      <FeatureDialog type={panelDialog} runs={runs} memories={memories} toolEvents={toolEvents} totalTokens={totalTokens} latestRun={latestRun} onClose={() => setPanelDialog(null)} />
+      <FeatureDialog
+        type={panelDialog}
+        runs={runs}
+        memories={memories}
+        toolEvents={toolEvents}
+        totalTokens={totalTokens}
+        latestRun={latestRun}
+        runtimeConfig={runtimeConfig}
+        runtimeConfigText={runtimeConfigText}
+        runtimeSaving={runtimeSaving}
+        runtimeError={runtimeError}
+        selectedModelName={selectedModelName}
+        onRuntimeChange={updateRuntimeConfig}
+        onRuntimeTextChange={setRuntimeConfigText}
+        onRuntimeSave={saveRuntimeConfig}
+        onClose={() => setPanelDialog(null)}
+      />
       <SessionSearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} onOpenSession={openSession} />
       <ConfirmDialog open={!!deleteTarget} title="确认删除会话" description={`确定要删除「${deleteTarget?.title}」吗？删除后会话将不再展示。`} confirmLabel="删除" onConfirm={deleteSession} onCancel={() => setDeleteTarget(null)} loading={deletingSession} />
     </AdminLayout>

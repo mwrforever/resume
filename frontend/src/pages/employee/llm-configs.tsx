@@ -1,6 +1,7 @@
 ﻿import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Building2, CheckCircle2, FlaskConical, KeyRound, Pencil, PlusCircle, RefreshCw, Search, ServerCog, ShieldCheck, Trash2, UserRound, X } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
+import { Pagination } from '@/components/common/pagination';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,15 @@ const createDefaultForm = (userId: string | null): ILlmConfigPayload => ({
   timeout_seconds: 120,
   max_retries: 2,
   status: 1,
+  enable_thinking: false,
+  enable_tools: true,
+  enable_prompt_cache: false,
+  enable_memory: true,
+  temperature: 0.7,
+  top_p: 0.9,
+  max_tokens: 2048,
+  presence_penalty: 0,
+  frequency_penalty: 0,
 });
 
 function formatDate(value?: string | null) {
@@ -50,7 +60,24 @@ function formFromConfig(config: ILlmConfigItem): ILlmConfigPayload {
     timeout_seconds: config.timeout_seconds,
     max_retries: config.max_retries,
     status: config.status,
+    enable_thinking: config.enable_thinking,
+    enable_tools: config.enable_tools,
+    enable_prompt_cache: config.enable_prompt_cache,
+    enable_memory: config.enable_memory,
+    temperature: config.temperature,
+    top_p: config.top_p,
+    max_tokens: config.max_tokens,
+    presence_penalty: config.presence_penalty,
+    frequency_penalty: config.frequency_penalty,
   };
+}
+
+function getRequestErrorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === 'object' && 'response' in error) {
+    const response = (error as { response?: { data?: { message?: string; detail?: string } } }).response;
+    return response?.data?.message || response?.data?.detail || fallback;
+  }
+  return fallback;
 }
 
 interface ConfigDialogProps {
@@ -185,6 +212,19 @@ function ConfigDialog({ open, mode, config, userId, depts, saving, errorMessage,
               <div className="space-y-1.5"><Label>超时秒数</Label><Input type="number" min={1} max={120} value={form.timeout_seconds} onChange={(event) => setForm((prev) => ({ ...prev, timeout_seconds: Number(event.target.value) }))} /></div>
               <div className="space-y-1.5"><Label>重试次数</Label><Input type="number" min={0} max={2} value={form.max_retries} onChange={(event) => setForm((prev) => ({ ...prev, max_retries: Number(event.target.value) }))} /></div>
             </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+              <div className="space-y-1.5"><Label>思考模式</Label><Select value={String(form.enable_thinking)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_thinking: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="false">关闭</SelectItem><SelectItem value="true">开启</SelectItem></SelectContent></Select></div>
+              <div className="space-y-1.5"><Label>工具调用</Label><Select value={String(form.enable_tools)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_tools: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="true">开启</SelectItem><SelectItem value="false">关闭</SelectItem></SelectContent></Select></div>
+              <div className="space-y-1.5"><Label>Prompt Cache</Label><Select value={String(form.enable_prompt_cache)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_prompt_cache: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="false">关闭</SelectItem><SelectItem value="true">开启</SelectItem></SelectContent></Select></div>
+              <div className="space-y-1.5"><Label>上下文记忆</Label><Select value={String(form.enable_memory)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_memory: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="true">开启</SelectItem><SelectItem value="false">关闭</SelectItem></SelectContent></Select></div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+              <div className="space-y-1.5"><Label>Temperature</Label><Input type="number" min={0} max={2} step={0.01} value={form.temperature} onChange={(event) => setForm((prev) => ({ ...prev, temperature: Number(event.target.value) }))} /></div>
+              <div className="space-y-1.5"><Label>Top P</Label><Input type="number" min={0} max={1} step={0.01} value={form.top_p} onChange={(event) => setForm((prev) => ({ ...prev, top_p: Number(event.target.value) }))} /></div>
+              <div className="space-y-1.5"><Label>Max Tokens</Label><Input type="number" min={1} max={32000} value={form.max_tokens} onChange={(event) => setForm((prev) => ({ ...prev, max_tokens: Number(event.target.value) }))} /></div>
+              <div className="space-y-1.5"><Label>Presence</Label><Input type="number" min={-2} max={2} step={0.01} value={form.presence_penalty} onChange={(event) => setForm((prev) => ({ ...prev, presence_penalty: Number(event.target.value) }))} /></div>
+              <div className="space-y-1.5"><Label>Frequency</Label><Input type="number" min={-2} max={2} step={0.01} value={form.frequency_penalty} onChange={(event) => setForm((prev) => ({ ...prev, frequency_penalty: Number(event.target.value) }))} /></div>
+            </div>
             <div className="space-y-1.5"><Label>扩展参数 JSON</Label><Textarea value={extraBodyText} onChange={(event) => setExtraBodyText(event.target.value)} className="min-h-[110px] font-mono text-xs" placeholder='{"enable_thinking": false}' /></div>
           </section>
           <div className="rounded-xl border border-sky-100 bg-sky-50 p-3 text-xs leading-5 text-sky-800"><CheckCircle2 size={14} className="mr-1 inline" aria-hidden="true" />删除操作会使用软删除；修改和删除仅允许配置拥有者或管理员执行。</div>
@@ -209,25 +249,27 @@ export default function EmployeeLlmConfigs() {
   const [keyword, setKeyword] = useState('');
   const [scopeFilter, setScopeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [total, setTotal] = useState(0);
 
-  const filteredConfigs = useMemo(() => configs.filter((config) => {
-    const text = `${config.config_name} ${config.model_name} ${config.base_url}`.toLowerCase();
-    const matchKeyword = !keyword.trim() || text.includes(keyword.trim().toLowerCase());
-    const matchScope = scopeFilter === 'all' || config.biz_type === scopeFilter;
-    const matchStatus = statusFilter === 'all' || String(config.status) === statusFilter;
-    return matchKeyword && matchScope && matchStatus;
-  }), [configs, keyword, scopeFilter, statusFilter]);
+  const filteredConfigs = useMemo(() => configs, [configs]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [configRes, deptRes] = await Promise.all([employeeLlmApi.listConfigs(), deptApi.listDepts()]);
-      setConfigs(configRes.data || []);
+      const params: { page: number; page_size: number; keyword?: string; biz_type?: string; status?: number } = { page, page_size: pageSize };
+      if (keyword.trim()) params.keyword = keyword.trim();
+      if (scopeFilter !== 'all') params.biz_type = scopeFilter;
+      if (statusFilter !== 'all') params.status = Number(statusFilter);
+      const [configRes, deptRes] = await Promise.all([employeeLlmApi.listConfigs(params), deptApi.listDepts()]);
+      setConfigs(configRes.data?.items || []);
+      setTotal(configRes.data?.total || 0);
       setDepts(deptRes.data || []);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [keyword, page, pageSize, scopeFilter, statusFilter]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -249,7 +291,7 @@ export default function EmployeeLlmConfigs() {
       closeDialog();
       await loadData();
     } catch (error) {
-      setErrorMessage(error instanceof SyntaxError ? '扩展参数 JSON 格式不正确，请检查后重试。' : '保存失败，请检查模型配置后重试。');
+      setErrorMessage(error instanceof SyntaxError ? '扩展参数 JSON 格式不正确，请检查后重试。' : getRequestErrorMessage(error, '保存失败，请检查模型配置后重试。'));
     } finally {
       setSaving(false);
     }
@@ -257,13 +299,15 @@ export default function EmployeeLlmConfigs() {
 
   const testConfig = async (id: number) => {
     setTestingId(id);
-    try { await employeeLlmApi.testConfig(id); await loadData(); } finally { setTestingId(null); }
+    setErrorMessage('');
+    try { await employeeLlmApi.testConfig(id); await loadData(); } catch (error) { setErrorMessage(getRequestErrorMessage(error, '测试失败，请检查模型配置后重试。')); } finally { setTestingId(null); }
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
-    try { await employeeLlmApi.deleteConfig(deleteTarget.id); setDeleteTarget(null); await loadData(); } finally { setDeleting(false); }
+    setErrorMessage('');
+    try { await employeeLlmApi.deleteConfig(deleteTarget.id); setDeleteTarget(null); await loadData(); } catch (error) { setErrorMessage(getRequestErrorMessage(error, '删除失败，请稍后重试。')); } finally { setDeleting(false); }
   };
 
   return (
@@ -275,9 +319,9 @@ export default function EmployeeLlmConfigs() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_180px_160px]">
-              <div className="relative"><Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" /><Input value={keyword} onChange={(event) => setKeyword(event.target.value)} className="pl-9" placeholder="搜索配置名称、模型名或 Base URL" /></div>
-              <Select value={scopeFilter} onValueChange={setScopeFilter}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部归属</SelectItem><SelectItem value="employee">个人配置</SelectItem><SelectItem value="dept">部门配置</SelectItem></SelectContent></Select>
-              <Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="1">启用</SelectItem><SelectItem value="0">停用</SelectItem></SelectContent></Select>
+              <div className="relative"><Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" /><Input value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} className="pl-9" placeholder="搜索配置名称、模型名或 Base URL" /></div>
+              <Select value={scopeFilter} onValueChange={(value) => { setScopeFilter(value); setPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部归属</SelectItem><SelectItem value="employee">个人配置</SelectItem><SelectItem value="dept">部门配置</SelectItem></SelectContent></Select>
+              <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="1">启用</SelectItem><SelectItem value="0">停用</SelectItem></SelectContent></Select>
             </div>
             <div className="space-y-3">
               {filteredConfigs.map((config) => {
@@ -296,6 +340,7 @@ export default function EmployeeLlmConfigs() {
               })}
               {!loading && filteredConfigs.length === 0 && <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-6 text-sm text-slate-600">暂无符合条件的模型配置。</div>}
             </div>
+            <Pagination page={page} pageSize={pageSize} total={total} onChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} />
           </CardContent>
         </Card>
       </div>

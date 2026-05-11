@@ -1,6 +1,6 @@
 import client from '@/api/client';
 import { useAuthStore } from '@/store/auth';
-import type { IAgentReply, IAgentSessionDetail, IAgentStreamEvent, ILlmConfigPayload } from '@/types/agent';
+import type { IAgentReply, IAgentRuntimeConfig, IAgentRuntimeConfigPayload, IAgentSessionDetail, IAgentStreamEvent, ILlmConfigItem, ILlmConfigPayload } from '@/types/agent';
 
 const LLM_REQUEST_TIMEOUT_MS = 730000;
 const llmRequestConfig = { timeout: LLM_REQUEST_TIMEOUT_MS };
@@ -43,13 +43,34 @@ async function fetchStreamWithAuth(url: string, body: string) {
   return response;
 }
 
+async function readErrorMessage(response: Response) {
+  try {
+    const payload = await response.clone().json();
+    return payload?.message || payload?.detail || `HTTP ${response.status}`;
+  } catch {
+    return `HTTP ${response.status}`;
+  }
+}
+
+function parseStreamPart(part: string, onEvent: (event: IAgentStreamEvent) => void) {
+  const lines = part.split('\n');
+  const eventLine = lines.find((line) => line.startsWith('event:'));
+  const dataLines = lines.filter((line) => line.startsWith('data:'));
+  if (!eventLine || dataLines.length === 0) return;
+  onEvent({
+    event: eventLine.slice(6).trim(),
+    data: JSON.parse(dataLines.map((line) => line.slice(5).trim()).join('\n')),
+  });
+}
+
 async function streamAgentMessage(
   id: number,
   data: { content: string; context_refs?: Array<Record<string, unknown>> },
   onEvent: (event: IAgentStreamEvent) => void,
 ) {
   const response = await fetchStreamWithAuth(`/api/v1/employee/agent/sessions/${id}/messages/stream`, JSON.stringify(data));
-  if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+  if (!response.ok) throw new Error(await readErrorMessage(response));
+  if (!response.body) throw new Error('流式响应为空');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -59,21 +80,14 @@ async function streamAgentMessage(
     buffer += decoder.decode(value, { stream: true });
     const parts = buffer.split('\n\n');
     buffer = parts.pop() || '';
-    parts.forEach((part) => {
-      const eventLine = part.split('\n').find((line) => line.startsWith('event:'));
-      const dataLine = part.split('\n').find((line) => line.startsWith('data:'));
-      if (!eventLine || !dataLine) return;
-      onEvent({
-        event: eventLine.slice(6).trim(),
-        data: JSON.parse(dataLine.slice(5).trim()),
-      });
-    });
+    parts.forEach((part) => parseStreamPart(part, onEvent));
   }
+  if (buffer.trim()) parseStreamPart(buffer, onEvent);
 }
 
 export const employeeLlmApi = {
   listOptions: () => client.get('/employee/llm-model-options'),
-  listConfigs: () => client.get('/employee/llm-configs'),
+  listConfigs: (params?: { page?: number; page_size?: number; keyword?: string; biz_type?: string; status?: number }) => client.get<unknown, { data: { total: number; items: ILlmConfigItem[] } }>('/employee/llm-configs', { params }),
   createConfig: (data: ILlmConfigPayload) => client.post('/employee/llm-configs', data),
   updateConfig: (id: number, data: Partial<ILlmConfigPayload>) => client.put(`/employee/llm-configs/${id}`, data),
   deleteConfig: (id: number) => client.delete(`/employee/llm-configs/${id}`),
@@ -81,6 +95,9 @@ export const employeeLlmApi = {
 };
 
 export const employeeAgentApi = {
+  getRuntimeConfig: () => client.get<unknown, { data: IAgentRuntimeConfig }>('/employee/agent/runtime-config'),
+  getModelRuntimeConfig: (modelName: string) => client.get<unknown, { data: IAgentRuntimeConfig }>(`/employee/agent/runtime-configs/${encodeURIComponent(modelName)}`),
+  updateModelRuntimeConfig: (modelName: string, data: IAgentRuntimeConfigPayload) => client.put<unknown, { data: IAgentRuntimeConfig }>(`/employee/agent/runtime-configs/${encodeURIComponent(modelName)}`, data),
   createSession: (data: { title: string; selected_model_name?: string | null }) => client.post('/employee/agent/sessions', data),
   listSessions: (params?: { page?: number; page_size?: number; keyword?: string }) => client.get('/employee/agent/sessions', { params }),
   getSession: (id: number) => client.get<unknown, { data: IAgentSessionDetail }>(`/employee/agent/sessions/${id}`),
