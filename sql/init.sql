@@ -263,6 +263,15 @@ CREATE TABLE IF NOT EXISTS `llm_model_config`
     `model_name`           VARCHAR(100) NOT NULL COMMENT '模型名称',
     `fallback_model_name`  VARCHAR(100)          DEFAULT NULL COMMENT '兜底模型名称',
     `extra_body`           JSON                  DEFAULT NULL COMMENT '扩展参数',
+    `enable_thinking`      TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否开启思考模式',
+    `enable_tools`         TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '是否启用工具调用',
+    `enable_prompt_cache`  TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否启用LLM前缀缓存',
+    `enable_memory`        TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '是否启用上下文记忆',
+    `temperature`          DECIMAL(4, 2) NOT NULL DEFAULT 0.70 COMMENT '生成随机性',
+    `top_p`                DECIMAL(4, 2) NOT NULL DEFAULT 0.90 COMMENT '核采样参数',
+    `max_tokens`           INT          NOT NULL DEFAULT 2048 COMMENT '最大输出Token',
+    `presence_penalty`     DECIMAL(4, 2) NOT NULL DEFAULT 0.00 COMMENT '话题出现惩罚',
+    `frequency_penalty`    DECIMAL(4, 2) NOT NULL DEFAULT 0.00 COMMENT '频率惩罚',
     `timeout_seconds`      SMALLINT     NOT NULL DEFAULT 120 COMMENT '请求超时时间',
     `max_retries`          SMALLINT     NOT NULL DEFAULT 2 COMMENT '最大重试次数',
     `status`               SMALLINT     NOT NULL DEFAULT 1 COMMENT '状态：1启用，0停用',
@@ -296,6 +305,45 @@ CREATE TABLE IF NOT EXISTS `agent_session`
     KEY `idx_employee_time` (`employee_id`, `create_time`),
     KEY `idx_status` (`status`, `is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent会话表';
+
+CREATE TABLE IF NOT EXISTS `agent_workspace_preference`
+(
+    `id`                     BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '工作台偏好ID',
+    `employee_id`            BIGINT      NOT NULL COMMENT '员工ID',
+    `selected_model_name`    VARCHAR(100)         DEFAULT NULL COMMENT '选中模型名称，配置文件默认模型为空',
+    `selected_model_source`  VARCHAR(20) NOT NULL DEFAULT 'env' COMMENT '选中模型来源：env/employee/dept',
+    `selected_llm_config_id` BIGINT               DEFAULT NULL COMMENT '选中模型连接配置ID，配置文件默认模型为空',
+    `last_selected_at`       DATETIME             DEFAULT NULL COMMENT '最近选择时间',
+    `create_time`            DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`            DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_agent_workspace_employee` (`employee_id`),
+    KEY `idx_selected_llm_config` (`selected_llm_config_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent工作台模型选择偏好表';
+
+CREATE TABLE IF NOT EXISTS `agent_user_model_runtime_config`
+(
+    `id`                  BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '个人模型运行配置ID',
+    `employee_id`         BIGINT       NOT NULL COMMENT '员工ID',
+    `llm_config_id`       BIGINT       NOT NULL COMMENT '模型连接配置ID',
+    `model_name`          VARCHAR(100) NOT NULL COMMENT '模型名称快照',
+    `model_source`        VARCHAR(20)  NOT NULL COMMENT '模型来源：employee/dept',
+    `enable_thinking`     TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否开启思考模式',
+    `enable_tools`        TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '是否启用工具调用',
+    `enable_prompt_cache` TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否启用LLM前缀缓存',
+    `enable_memory`       TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '是否启用上下文记忆',
+    `temperature`         DECIMAL(4, 2) NOT NULL DEFAULT 0.70 COMMENT '生成随机性',
+    `top_p`               DECIMAL(4, 2) NOT NULL DEFAULT 0.90 COMMENT '核采样参数',
+    `max_tokens`          INT          NOT NULL DEFAULT 2048 COMMENT '最大输出Token',
+    `presence_penalty`    DECIMAL(4, 2) NOT NULL DEFAULT 0.00 COMMENT '话题出现惩罚',
+    `frequency_penalty`   DECIMAL(4, 2) NOT NULL DEFAULT 0.00 COMMENT '频率惩罚',
+    `extra_body`          JSON                  DEFAULT NULL COMMENT '高级运行参数',
+    `last_used_at`        DATETIME              DEFAULT NULL COMMENT '最近使用时间',
+    `create_time`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_employee_llm_config` (`employee_id`, `llm_config_id`),
+    KEY `idx_employee_last_used` (`employee_id`, `last_used_at`),
+    KEY `idx_llm_config` (`llm_config_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='员工个人模型运行配置表';
 
 CREATE TABLE IF NOT EXISTS `agent_message`
 (
