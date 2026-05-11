@@ -32,10 +32,14 @@
   - Add ORM fields matching `llm_model_config` DDL.
 - Create: `backend/app/models/agent_user_model_runtime_config.py`
   - ORM model for employee+model personal runtime config.
+- Create: `backend/app/models/agent_workspace_preference.py`
+  - ORM model for employee workspace selected model preference; supports env/default selection without polluting personal runtime config.
 - Modify: `backend/app/models/__init__.py`
   - Export the new ORM model.
 - Create: `backend/app/repositories/agent_user_model_runtime_config_repository.py`
   - Data access only: get, get recent, create/update, touch last used.
+- Create: `backend/app/repositories/agent_workspace_preference_repository.py`
+  - Data access only: get/upsert employee workspace model selection.
 - Modify: `backend/app/repositories/llm_config_repository.py`
   - Add count/list pagination helpers and default runtime param persistence.
 - Modify: `backend/app/repositories/agent_repository.py`
@@ -111,18 +115,32 @@ In `sql/init.sql`, inside the existing `CREATE TABLE IF NOT EXISTS llm_model_con
     `frequency_penalty`     DECIMAL(4, 2)          NOT NULL DEFAULT 0.00 COMMENT '频率惩罚',
 ```
 
-- [ ] **Step 2: Add `agent_user_model_runtime_config` table immediately after `agent_session` DDL**
+- [ ] **Step 2: Add `agent_workspace_preference` and `agent_user_model_runtime_config` tables immediately after `agent_session` DDL**
 
-Insert this table before `agent_message`:
+Insert these tables before `agent_message`:
 
 ```sql
+CREATE TABLE IF NOT EXISTS `agent_workspace_preference`
+(
+    `id`                     BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '工作台偏好ID',
+    `employee_id`            BIGINT      NOT NULL COMMENT '员工ID',
+    `selected_model_name`    VARCHAR(100)         DEFAULT NULL COMMENT '选中模型名称，配置文件默认模型为空',
+    `selected_model_source`  VARCHAR(20) NOT NULL DEFAULT 'env' COMMENT '选中模型来源：env/employee/dept',
+    `selected_llm_config_id` BIGINT               DEFAULT NULL COMMENT '选中模型连接配置ID，配置文件默认模型为空',
+    `last_selected_at`       DATETIME             DEFAULT NULL COMMENT '最近选择时间',
+    `create_time`            DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`            DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_agent_workspace_employee` (`employee_id`),
+    KEY `idx_selected_llm_config` (`selected_llm_config_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent工作台模型选择偏好表';
+
 CREATE TABLE IF NOT EXISTS `agent_user_model_runtime_config`
 (
     `id`                  BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '个人模型运行配置ID',
     `employee_id`         BIGINT       NOT NULL COMMENT '员工ID',
-    `model_name`          VARCHAR(100) NOT NULL COMMENT '模型名称，配置文件默认模型使用__env_default__',
-    `model_source`        VARCHAR(20)  NOT NULL COMMENT '模型来源：env/employee/dept',
-    `llm_config_id`       BIGINT                DEFAULT NULL COMMENT '模型连接配置ID，配置文件默认模型为空',
+    `llm_config_id`       BIGINT       NOT NULL COMMENT '模型连接配置ID',
+    `model_name`          VARCHAR(100) NOT NULL COMMENT '模型名称快照',
+    `model_source`        VARCHAR(20)  NOT NULL COMMENT '模型来源：employee/dept',
     `enable_thinking`     TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否开启思考模式',
     `enable_tools`        TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '是否启用工具调用',
     `enable_prompt_cache` TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否启用LLM前缀缓存',
@@ -136,7 +154,7 @@ CREATE TABLE IF NOT EXISTS `agent_user_model_runtime_config`
     `last_used_at`        DATETIME              DEFAULT NULL COMMENT '最近使用时间',
     `create_time`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY `uk_employee_model_source` (`employee_id`, `model_name`, `model_source`),
+    UNIQUE KEY `uk_employee_llm_config` (`employee_id`, `llm_config_id`),
     KEY `idx_employee_last_used` (`employee_id`, `last_used_at`),
     KEY `idx_llm_config` (`llm_config_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='员工个人模型运行配置表';
@@ -147,10 +165,10 @@ CREATE TABLE IF NOT EXISTS `agent_user_model_runtime_config`
 Run from workspace root:
 
 ```powershell
-Select-String -Path sql\init.sql -Pattern "enable_prompt_cache|agent_user_model_runtime_config|uk_employee_model_source"
+Select-String -Path sql\init.sql -Pattern "enable_prompt_cache|agent_workspace_preference|agent_user_model_runtime_config|uk_employee_llm_config"
 ```
 
-Expected: output contains all three patterns.
+Expected: output contains all four patterns.
 
 - [ ] **Step 4: Commit DDL first**
 
@@ -167,6 +185,7 @@ Expected: one commit containing only `sql/init.sql`.
 **Files:**
 - Modify: `backend/app/models/llm_model_config.py`
 - Create: `backend/app/models/agent_user_model_runtime_config.py`
+- Create: `backend/app/models/agent_workspace_preference.py`
 - Modify: `backend/app/models/__init__.py`
 - Modify: `backend/app/schemas/agent/request.py`
 - Modify: `backend/app/schemas/agent/response.py`
@@ -219,16 +238,16 @@ from . import Base
 class AgentUserModelRuntimeConfig(Base):
     __tablename__ = "agent_user_model_runtime_config"
     __table_args__ = (
-        UniqueConstraint("employee_id", "model_name", "model_source", name="uk_employee_model_source"),
+        UniqueConstraint("employee_id", "llm_config_id", name="uk_employee_llm_config"),
         Index("idx_employee_last_used", "employee_id", "last_used_at"),
         Index("idx_llm_config", "llm_config_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="员工ID")
-    model_name: Mapped[str] = mapped_column(String(100), nullable=False, comment="模型名称，配置文件默认模型使用__env_default__")
-    model_source: Mapped[str] = mapped_column(String(20), nullable=False, comment="模型来源：env/employee/dept")
-    llm_config_id: Mapped[int | None] = mapped_column(BigInteger, comment="模型连接配置ID，配置文件默认模型为空")
+    llm_config_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="模型连接配置ID")
+    model_name: Mapped[str] = mapped_column(String(100), nullable=False, comment="模型名称快照")
+    model_source: Mapped[str] = mapped_column(String(20), nullable=False, comment="模型来源：employee/dept")
     enable_thinking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, comment="是否开启思考模式")
     enable_tools: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment="是否启用工具调用")
     enable_prompt_cache: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, comment="是否启用LLM前缀缓存")
@@ -244,17 +263,49 @@ class AgentUserModelRuntimeConfig(Base):
     update_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")
 ```
 
-- [ ] **Step 3: Export the new model**
+- [ ] **Step 3: Create `AgentWorkspacePreference` ORM model**
+
+Create `backend/app/models/agent_workspace_preference.py`:
+
+```python
+from datetime import datetime
+
+from sqlalchemy import BigInteger, DateTime, Index, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql import func
+
+from . import Base
+
+
+class AgentWorkspacePreference(Base):
+    __tablename__ = "agent_workspace_preference"
+    __table_args__ = (
+        UniqueConstraint("employee_id", name="uk_agent_workspace_employee"),
+        Index("idx_selected_llm_config", "selected_llm_config_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="员工ID")
+    selected_model_name: Mapped[str | None] = mapped_column(String(100), comment="选中模型名称，配置文件默认模型为空")
+    selected_model_source: Mapped[str] = mapped_column(String(20), nullable=False, default="env", comment="选中模型来源：env/employee/dept")
+    selected_llm_config_id: Mapped[int | None] = mapped_column(BigInteger, comment="选中模型连接配置ID，配置文件默认模型为空")
+    last_selected_at: Mapped[datetime | None] = mapped_column(DateTime, comment="最近选择时间")
+    create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
+    update_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")
+```
+
+- [ ] **Step 4: Export the new models**
 
 In `backend/app/models/__init__.py`, add:
 
 ```python
 from .agent_user_model_runtime_config import AgentUserModelRuntimeConfig
+from .agent_workspace_preference import AgentWorkspacePreference
 ```
 
-Append `"AgentUserModelRuntimeConfig"` to `__all__`.
+Append `"AgentUserModelRuntimeConfig"` and `"AgentWorkspacePreference"` to `__all__`.
 
-- [ ] **Step 4: Add runtime request schemas**
+- [ ] **Step 5: Add runtime request schemas**
 
 In `backend/app/schemas/agent/request.py`, add after constants:
 
@@ -288,7 +339,7 @@ Extend `LlmConfigCreate` with the same fields and defaults; extend `LlmConfigUpd
 
 For `LlmConfigUpdate`, use `bool | None` and `float | None` / `int | None` with `default=None`.
 
-- [ ] **Step 5: Add runtime response schemas**
+- [ ] **Step 6: Add runtime response schemas**
 
 In `backend/app/schemas/agent/response.py`, add runtime fields to `LlmConfigItem`:
 
@@ -330,7 +381,9 @@ class AgentUserModelRuntimeConfigItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 ```
 
-- [ ] **Step 6: Extend `LLMRuntimeConfigDTO`**
+`llm_config_id` remains optional in the response because the same response shape is used for the synthetic configuration-file default model. The database table still requires `agent_user_model_runtime_config.llm_config_id` to be non-null.
+
+- [ ] **Step 7: Extend `LLMRuntimeConfigDTO`**
 
 In `backend/app/schemas/agent/dto.py`, add fields to `LLMRuntimeConfigDTO`:
 
@@ -346,20 +399,20 @@ In `backend/app/schemas/agent/dto.py`, add fields to `LLMRuntimeConfigDTO`:
     frequency_penalty: float = 0
 ```
 
-- [ ] **Step 7: Run syntax validation**
+- [ ] **Step 8: Run syntax validation**
 
 Run from `backend`:
 
 ```powershell
-python -m py_compile app\models\llm_model_config.py app\models\agent_user_model_runtime_config.py app\models\__init__.py app\schemas\agent\request.py app\schemas\agent\response.py app\schemas\agent\dto.py
+python -m py_compile app\models\llm_model_config.py app\models\agent_user_model_runtime_config.py app\models\agent_workspace_preference.py app\models\__init__.py app\schemas\agent\request.py app\schemas\agent\response.py app\schemas\agent\dto.py
 ```
 
 Expected: exit code 0.
 
-- [ ] **Step 8: Commit ORM and schema changes**
+- [ ] **Step 9: Commit ORM and schema changes**
 
 ```powershell
-git add -- backend/app/models/llm_model_config.py backend/app/models/agent_user_model_runtime_config.py backend/app/models/__init__.py backend/app/schemas/agent/request.py backend/app/schemas/agent/response.py backend/app/schemas/agent/dto.py; git commit -m "feat: add agent runtime config schemas"
+git add -- backend/app/models/llm_model_config.py backend/app/models/agent_user_model_runtime_config.py backend/app/models/agent_workspace_preference.py backend/app/models/__init__.py backend/app/schemas/agent/request.py backend/app/schemas/agent/response.py backend/app/schemas/agent/dto.py; git commit -m "feat: add agent runtime config schemas"
 ```
 
 ---
@@ -368,6 +421,7 @@ git add -- backend/app/models/llm_model_config.py backend/app/models/agent_user_
 
 **Files:**
 - Create: `backend/app/repositories/agent_user_model_runtime_config_repository.py`
+- Create: `backend/app/repositories/agent_workspace_preference_repository.py`
 - Modify: `backend/app/repositories/llm_config_repository.py`
 - Create: `backend/app/services/agent_runtime_config_service.py`
 - Test: `backend/tests/services/test_agent_runtime_config_service.py`
@@ -382,6 +436,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.core.exceptions import ValidationError
 from app.schemas.agent.request import AgentRuntimeConfigUpdate
 from app.services.agent_runtime_config_service import ENV_DEFAULT_MODEL_KEY, AgentRuntimeConfigService
 
@@ -390,14 +445,12 @@ class FakeRuntimeRepo:
     def __init__(self):
         self.items = []
 
-    async def get_by_employee_model(self, employee_id, model_name, model_source):
-        return next((item for item in self.items if item.employee_id == employee_id and item.model_name == model_name and item.model_source == model_source), None)
-
-    async def get_recent_by_employee(self, employee_id):
-        matches = [item for item in self.items if item.employee_id == employee_id]
-        return sorted(matches, key=lambda item: item.last_used_at or datetime.min, reverse=True)[0] if matches else None
+    async def get_by_employee_llm_config(self, employee_id, llm_config_id):
+        return next((item for item in self.items if item.employee_id == employee_id and item.llm_config_id == llm_config_id), None)
 
     async def create(self, **kwargs):
+        if kwargs.get("llm_config_id") is None:
+            raise AssertionError("llm_config_id must not be None for personal runtime config")
         item = SimpleNamespace(id=len(self.items) + 1, create_time=None, update_time=None, **kwargs)
         self.items.append(item)
         return item
@@ -414,12 +467,31 @@ class FakeRuntimeRepo:
         return item
 
 
+class FakePreferenceRepo:
+    def __init__(self):
+        self.item = None
+
+    async def get_by_employee(self, employee_id):
+        return self.item if self.item and self.item.employee_id == employee_id else None
+
+    async def upsert(self, employee_id, **kwargs):
+        if self.item is None:
+            self.item = SimpleNamespace(id=1, employee_id=employee_id, create_time=None, update_time=None, **kwargs)
+            return self.item
+        for key, value in kwargs.items():
+            setattr(self.item, key, value)
+        return self.item
+
+
 class FakeLlmService:
     async def list_model_options(self, current_user):
-        return [SimpleNamespace(model_name="qwen-plus", source="employee", config_id=7, biz_type="employee", biz_id=1, config_name="个人模型", base_url="https://example.test")]
+        return [
+            SimpleNamespace(model_name="qwen-plus", source="employee", config_id=7, biz_type="employee", biz_id=1, config_name="????", base_url="https://example.test"),
+            SimpleNamespace(model_name="qwen-dept", source="dept", config_id=8, biz_type="dept", biz_id=2, config_name="????", base_url="https://example.test"),
+        ]
 
     async def get_runtime_config(self, current_user, model_name):
-        return SimpleNamespace(model_name=model_name or "qwen-plus", source="employee", extra_body={"enable_thinking": False})
+        return SimpleNamespace(model_name=model_name or "qwen-default", source="env", extra_body={"enable_thinking": False})
 
     async def get_default_runtime_params(self, config_id):
         return {
@@ -441,11 +513,12 @@ def current_user():
 
 
 @pytest.mark.asyncio
-async def test_get_or_init_copies_model_default_params():
-    service = AgentRuntimeConfigService(FakeRuntimeRepo(), FakeLlmService())
+async def test_get_or_init_copies_model_default_params_with_non_null_llm_config_id():
+    service = AgentRuntimeConfigService(FakeRuntimeRepo(), FakePreferenceRepo(), FakeLlmService())
     item = await service.get_or_init_model_config(current_user(), "qwen-plus")
     assert item.employee_id == 1
     assert item.model_name == "qwen-plus"
+    assert item.model_source == "employee"
     assert item.llm_config_id == 7
     assert item.enable_thinking is True
     assert item.temperature == 0.6
@@ -453,22 +526,24 @@ async def test_get_or_init_copies_model_default_params():
 
 
 @pytest.mark.asyncio
-async def test_update_model_config_is_personal_to_employee_and_model():
-    repo = FakeRuntimeRepo()
-    service = AgentRuntimeConfigService(repo, FakeLlmService())
-    await service.get_or_init_model_config(current_user(), "qwen-plus")
+async def test_update_model_config_rejects_env_default_persistence():
+    service = AgentRuntimeConfigService(FakeRuntimeRepo(), FakePreferenceRepo(), FakeLlmService())
     body = AgentRuntimeConfigUpdate(enable_thinking=False, enable_tools=False, enable_prompt_cache=True, enable_memory=False, temperature=0.2, top_p=0.7, max_tokens=512, presence_penalty=0.1, frequency_penalty=0.2, extra_body={"x": 1})
-    item = await service.update_model_config(current_user(), "qwen-plus", body)
-    assert item.enable_tools is False
-    assert item.enable_prompt_cache is True
-    assert item.max_tokens == 512
+    with pytest.raises(ValidationError):
+        await service.update_model_config(current_user(), None, body)
 
 
 @pytest.mark.asyncio
-async def test_env_default_model_uses_stable_key():
-    service = AgentRuntimeConfigService(FakeRuntimeRepo(), FakeLlmService())
-    item = await service.get_or_init_model_config(current_user(), None)
+async def test_select_env_default_updates_workspace_preference_without_personal_config():
+    runtime_repo = FakeRuntimeRepo()
+    preference_repo = FakePreferenceRepo()
+    service = AgentRuntimeConfigService(runtime_repo, preference_repo, FakeLlmService())
+    item = await service.select_model(current_user(), None)
     assert item.model_name == ENV_DEFAULT_MODEL_KEY
+    assert item.model_source == "env"
+    assert item.llm_config_id is None
+    assert runtime_repo.items == []
+    assert preference_repo.item.selected_model_source == "env"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail before implementation**
@@ -479,9 +554,9 @@ Run from `backend`:
 python -m pytest tests\services\test_agent_runtime_config_service.py -q
 ```
 
-Expected: FAIL because `app.services.agent_runtime_config_service` does not exist.
+Expected: FAIL because `app.services.agent_runtime_config_service` does not exist or does not have the new constructor.
 
-- [ ] **Step 3: Create runtime config repository**
+- [ ] **Step 3: Create personal runtime config repository**
 
 Create `backend/app/repositories/agent_user_model_runtime_config_repository.py`:
 
@@ -500,22 +575,12 @@ class AgentUserModelRuntimeConfigRepository:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def get_by_employee_model(self, employee_id: int, model_name: str, model_source: str) -> AgentUserModelRuntimeConfig | None:
+    async def get_by_employee_llm_config(self, employee_id: int, llm_config_id: int) -> AgentUserModelRuntimeConfig | None:
         result = await self.db.execute(
             select(AgentUserModelRuntimeConfig).where(
                 AgentUserModelRuntimeConfig.employee_id == employee_id,
-                AgentUserModelRuntimeConfig.model_name == model_name,
-                AgentUserModelRuntimeConfig.model_source == model_source,
+                AgentUserModelRuntimeConfig.llm_config_id == llm_config_id,
             )
-        )
-        return result.scalar_one_or_none()
-
-    async def get_recent_by_employee(self, employee_id: int) -> AgentUserModelRuntimeConfig | None:
-        result = await self.db.execute(
-            select(AgentUserModelRuntimeConfig)
-            .where(AgentUserModelRuntimeConfig.employee_id == employee_id)
-            .order_by(AgentUserModelRuntimeConfig.last_used_at.desc(), AgentUserModelRuntimeConfig.update_time.desc(), AgentUserModelRuntimeConfig.id.desc())
-            .limit(1)
         )
         return result.scalar_one_or_none()
 
@@ -544,7 +609,62 @@ class AgentUserModelRuntimeConfigRepository:
         return await self.update(config_id, last_used_at=datetime.now())
 ```
 
-- [ ] **Step 4: Add default runtime parameter helper to LLM service**
+- [ ] **Step 4: Create workspace preference repository**
+
+Create `backend/app/repositories/agent_workspace_preference_repository.py`:
+
+```python
+from datetime import datetime
+
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.agent_workspace_preference import AgentWorkspacePreference
+
+
+class AgentWorkspacePreferenceRepository:
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
+    async def get_by_employee(self, employee_id: int) -> AgentWorkspacePreference | None:
+        result = await self.db.execute(select(AgentWorkspacePreference).where(AgentWorkspacePreference.employee_id == employee_id))
+        return result.scalar_one_or_none()
+
+    async def upsert(
+        self,
+        employee_id: int,
+        selected_model_name: str | None,
+        selected_model_source: str,
+        selected_llm_config_id: int | None,
+    ) -> AgentWorkspacePreference:
+        current = await self.get_by_employee(employee_id)
+        payload = {
+            "selected_model_name": selected_model_name,
+            "selected_model_source": selected_model_source,
+            "selected_llm_config_id": selected_llm_config_id,
+            "last_selected_at": datetime.now(),
+        }
+        try:
+            if current:
+                await self.db.execute(update(AgentWorkspacePreference).where(AgentWorkspacePreference.id == current.id).values(**payload))
+                await self.db.commit()
+                updated = await self.get_by_employee(employee_id)
+                return updated
+            item = AgentWorkspacePreference(employee_id=employee_id, **payload)
+            self.db.add(item)
+            await self.db.commit()
+            await self.db.refresh(item)
+            return item
+        except IntegrityError:
+            await self.db.rollback()
+            updated = await self.get_by_employee(employee_id)
+            if updated:
+                return updated
+            raise
+```
+
+- [ ] **Step 5: Add default runtime parameter helper to LLM service**
 
 In `backend/app/services/llm_config_service.py`, add constants near imports:
 
@@ -566,13 +686,11 @@ DEFAULT_RUNTIME_PARAMS = {
 Add method:
 
 ```python
-    # 获取模型创建时保存的默认运行参数，用于初始化员工个人模型配置
-    async def get_default_runtime_params(self, config_id: int | None) -> dict:
-        if config_id is None:
-            return dict(DEFAULT_RUNTIME_PARAMS)
+    # ??????????????????????????????
+    async def get_default_runtime_params(self, config_id: int) -> dict:
         config = await self.llm_repo.get_by_id(config_id)
         if not config:
-            return dict(DEFAULT_RUNTIME_PARAMS)
+            raise NotFoundError("???????")
         return {
             "enable_thinking": bool(config.enable_thinking),
             "enable_tools": bool(config.enable_tools),
@@ -587,7 +705,7 @@ Add method:
         }
 ```
 
-- [ ] **Step 5: Create runtime config service**
+- [ ] **Step 6: Create runtime config service**
 
 Create `backend/app/services/agent_runtime_config_service.py`:
 
@@ -599,6 +717,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.repositories.agent_user_model_runtime_config_repository import AgentUserModelRuntimeConfigRepository
+from app.repositories.agent_workspace_preference_repository import AgentWorkspacePreferenceRepository
 from app.schemas.agent.request import AgentRuntimeConfigUpdate
 from app.schemas.agent.response import AgentUserModelRuntimeConfigItem
 from app.services.llm_config_service import DEFAULT_RUNTIME_PARAMS, LlmConfigService
@@ -607,78 +726,89 @@ ENV_DEFAULT_MODEL_KEY = "__env_default__"
 
 
 class AgentRuntimeConfigService:
-    def __init__(self, runtime_repo: AgentUserModelRuntimeConfigRepository, llm_service: LlmConfigService) -> None:
+    def __init__(
+        self,
+        runtime_repo: AgentUserModelRuntimeConfigRepository,
+        preference_repo: AgentWorkspacePreferenceRepository,
+        llm_service: LlmConfigService,
+    ) -> None:
         self.runtime_repo = runtime_repo
+        self.preference_repo = preference_repo
         self.llm_service = llm_service
 
-    # 获取或初始化当前员工最近使用模型；没有历史记录时使用配置文件默认模型
+    # ???????????????????????????????????
     async def get_recent_or_default(self, current_user: dict) -> AgentUserModelRuntimeConfigItem:
         employee_id = self._employee_id(current_user)
-        recent = await self.runtime_repo.get_recent_by_employee(employee_id)
-        if recent:
-            return AgentUserModelRuntimeConfigItem.model_validate(recent)
-        return await self.get_or_init_model_config(current_user, None)
+        preference = await self.preference_repo.get_by_employee(employee_id)
+        if not preference or preference.selected_model_source == "env":
+            return self._env_default_item(employee_id)
+        return await self.get_or_init_model_config(current_user, preference.selected_model_name)
 
-    # 获取或初始化当前员工对指定模型的个人运行配置
+    # ???????????????????????????
     async def get_or_init_model_config(self, current_user: dict, model_name: str | None) -> AgentUserModelRuntimeConfigItem:
+        if not model_name:
+            return self._env_default_item(self._employee_id(current_user))
         employee_id = self._employee_id(current_user)
-        normalized_model_name = self._normalize_model_name(model_name)
-        option = await self._resolve_model_option(current_user, model_name)
-        existing = await self.runtime_repo.get_by_employee_model(employee_id, normalized_model_name, option["model_source"])
+        option = await self._resolve_created_model_option(current_user, model_name)
+        existing = await self.runtime_repo.get_by_employee_llm_config(employee_id, option["llm_config_id"])
         if existing:
             return AgentUserModelRuntimeConfigItem.model_validate(existing)
         defaults = await self.llm_service.get_default_runtime_params(option["llm_config_id"])
         payload = {
             **defaults,
             "employee_id": employee_id,
-            "model_name": normalized_model_name,
-            "model_source": option["model_source"],
             "llm_config_id": option["llm_config_id"],
+            "model_name": model_name,
+            "model_source": option["model_source"],
             "last_used_at": datetime.now(),
         }
         try:
             created = await self.runtime_repo.create(**payload)
         except IntegrityError:
-            existing = await self.runtime_repo.get_by_employee_model(employee_id, normalized_model_name, option["model_source"])
+            existing = await self.runtime_repo.get_by_employee_llm_config(employee_id, option["llm_config_id"])
             if not existing:
-                raise ValidationError("个人模型配置初始化失败，请重试")
+                raise ValidationError("???????????????")
             return AgentUserModelRuntimeConfigItem.model_validate(existing)
         return AgentUserModelRuntimeConfigItem.model_validate(created)
 
-    # 保存当前员工对指定模型的个人运行参数
+    # ???????????????????????
     async def update_model_config(self, current_user: dict, model_name: str | None, body: AgentRuntimeConfigUpdate) -> AgentUserModelRuntimeConfigItem:
+        if not model_name:
+            raise ValidationError("?????????????????")
         current = await self.get_or_init_model_config(current_user, model_name)
         updated = await self.runtime_repo.update(current.id, **body.model_dump())
         if not updated:
-            raise NotFoundError("个人模型配置不存在")
+            raise NotFoundError("?????????")
         return AgentUserModelRuntimeConfigItem.model_validate(updated)
 
-    # 刷新最近使用模型，用于下次进入工作台时恢复选择
+    # ??????????????????????????????????
     async def select_model(self, current_user: dict, model_name: str | None) -> AgentUserModelRuntimeConfigItem:
-        current = await self.get_or_init_model_config(current_user, model_name)
-        updated = await self.runtime_repo.touch_last_used(current.id)
+        employee_id = self._employee_id(current_user)
+        if not model_name:
+            await self.preference_repo.upsert(employee_id, None, "env", None)
+            return self._env_default_item(employee_id)
+        item = await self.get_or_init_model_config(current_user, model_name)
+        await self.preference_repo.upsert(employee_id, item.model_name, item.model_source, item.llm_config_id)
+        updated = await self.runtime_repo.touch_last_used(item.id)
         if not updated:
-            raise NotFoundError("个人模型配置不存在")
+            raise NotFoundError("?????????")
         return AgentUserModelRuntimeConfigItem.model_validate(updated)
 
     def _employee_id(self, current_user: dict) -> int:
         return int(current_user["sub"])
 
-    def _normalize_model_name(self, model_name: str | None) -> str:
-        return model_name or ENV_DEFAULT_MODEL_KEY
+    def _env_default_item(self, employee_id: int) -> AgentUserModelRuntimeConfigItem:
+        return AgentUserModelRuntimeConfigItem(employee_id=employee_id, model_name=ENV_DEFAULT_MODEL_KEY, model_source="env", llm_config_id=None, **DEFAULT_RUNTIME_PARAMS)
 
-    async def _resolve_model_option(self, current_user: dict, model_name: str | None) -> dict[str, Any]:
-        if not model_name:
-            runtime_config = await self.llm_service.get_runtime_config(current_user, None)
-            return {"model_source": runtime_config.source, "llm_config_id": None}
+    async def _resolve_created_model_option(self, current_user: dict, model_name: str) -> dict[str, Any]:
         options = await self.llm_service.list_model_options(current_user)
         for option in options:
-            if option.model_name == model_name:
+            if option.model_name == model_name and option.config_id is not None and option.source != "env":
                 return {"model_source": option.source, "llm_config_id": option.config_id}
-        raise NotFoundError("模型不可用")
+        raise NotFoundError("?????")
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [ ] **Step 7: Run focused tests**
 
 Run from `backend`:
 
@@ -688,20 +818,20 @@ python -m pytest tests\services\test_agent_runtime_config_service.py -q
 
 Expected: PASS.
 
-- [ ] **Step 7: Run syntax validation**
+- [ ] **Step 8: Run syntax validation**
 
 Run from `backend`:
 
 ```powershell
-python -m py_compile app\repositories\agent_user_model_runtime_config_repository.py app\repositories\llm_config_repository.py app\services\agent_runtime_config_service.py app\services\llm_config_service.py
+python -m py_compile app\repositories\agent_user_model_runtime_config_repository.py app\repositories\agent_workspace_preference_repository.py app\repositories\llm_config_repository.py app\services\agent_runtime_config_service.py app\services\llm_config_service.py
 ```
 
 Expected: exit code 0.
 
-- [ ] **Step 8: Commit repository/service changes**
+- [ ] **Step 9: Commit repository/service changes**
 
 ```powershell
-git add -- backend/app/repositories/agent_user_model_runtime_config_repository.py backend/app/repositories/llm_config_repository.py backend/app/services/agent_runtime_config_service.py backend/app/services/llm_config_service.py backend/tests/services/test_agent_runtime_config_service.py; git commit -m "feat: add user model runtime config service"
+git add -- backend/app/repositories/agent_user_model_runtime_config_repository.py backend/app/repositories/agent_workspace_preference_repository.py backend/app/repositories/llm_config_repository.py backend/app/services/agent_runtime_config_service.py backend/app/services/llm_config_service.py backend/tests/services/test_agent_runtime_config_service.py; git commit -m "feat: add user model runtime config service"
 ```
 
 ---
@@ -873,6 +1003,7 @@ In `backend/app/api/v1/endpoints/agent.py`, import repository/service:
 
 ```python
 from app.repositories.agent_user_model_runtime_config_repository import AgentUserModelRuntimeConfigRepository
+from app.repositories.agent_workspace_preference_repository import AgentWorkspacePreferenceRepository
 from app.schemas.agent.request import AgentRuntimeConfigUpdate
 from app.schemas.agent.response import AgentUserModelRuntimeConfigItem
 from app.services.agent_runtime_config_service import AgentRuntimeConfigService, ENV_DEFAULT_MODEL_KEY
@@ -883,13 +1014,13 @@ Add dependency:
 ```python
 def get_agent_runtime_config_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> AgentRuntimeConfigService:
     llm_service = LlmConfigService(LlmConfigRepository(db), EmployeeRepository(db), DeptRepository(db), cache)
-    return AgentRuntimeConfigService(AgentUserModelRuntimeConfigRepository(db), llm_service)
+    return AgentRuntimeConfigService(AgentUserModelRuntimeConfigRepository(db), AgentWorkspacePreferenceRepository(db), llm_service)
 ```
 
 Update `get_agent_service` so `AgentService` receives runtime config service:
 
 ```python
-runtime_config_service = AgentRuntimeConfigService(AgentUserModelRuntimeConfigRepository(db), llm_service)
+runtime_config_service = AgentRuntimeConfigService(AgentUserModelRuntimeConfigRepository(db), AgentWorkspacePreferenceRepository(db), llm_service)
 return AgentService(
     AgentRepository(db),
     llm_service,
