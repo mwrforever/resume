@@ -1,9 +1,10 @@
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 
 from app.core.config import get_settings
 from app.llm.gateway import LLMGatewayError, OpenAICompatibleGateway
-from app.schemas.agent.dto import LLMResultDTO, LLMRuntimeConfigDTO
+from app.schemas.agent.dto import LLMResultDTO, LLMRuntimeConfigDTO, LLMStreamChunkDTO
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -16,6 +17,10 @@ class LLMModelRouter:
 
     async def complete(self, prompt: str, runtime_config: LLMRuntimeConfigDTO) -> LLMResultDTO:
         return await self._complete_with_route(prompt, runtime_config)
+
+    async def stream(self, prompt: str, runtime_config: LLMRuntimeConfigDTO) -> AsyncIterator[LLMStreamChunkDTO]:
+        async for chunk in self._stream_with_route(prompt, runtime_config):
+            yield chunk
 
     async def _complete_with_route(self, prompt: str, runtime_config: LLMRuntimeConfigDTO) -> LLMResultDTO:
         gateway = self.gateways.get(runtime_config.protocol)
@@ -34,6 +39,21 @@ class LLMModelRouter:
             fallback_config = runtime_config.model_copy(update={"model_name": runtime_config.fallback_model_name, "fallback_model_name": None})
             return await self._complete_with_route(prompt, fallback_config)
         raise LLMGatewayError(str(last_error) if last_error else "模型调用失败")
+
+    async def _stream_with_route(self, prompt: str, runtime_config: LLMRuntimeConfigDTO) -> AsyncIterator[LLMStreamChunkDTO]:
+        gateway = self.gateways.get(runtime_config.protocol)
+        if not gateway:
+            raise LLMGatewayError("模型协议暂不支持")
+        try:
+            async for chunk in gateway.stream_once(prompt, runtime_config):
+                yield chunk
+        except LLMGatewayError as exc:
+            if runtime_config.fallback_model_name and runtime_config.model_name != runtime_config.fallback_model_name:
+                fallback_config = runtime_config.model_copy(update={"model_name": runtime_config.fallback_model_name, "fallback_model_name": None})
+                async for chunk in self._stream_with_route(prompt, fallback_config):
+                    yield chunk
+                return
+            raise exc
 
 
 DEFAULT_MODEL_ROUTER = LLMModelRouter()

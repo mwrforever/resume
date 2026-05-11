@@ -84,6 +84,16 @@ class ApplicationRepository:
         await self.db.commit()
         return True
 
+    async def update_status_active_without_commit(self, app_id: int, status: int) -> bool:
+        """更新未删除投递状态但不提交事务，由 Service 统一控制动作确认事务边界"""
+        result = await self.db.execute(
+            update(JobApplication)
+            .where(JobApplication.id == app_id, JobApplication.is_deleted == 0)
+            .values(status=status)
+        )
+        await self.db.flush()
+        return (result.rowcount or 0) > 0
+
     async def soft_delete(self, app_id: int) -> bool:
         """撤回投递（软删除）"""
         await self.db.execute(

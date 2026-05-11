@@ -1,11 +1,17 @@
+import json
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import StreamingResponse
 
 from app.deps import get_cache, get_current_user, get_db
 from app.repositories.agent_repository import AgentRepository
 from app.repositories.agent_memory_repository import AgentMemoryRepository
+from app.repositories.application_repository import ApplicationRepository
 from app.repositories.dept_repository import DeptRepository
 from app.repositories.employee_repository import EmployeeRepository
+from app.repositories.evaluation_repository import EvalRepository
+from app.repositories.job_repository import JobRepository
 from app.repositories.llm_config_repository import LlmConfigRepository
 from app.schemas.common import ApiResponse, PageData
 from app.schemas.agent.request import AgentActionReject, AgentMessageCreate, AgentModelSelect, AgentSessionCreate, AgentSessionUpdate, LlmConfigCreate, LlmConfigUpdate
@@ -26,7 +32,14 @@ def get_llm_service(db: AsyncSession = Depends(get_db), cache: CacheService = De
 def get_agent_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> AgentService:
     llm_service = LlmConfigService(LlmConfigRepository(db), EmployeeRepository(db), DeptRepository(db), cache)
     context_service = AgentContextService(AgentMemoryRepository(db), cache)
-    return AgentService(AgentRepository(db), llm_service, context_service)
+    return AgentService(
+        AgentRepository(db),
+        llm_service,
+        context_service,
+        job_repo=JobRepository(db),
+        app_repo=ApplicationRepository(db),
+        eval_repo=EvalRepository(db),
+    )
 
 
 @llm_router.get("/llm-model-options", response_model=ApiResponse[list[LlmModelOption]])
@@ -140,6 +153,21 @@ async def send_message(
     current_user: dict = Depends(get_current_user),
 ) -> ApiResponse[AgentReply]:
     return ApiResponse(data=await service.send_message(session_id, body, current_user))
+
+
+@agent_router.post("/sessions/{session_id}/messages/stream")
+async def stream_message(
+    session_id: int,
+    body: AgentMessageCreate,
+    service: AgentService = Depends(get_agent_service),
+    current_user: dict = Depends(get_current_user),
+) -> StreamingResponse:
+    async def event_generator():
+        async for event in service.stream_message(session_id, body, current_user):
+            payload = json.dumps(event.data, ensure_ascii=False)
+            yield f"event: {event.event}\ndata: {payload}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @agent_router.post("/sessions/{session_id}/select-model", response_model=ApiResponse[AgentSessionItem])

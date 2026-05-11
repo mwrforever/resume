@@ -170,3 +170,8 @@ class AgentReply(BaseModel):
     snapshot: AgentContextSnapshotItem | None = None
     memories: list[AgentMemoryItem] = Field(default_factory=list)
     session_window: AgentSessionWindowItem | None = None
+
+
+class AgentStreamEvent(BaseModel):
+    event: str
+    data: dict[str, Any] = Field(default_factory=dict)

@@ -6,6 +6,26 @@
 endpoint → service → repository → db/redis → schema
 ```
 
+### 1.0 项目技术栈规范
+
+**后端技术栈：**
+- Python 3.12+、FastAPI、Pydantic v2、SQLAlchemy 2.x Async ORM、aiomysql、redis.asyncio、Celery。
+- AI/Agent 技术栈必须以 LangGraph 作为 Agent 编排运行时，LangChain/LangChain OpenAI 仅作为模型、Prompt、链路组件能力使用，禁止把 Agent 平台实现为单次 LangChain API 包装。
+- LLM 调用必须采用 `model_router → gateway → provider client` 分层：
+  - `model_router`：负责模型路由、重试、fallback、协议选择。
+  - `gateway`：负责协议适配（如 OpenAI-compatible）、请求构造、响应归一化、token usage 提取。
+  - `provider client`：只能封装具体 SDK，不允许承载业务规则。
+- Agent Runtime 必须通过 LangGraph graph/node/state 表达可编排流程，Service 层只负责业务状态、权限、持久化和调用 graph，禁止在 Service 中直接拼装复杂 Agent 流程。
+
+**前端技术栈：**
+- React 19、TypeScript、Vite、Tailwind CSS、React Router、Zustand、Axios、Lucide React。
+- UI 风格必须遵循企业级 HR SaaS 后台：专业蓝色体系、高对比文本、清晰信息层级、扁平化卡片、可观测 Trace 面板、可访问表单控件。
+- 前端接口调用必须经过 `src/api/`，业务页面禁止直接调用 axios。
+
+**代码风格规范**
+- 输出的代码必须要包含详细的中文代码注释，增加代码可读性，必须检查注释不要乱码
+- 核心业务流程必须包含详细的中文日志记录，方便问题排查
+
 ### 1.1 后端目录结构（优化后的模块化 schemas）
 
 ```text
@@ -43,10 +63,16 @@ backend/
 │   │   ├── resume.py
 │   │   └── ...
 │   │
-│   ├── schemas/                  # 按模块拆分 + 每个业务内按照request/response/dto拆分,如{业务操作}Request（router层请求参数），{业务操作}Response（router层响应参数），{业务操作}DTO（service层参数）
-│   │   ├── base.py               # 公共DTO/基础模型
-│   │   ├── user.py
-│   │   ├── employee.py
+│   ├── schemas/                  # 按模块拆分，每个业务模块内聚 request/response/dto
+│   │   ├── common.py             # 公共响应/分页结构
+│   │   ├── agent/
+│   │   │   ├── request.py
+│   │   │   ├── response.py
+│   │   │   └── dto.py
+│   │   ├── user/
+│   │   │   ├── request.py
+│   │   │   ├── response.py
+│   │   │   └── dto.py
 │   │   └── ...                   # 其他业务模块同理
 │   │
 │   ├── services/                 # 业务逻辑层
@@ -63,7 +89,10 @@ backend/
 │   │   ├── mysql.py
 │   │   └── redis.py
 │   │
-│   ├── llm/                       # LLM调用链
+│   ├── llm/                       # LLM/Agent 调用链
+│   │   ├── model_router.py        # 模型路由、fallback、重试
+│   │   ├── gateway.py             # 协议网关、响应归一化
+│   │   ├── graphs/                # LangGraph Agent 编排
 │   │   ├── clients/
 │   │   ├── chains/
 │   │   ├── prompts/

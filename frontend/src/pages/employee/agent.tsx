@@ -3,7 +3,7 @@ import { Activity, AlertCircle, BarChart3, Bot, Brain, ChevronLeft, ChevronRight
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { Pagination } from '@/components/common/pagination';
 import { AdminLayout } from '@/components/layout/admin-layout';
-import { Badge } from '@/components/ui/badge';
+import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -12,16 +12,44 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { employeeAgentApi, employeeLlmApi } from '@/api/employee/agent';
 import { useAuthStore } from '@/store/auth';
-import type { IAgentMemoryItem, IAgentMessageItem, IAgentRunItem, IAgentSessionItem, IAgentSessionWindowItem, ILlmModelOption } from '@/types/agent';
+import type { IAgentActionStreamItem, IAgentMemoryItem, IAgentMessageItem, IAgentReply, IAgentRunItem, IAgentSessionItem, IAgentSessionWindowItem, IAgentToolStreamItem, ILlmModelOption } from '@/types/agent';
 
 type WorkspaceSession = IAgentSessionItem & { isLocal?: boolean };
 type PanelDialogType = 'metrics' | 'memories' | 'runs' | null;
+type BadgeVariant = BadgeProps['variant'];
 
 const DEFAULT_MODEL_VALUE = '__default__';
 const runStatusLabel: Record<number, string> = { 1: '执行中', 2: '成功', 3: '失败' };
+const actionStatusLabelMap: Record<number, string> = { 1: '待确认', 3: '已确认', 4: '已拒绝' };
+const applicationStatusLabelMap: Record<number, string> = { 1: '待处理', 2: '已查看', 3: '面试中', 4: '已拒绝', 5: '已录用' };
 const hiddenScrollClass = '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden';
 const featureButtons = [{ type: 'metrics' as const, icon: Activity, label: '指标' }, { type: 'memories' as const, icon: Brain, label: '记忆' }, { type: 'runs' as const, icon: Cpu, label: 'Trace' }];
 const collapsedButtons = [{ type: 'metrics' as const, icon: BarChart3 }, { type: 'memories' as const, icon: Brain }, { type: 'runs' as const, icon: Cpu }];
+
+function getRunStatusVariant(status: number): BadgeVariant {
+  if (status === 2) return 'success';
+  if (status === 3) return 'danger';
+  return 'secondary';
+}
+
+function getActionStatusVariant(status: number): BadgeVariant {
+  if (status === 1) return 'warning';
+  if (status === 3) return 'success';
+  return 'secondary';
+}
+
+function getActionStatusLabel(status: number) {
+  return actionStatusLabelMap[status] || '已处理';
+}
+
+function getToolEventVariant(item: IAgentToolStreamItem): BadgeVariant {
+  if (item.type === 'result' && item.success === false) return 'danger';
+  return 'secondary';
+}
+
+function getToolEventLabel(type: IAgentToolStreamItem['type']) {
+  return type === 'call' ? '调用' : '结果';
+}
 
 function blockText(block: Record<string, unknown>) {
   if (typeof block.text === 'string') return block.text;
@@ -79,23 +107,152 @@ interface FeatureDialogProps {
   type: PanelDialogType;
   runs: IAgentRunItem[];
   memories: IAgentMemoryItem[];
+  toolEvents: IAgentToolStreamItem[];
   totalTokens: number;
   latestRun?: IAgentRunItem;
   onClose: () => void;
 }
 
-function FeatureDialog({ type, runs, memories, totalTokens, latestRun, onClose }: FeatureDialogProps) {
+function MetricCard({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-xl font-bold text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+function RunMetricItem({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-lg bg-slate-50 p-2">
+      <div>{label}</div>
+      <div className="mt-1 font-semibold text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+function MetricsPanel({ runs, totalTokens, latestRun }: Pick<FeatureDialogProps, 'runs' | 'totalTokens' | 'latestRun'>) {
+  return (
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      <MetricCard label="Tokens" value={totalTokens} />
+      <MetricCard label="最近延迟" value={`${latestRun?.latency_ms ?? 0}ms`} />
+      <MetricCard label="运行次数" value={runs.length} />
+    </div>
+  );
+}
+
+function MemoriesPanel({ memories }: Pick<FeatureDialogProps, 'memories'>) {
+  return (
+    <div className="space-y-3">
+      {memories.map((memory) => (
+        <div key={memory.id} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-700">
+          <div className="mb-1 font-semibold text-slate-900">{memory.memory_type}</div>
+          {memory.content}
+        </div>
+      ))}
+      {memories.length === 0 && <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-6 text-sm text-slate-600">暂无记忆。</div>}
+    </div>
+  );
+}
+
+function ToolEventsPanel({ toolEvents }: Pick<FeatureDialogProps, 'toolEvents'>) {
+  if (toolEvents.length === 0) return null;
+
+  return (
+    <div className="rounded-2xl border border-sky-200 bg-sky-50/60 p-4">
+      <div className="mb-3 text-sm font-semibold text-slate-900">实时工具事件</div>
+      <div className="space-y-2">
+        {toolEvents.map((item) => (
+          <div key={item.id} className="rounded-xl border border-white/80 bg-white p-3 text-xs text-slate-600">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="font-semibold text-slate-900">{item.display_name}</span>
+              <Badge variant={getToolEventVariant(item)}>{getToolEventLabel(item.type)}</Badge>
+            </div>
+            <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-slate-50 p-2">{JSON.stringify(item.payload, null, 2)}</pre>
+            {item.error_message && <div className="mt-2 text-red-600">{item.error_message}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RunCard({ run }: { run: IAgentRunItem }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="flex items-center justify-between gap-2">
+        <Badge variant={getRunStatusVariant(run.status)}>{runStatusLabel[run.status] || run.run_type}</Badge>
+        <span className="text-xs text-slate-500">#{run.trace_id.slice(0, 8)}</span>
+      </div>
+      <div className="mt-3 text-sm font-semibold text-slate-900">{run.model_name || '配置文件默认模型'}</div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-600">
+        <RunMetricItem label="Prompt" value={run.prompt_tokens} />
+        <RunMetricItem label="Completion" value={run.completion_tokens} />
+        <RunMetricItem label="Latency" value={run.latency_ms ?? 0} />
+      </div>
+      {run.error_message && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">{run.error_message}</div>}
+    </div>
+  );
+}
+
+function RunsPanel({ runs, toolEvents }: Pick<FeatureDialogProps, 'runs' | 'toolEvents'>) {
+  const isEmpty = runs.length === 0 && toolEvents.length === 0;
+
+  return (
+    <div className="space-y-3">
+      <ToolEventsPanel toolEvents={toolEvents} />
+      {runs.map((run) => <RunCard key={run.id} run={run} />)}
+      {isEmpty && <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-6 text-sm text-slate-600">暂无运行记录。</div>}
+    </div>
+  );
+}
+
+function FeatureDialog({ type, runs, memories, toolEvents, totalTokens, latestRun, onClose }: FeatureDialogProps) {
   const titleMap: Record<Exclude<PanelDialogType, null>, string> = { metrics: '运行指标', memories: '长期记忆', runs: 'Trace 记录' };
 
   return (
     <Dialog open={!!type} onOpenChange={(value) => !value && onClose()} containerClassName="max-w-3xl rounded-2xl">
       <DialogContent className={`max-h-[82vh] overflow-y-auto ${hiddenScrollClass}`}>
-        <div className="mb-4 flex items-center justify-between"><DialogTitle className="mb-0">{type ? titleMap[type] : ''}</DialogTitle><button type="button" onClick={onClose} aria-label="关闭" className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X size={18} /></button></div>
-        {type === 'metrics' && <div className="grid grid-cols-1 gap-3 md:grid-cols-3"><div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="text-xs text-slate-500">Tokens</div><div className="mt-1 text-xl font-bold text-slate-900">{totalTokens}</div></div><div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="text-xs text-slate-500">最近延迟</div><div className="mt-1 text-xl font-bold text-slate-900">{latestRun?.latency_ms ?? 0}ms</div></div><div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="text-xs text-slate-500">运行次数</div><div className="mt-1 text-xl font-bold text-slate-900">{runs.length}</div></div></div>}
-        {type === 'memories' && <div className="space-y-3">{memories.map((memory) => <div key={memory.id} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-700"><div className="mb-1 font-semibold text-slate-900">{memory.memory_type}</div>{memory.content}</div>)}{memories.length === 0 && <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-6 text-sm text-slate-600">暂无记忆。</div>}</div>}
-        {type === 'runs' && <div className="space-y-3">{runs.map((run) => <div key={run.id} className="rounded-2xl border border-slate-200 bg-white p-4"><div className="flex items-center justify-between gap-2"><Badge variant={run.status === 2 ? 'success' : run.status === 3 ? 'danger' : 'secondary'}>{runStatusLabel[run.status] || run.run_type}</Badge><span className="text-xs text-slate-500">#{run.trace_id.slice(0, 8)}</span></div><div className="mt-3 text-sm font-semibold text-slate-900">{run.model_name || '配置文件默认模型'}</div><div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-600"><div className="rounded-lg bg-slate-50 p-2"><div>Prompt</div><div className="mt-1 font-semibold text-slate-900">{run.prompt_tokens}</div></div><div className="rounded-lg bg-slate-50 p-2"><div>Completion</div><div className="mt-1 font-semibold text-slate-900">{run.completion_tokens}</div></div><div className="rounded-lg bg-slate-50 p-2"><div>Latency</div><div className="mt-1 font-semibold text-slate-900">{run.latency_ms ?? 0}</div></div></div>{run.error_message && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">{run.error_message}</div>}</div>)}{runs.length === 0 && <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-6 text-sm text-slate-600">暂无执行记录。</div>}</div>}
+        <div className="mb-4 flex items-center justify-between">
+          <DialogTitle className="mb-0">{type ? titleMap[type] : ''}</DialogTitle>
+          <button type="button" onClick={onClose} aria-label="关闭" className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X size={18} /></button>
+        </div>
+        {type === 'metrics' && <MetricsPanel runs={runs} totalTokens={totalTokens} latestRun={latestRun} />}
+        {type === 'memories' && <MemoriesPanel memories={memories} />}
+        {type === 'runs' && <RunsPanel runs={runs} toolEvents={toolEvents} />}
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface AgentActionCardProps {
+  action: IAgentActionStreamItem;
+  onConfirm: (action: IAgentActionStreamItem) => void;
+  onReject: (action: IAgentActionStreamItem) => void;
+}
+
+function AgentActionCard({ action, onConfirm, onReject }: AgentActionCardProps) {
+  const application = action.preview_payload?.application as Record<string, unknown> | undefined;
+  const targetStatus = action.preview_payload?.target_status;
+  const targetStatusLabel = typeof targetStatus === 'number' ? applicationStatusLabelMap[targetStatus] || String(targetStatus) : '待确认';
+
+  return (
+    <div className="ml-11 max-w-3xl rounded-3xl border border-amber-200 bg-amber-50/80 p-4 text-sm shadow-sm shadow-amber-100/70">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 font-semibold text-slate-900"><Bot size={15} className="text-amber-600" aria-hidden="true" />需要你确认操作</div>
+          <div className="mt-1 text-slate-600">{action.action_name}</div>
+        </div>
+        <Badge variant={getActionStatusVariant(action.status)}>{getActionStatusLabel(action.status)}</Badge>
+      </div>
+      <div className="mt-3 grid gap-2 rounded-2xl border border-white/80 bg-white/80 p-3 text-xs text-slate-600 md:grid-cols-2">
+        <div><span className="font-semibold text-slate-800">投递ID：</span>{action.target_id || '-'}</div>
+        <div><span className="font-semibold text-slate-800">目标状态：</span>{targetStatusLabel}</div>
+        <div><span className="font-semibold text-slate-800">岗位：</span>{String(application?.job_name || '-')}</div>
+        <div><span className="font-semibold text-slate-800">候选人：</span>{String(application?.user_name || '-')}</div>
+      </div>
+      {action.status === 1 && <div className="mt-3 flex justify-end gap-2"><Button type="button" size="sm" variant="outline" onClick={() => onReject(action)}>拒绝</Button><Button type="button" size="sm" onClick={() => onConfirm(action)}>确认执行</Button></div>}
+    </div>
   );
 }
 
@@ -154,6 +311,8 @@ export default function EmployeeAgent() {
   const [messages, setMessages] = useState<IAgentMessageItem[]>([]);
   const [runs, setRuns] = useState<IAgentRunItem[]>([]);
   const [memories, setMemories] = useState<IAgentMemoryItem[]>([]);
+  const [toolEvents, setToolEvents] = useState<IAgentToolStreamItem[]>([]);
+  const [actions, setActions] = useState<IAgentActionStreamItem[]>([]);
   const [, setSessionWindow] = useState<IAgentSessionWindowItem | null>(null);
   const [models, setModels] = useState<ILlmModelOption[]>([]);
   const [selectedModelName, setSelectedModelName] = useState<string | null>(null);
@@ -174,7 +333,7 @@ export default function EmployeeAgent() {
   const totalTokens = useMemo(() => runs.reduce((sum, run) => sum + (run.total_tokens || 0), 0), [runs]);
   const selectableModels = useMemo(() => models.filter((model) => model.source !== 'env'), [models]);
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages.length, sending]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages.length, actions.length, sending]);
 
   const loadSessions = useCallback(async () => {
     const res = await employeeAgentApi.listSessions({ page: 1, page_size: 100 });
@@ -186,7 +345,7 @@ export default function EmployeeAgent() {
     setModels(res.data || []);
   }, []);
 
-  const clearConversation = () => { setMessages([]); setRuns([]); setMemories([]); setSessionWindow(null); setInput(''); };
+  const clearConversation = () => { setMessages([]); setRuns([]); setMemories([]); setToolEvents([]); setActions([]); setSessionWindow(null); setInput(''); };
 
   const createLocalSession = (modelName: string | null = selectedModelName) => {
     const selectedModel = models.find((model) => model.model_name === modelName);
@@ -220,6 +379,9 @@ export default function EmployeeAgent() {
       setSelectedModelName(detail.data.session.selected_model_name || null);
       setMessages(detail.data.messages);
       setMemories(detail.data.memories || []);
+      setToolEvents([]);
+      const actionRes = await employeeAgentApi.listActions(session.id);
+      setActions(actionRes.data || []);
       setSessionWindow(detail.data.session_window || null);
       const runRes = await employeeAgentApi.listRuns(session.id);
       setRuns(runRes.data || []);
@@ -266,8 +428,10 @@ export default function EmployeeAgent() {
     const content = input.trim();
     const activeSession = currentSession || createLocalSession(selectedModelName);
     const oldSessionId = activeSession.id;
+    const streamingMessageId = -Date.now();
     setErrorMessage('');
     setSending(true);
+    setToolEvents([]);
     setInput('');
     try {
       let persistedSession: WorkspaceSession = activeSession;
@@ -276,19 +440,84 @@ export default function EmployeeAgent() {
         persistedSession = createRes.data;
         replaceSession(persistedSession, oldSessionId);
       }
-      const res = await employeeAgentApi.sendMessage(persistedSession.id, { content, context_refs: [] });
-      const nextSession = res.data.session || { ...persistedSession, title: buildLocalTitle(content), context_summary: buildLocalTitle(content) };
-      replaceSession(nextSession, oldSessionId);
-      setMessages((prev) => [...prev, res.data.user_message, res.data.agent_message]);
-      setRuns((prev) => [res.data.run, ...prev]);
-      setMemories(res.data.memories || []);
-      setSessionWindow(res.data.session_window || null);
+      await employeeAgentApi.streamMessage(persistedSession.id, { content, context_refs: [] }, (streamEvent) => {
+        if (streamEvent.event === 'user_message') {
+          const userMessage = streamEvent.data.message as IAgentMessageItem;
+          setMessages((prev) => prev.some((message) => message.id === userMessage.id) ? prev : [...prev, userMessage]);
+        }
+        if (streamEvent.event === 'run_started') {
+          const run = streamEvent.data.run as IAgentRunItem;
+          setRuns((prev) => [run, ...prev.filter((item) => item.id !== run.id)]);
+        }
+        if (streamEvent.event === 'tool_call') {
+          const toolCall = streamEvent.data.tool_call as Record<string, unknown>;
+          setToolEvents((prev) => [...prev, { id: `call-${Date.now()}-${prev.length}`, type: 'call', tool_name: String(toolCall.tool_name || ''), display_name: String(toolCall.display_name || '工具调用'), payload: (toolCall.input_payload as Record<string, unknown>) || {} }]);
+        }
+        if (streamEvent.event === 'tool_result') {
+          const toolResult = streamEvent.data.tool_result as Record<string, unknown>;
+          setToolEvents((prev) => [...prev, { id: `result-${Date.now()}-${prev.length}`, type: 'result', tool_name: String(toolResult.tool_name || ''), display_name: String(toolResult.display_name || '工具结果'), payload: (toolResult.output_payload as Record<string, unknown>) || {}, success: Boolean(toolResult.success), error_message: typeof toolResult.error_message === 'string' ? toolResult.error_message : null }]);
+        }
+        if (streamEvent.event === 'action_required') {
+          const action = streamEvent.data.action as IAgentActionStreamItem;
+          setActions((prev) => [action, ...prev.filter((item) => item.id !== action.id)]);
+        }
+        if (streamEvent.event === 'token') {
+          const delta = typeof streamEvent.data.delta === 'string' ? streamEvent.data.delta : '';
+          if (!delta) return;
+          setMessages((prev) => {
+            const existing = prev.find((message) => message.id === streamingMessageId);
+            if (!existing) {
+              return [...prev, { id: streamingMessageId, session_id: persistedSession.id, parent_message_id: null, role: 'agent', message_type: 'text', content: { context_refs: [], blocks: [{ type: 'text', text: delta }] }, model_name: null, token_count: null, sort_order: prev.length + 1, create_time: null }];
+            }
+            return prev.map((message) => message.id === streamingMessageId ? { ...message, content: { ...message.content, blocks: [{ type: 'text', text: `${blockText(message.content.blocks?.[0] || {})}${delta}` }] } } : message);
+          });
+        }
+        if (streamEvent.event === 'final' || streamEvent.event === 'error') {
+          const reply = streamEvent.data.reply as IAgentReply | undefined;
+          if (!reply) return;
+          const nextSession = reply.session || { ...persistedSession, title: buildLocalTitle(content), context_summary: buildLocalTitle(content) };
+          replaceSession(nextSession, oldSessionId);
+          setMessages((prev) => [...prev.filter((message) => message.id !== streamingMessageId && message.id !== reply.user_message.id && message.id !== reply.agent_message.id), reply.user_message, reply.agent_message]);
+          setRuns((prev) => [reply.run, ...prev.filter((run) => run.id !== reply.run.id)]);
+          setMemories(reply.memories || []);
+          setSessionWindow(reply.session_window || null);
+        }
+      });
       await loadSessions();
     } catch {
       setInput(content);
       setErrorMessage('消息发送失败，请检查模型配置或稍后重试。');
     } finally { setSending(false); }
   };
+
+  const confirmAgentAction = async (action: IAgentActionStreamItem) => {
+    const res = await employeeAgentApi.confirmAction(action.id);
+    setActions((prev) => prev.map((item) => item.id === action.id ? res.data : item));
+  };
+
+  const rejectAgentAction = async (action: IAgentActionStreamItem) => {
+    const res = await employeeAgentApi.rejectAction(action.id, '用户在会话内容中拒绝');
+    setActions((prev) => prev.map((item) => item.id === action.id ? res.data : item));
+  };
+
+  const actionsByMessageId = useMemo(() => {
+    const agentReplyByParentId = new Map<number, number>();
+    messages.forEach((message) => {
+      if (message.role === 'agent' && typeof message.parent_message_id === 'number') {
+        agentReplyByParentId.set(message.parent_message_id, message.id);
+      }
+    });
+    const grouped = new Map<number, IAgentActionStreamItem[]>();
+    actions.forEach((action) => {
+      if (typeof action.message_id !== 'number') return;
+      const displayMessageId = agentReplyByParentId.get(action.message_id) || action.message_id;
+      grouped.set(displayMessageId, [...(grouped.get(displayMessageId) || []), action]);
+    });
+    grouped.forEach((items) => items.sort((left, right) => left.id - right.id));
+    return grouped;
+  }, [actions, messages]);
+
+  const floatingActions = useMemo(() => actions.filter((action) => typeof action.message_id !== 'number').sort((left, right) => left.id - right.id), [actions]);
 
   return (
     <AdminLayout breadcrumbs={[{ label: 'Agent 平台' }, { label: 'Agent 工作台' }]} title="Agent 工作台">
@@ -299,13 +528,16 @@ export default function EmployeeAgent() {
         </aside>
         <main className="flex min-h-0 flex-col overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-sm shadow-slate-200/70 backdrop-blur">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3"><div className="flex min-w-0 items-center gap-3"><div className="w-64 shrink-0"><Select value={selectedModelName || DEFAULT_MODEL_VALUE} onValueChange={selectModel}><SelectTrigger className="h-9 rounded-2xl"><SelectValue /></SelectTrigger><SelectContent><SelectItem value={DEFAULT_MODEL_VALUE}>配置文件默认模型</SelectItem>{selectableModels.map((model) => <SelectItem key={`${model.source}-${model.model_name}`} value={model.model_name}>{model.model_name}</SelectItem>)}</SelectContent></Select></div><div className="min-w-0"><h1 className="truncate text-base font-semibold text-slate-900">{currentSession?.title || '新会话'}</h1><p className="mt-0.5 truncate text-xs text-slate-500">未选会话时发送消息会自动创建并保存。</p></div></div><button type="button" onClick={() => setRightPanelOpen((value) => !value)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-sm hover:border-primary/30 hover:bg-sky-50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{rightPanelOpen ? <ChevronRight size={15} aria-hidden="true" /> : <ChevronLeft size={15} aria-hidden="true" />}功能栏</button></div>
-          <div className={`min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.07),transparent_20rem),linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] px-4 py-6 ${hiddenScrollClass}`}>{errorMessage && <div role="alert" className="mx-auto mb-4 flex max-w-3xl gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"><AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" /><span>{errorMessage}</span></div>}<div className="mx-auto flex max-w-3xl flex-col gap-5">{messages.map((message) => { const isUser = message.role === 'user'; return <div key={message.id} className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>{!isUser && <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-primary"><Bot size={16} aria-hidden="true" /></div>}<div className={`max-w-[86%] rounded-3xl px-4 py-3 text-sm leading-6 shadow-sm ${isUser ? 'bg-primary text-white shadow-sky-900/10' : 'border border-slate-200 bg-white text-slate-900 shadow-slate-200/70'}`}><div className="mb-2 flex items-center gap-2 text-xs font-semibold opacity-80">{isUser ? <UserRound size={14} aria-hidden="true" /> : <Bot size={14} aria-hidden="true" />}{isUser ? '你' : 'Agent'}{message.model_name && <span>· {message.model_name}</span>}</div><div className="space-y-2 whitespace-pre-wrap">{(message.content.blocks || []).map((block, index) => <div key={index}>{blockText(block)}</div>)}</div>{message.token_count ? <div className="mt-2 text-xs opacity-70">tokens: {message.token_count}</div> : null}</div>{isUser && <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white"><UserRound size={16} aria-hidden="true" /></div>}</div>; })}{sending && <div className="flex items-center gap-3 text-sm text-slate-500"><div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-primary"><Bot size={16} aria-hidden="true" /></div><div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm shadow-slate-200/70">Agent 正在生成...</div></div>}{messages.length === 0 && <div className="flex min-h-[340px] items-center justify-center text-center"><div><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-primary"><Bot size={22} aria-hidden="true" /></div><div className="mt-4 text-lg font-semibold text-slate-900">开始一次招聘 Agent 对话</div><p className="mt-2 text-sm text-slate-600">未选择会话也可以直接发送，默认使用配置文件模型。</p></div></div>}<div ref={messagesEndRef} /></div></div>
+          <div className={`min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.07),transparent_20rem),linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] px-4 py-6 ${hiddenScrollClass}`}>{errorMessage && <div role="alert" className="mx-auto mb-4 flex max-w-3xl gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"><AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" /><span>{errorMessage}</span></div>}<div className="mx-auto flex max-w-3xl flex-col gap-5">{messages.map((message) => {
+              const isUser = message.role === 'user';
+              return <div key={message.id} className="space-y-3"><div className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>{!isUser && <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-primary"><Bot size={16} aria-hidden="true" /></div>}<div className={`max-w-[86%] rounded-3xl px-4 py-3 text-sm leading-6 shadow-sm ${isUser ? 'bg-primary text-white shadow-sky-900/10' : 'border border-slate-200 bg-white text-slate-900 shadow-slate-200/70'}`}><div className="mb-2 flex items-center gap-2 text-xs font-semibold opacity-80">{isUser ? <UserRound size={14} aria-hidden="true" /> : <Bot size={14} aria-hidden="true" />}{isUser ? '你' : 'Agent'}{message.model_name && <span>· {message.model_name}</span>}</div><div className="space-y-2 whitespace-pre-wrap">{(message.content.blocks || []).map((block, index) => <div key={index}>{blockText(block)}</div>)}</div>{message.token_count ? <div className="mt-2 text-xs opacity-70">tokens: {message.token_count}</div> : null}</div>{isUser && <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white"><UserRound size={16} aria-hidden="true" /></div>}</div>{(actionsByMessageId.get(message.id) || []).map((action) => <AgentActionCard key={action.id} action={action} onConfirm={confirmAgentAction} onReject={rejectAgentAction} />)}</div>;
+            })}{floatingActions.map((action) => <AgentActionCard key={action.id} action={action} onConfirm={confirmAgentAction} onReject={rejectAgentAction} />)}{sending && <div className="flex items-center gap-3 text-sm text-slate-500"><div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-primary"><Bot size={16} aria-hidden="true" /></div><div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm shadow-slate-200/70">Agent 正在生成...</div></div>}{messages.length === 0 && <div className="flex min-h-[340px] items-center justify-center text-center"><div><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-primary"><Bot size={22} aria-hidden="true" /></div><div className="mt-4 text-lg font-semibold text-slate-900">开始一次招聘 Agent 对话</div><p className="mt-2 text-sm text-slate-600">未选择会话也可以直接发送，默认使用配置文件模型。</p></div></div>}<div ref={messagesEndRef} /></div></div>
           <form className="shrink-0 border-t border-slate-100 bg-white/95 p-4" onSubmit={sendMessage}><div className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-2 shadow-lg shadow-slate-200/70 focus-within:ring-2 focus-within:ring-ring"><div className="flex items-end gap-3"><Textarea value={input} onChange={(event) => setInput(event.target.value)} className="min-h-[52px] flex-1 resize-none border-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0" placeholder="输入任务，例如：帮我分析这个岗位的候选人评估策略" disabled={sending} aria-label="Agent 消息输入" /><Button type="submit" className="mb-1 h-10 w-10 rounded-2xl p-0" disabled={sending || !input.trim()} aria-label="发送消息"><Send size={16} aria-hidden="true" /></Button></div></div></form>
         </main>
         <aside className={`relative min-h-0 overflow-hidden transition-[width] duration-200 ${rightPanelOpen ? 'w-full xl:w-[120px]' : 'w-14'}`}><div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 shadow-sm shadow-slate-200/70 backdrop-blur">{rightPanelOpen ? <div className="grid flex-1 content-start gap-2 p-3">{featureButtons.map((item) => <button key={item.type} type="button" onClick={() => setPanelDialog(item.type)} className="flex flex-col items-center gap-1 rounded-2xl border border-slate-200 bg-white px-2 py-3 text-xs font-semibold text-slate-600 shadow-sm hover:border-primary/30 hover:bg-sky-50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><item.icon size={18} aria-hidden="true" />{item.label}</button>)}</div> : <div className="flex flex-1 flex-col items-center gap-3 py-4 text-slate-400">{collapsedButtons.map((item) => <button key={item.type} type="button" onClick={() => setPanelDialog(item.type)} className="rounded-lg p-2 hover:bg-sky-50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><item.icon size={18} aria-hidden="true" /></button>)}</div>}</div></aside>
       </div>
       <SessionDialog open={!!renameTarget} initialTitle={renameTarget?.title ?? ''} saving={savingSession} onClose={() => setRenameTarget(null)} onSubmit={saveSession} />
-      <FeatureDialog type={panelDialog} runs={runs} memories={memories} totalTokens={totalTokens} latestRun={latestRun} onClose={() => setPanelDialog(null)} />
+      <FeatureDialog type={panelDialog} runs={runs} memories={memories} toolEvents={toolEvents} totalTokens={totalTokens} latestRun={latestRun} onClose={() => setPanelDialog(null)} />
       <SessionSearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} onOpenSession={openSession} />
       <ConfirmDialog open={!!deleteTarget} title="确认删除会话" description={`确定要删除「${deleteTarget?.title}」吗？删除后会话将不再展示。`} confirmLabel="删除" onConfirm={deleteSession} onCancel={() => setDeleteTarget(null)} loading={deletingSession} />
     </AdminLayout>

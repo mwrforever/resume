@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class LLMRuntimeConfigDTO(BaseModel):
@@ -25,8 +25,33 @@ class LLMResultDTO(BaseModel):
     raw_response_metadata: dict[str, Any] | None = None
 
 
+class AgentToolCallDTO(BaseModel):
+    tool_name: str
+    display_name: str
+    input_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentToolResultDTO(BaseModel):
+    tool_name: str
+    display_name: str
+    output_payload: dict[str, Any] = Field(default_factory=dict)
+    success: bool = True
+    error_message: str | None = None
+
+
+class LLMStreamChunkDTO(BaseModel):
+    delta: str = ""
+    result: LLMResultDTO | None = None
+    tool_call: AgentToolCallDTO | None = None
+    tool_result: AgentToolResultDTO | None = None
+    error_message: str | None = None
+
+
 class AgentGraphStateDTO(BaseModel):
     prompt: str
     runtime_config: LLMRuntimeConfigDTO
+    tool_context: dict[str, Any] = Field(default_factory=dict)
+    tool_calls: list[AgentToolCallDTO] = Field(default_factory=list)
+    tool_results: list[AgentToolResultDTO] = Field(default_factory=list)
     result: LLMResultDTO | None = None
     error_message: str | None = None

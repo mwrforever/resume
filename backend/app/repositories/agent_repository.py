@@ -128,6 +128,47 @@ class AgentRepository:
         result = await self._db.execute(select(AgentAction).where(AgentAction.id == action_id))
         return result.scalar_one_or_none()
 
+    async def update_pending_action(self, action_id: int, **kwargs) -> AgentAction | None:
+        """仅允许待确认动作完成状态转换，避免并发确认/拒绝互相覆盖"""
+        result = await self._db.execute(
+            update(AgentAction)
+            .where(AgentAction.id == action_id, AgentAction.status == 1)
+            .values(**kwargs)
+        )
+        await self._db.commit()
+        if (result.rowcount or 0) <= 0:
+            return None
+        query_result = await self._db.execute(select(AgentAction).where(AgentAction.id == action_id))
+        return query_result.scalar_one_or_none()
+
+    async def update_action_without_commit(self, action_id: int, **kwargs) -> AgentAction | None:
+        """更新动作状态但不提交事务，由 Service 统一完成业务写操作与动作状态落库"""
+        await self._db.execute(update(AgentAction).where(AgentAction.id == action_id).values(**kwargs))
+        await self._db.flush()
+        result = await self._db.execute(select(AgentAction).where(AgentAction.id == action_id))
+        return result.scalar_one_or_none()
+
+    async def update_pending_action_without_commit(self, action_id: int, **kwargs) -> AgentAction | None:
+        """在同一事务内仅转换待确认动作，防止动作已被并发请求处理后再次执行"""
+        result = await self._db.execute(
+            update(AgentAction)
+            .where(AgentAction.id == action_id, AgentAction.status == 1)
+            .values(**kwargs)
+        )
+        await self._db.flush()
+        if (result.rowcount or 0) <= 0:
+            return None
+        query_result = await self._db.execute(select(AgentAction).where(AgentAction.id == action_id))
+        return query_result.scalar_one_or_none()
+
+    async def commit(self) -> None:
+        """提交当前请求会话中由 Service 编排完成的事务"""
+        await self._db.commit()
+
+    async def rollback(self) -> None:
+        """回滚当前请求会话中由 Service 编排失败的事务"""
+        await self._db.rollback()
+
     async def list_actions(self, session_id: int) -> list[AgentAction]:
         result = await self._db.execute(
             select(AgentAction).where(AgentAction.session_id == session_id).order_by(AgentAction.id.desc())

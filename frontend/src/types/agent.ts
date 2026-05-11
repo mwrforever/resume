@@ -169,3 +169,24 @@ export interface IAgentReply {
   memories: IAgentMemoryItem[];
   session_window?: IAgentSessionWindowItem | null;
 }
+
+export type AgentStreamEventName = 'user_message' | 'run_started' | 'context_ready' | 'token' | 'final' | 'error' | 'tool_call' | 'tool_result' | 'action_required';
+
+export interface IAgentStreamEvent {
+  event: AgentStreamEventName | string;
+  data: Record<string, unknown>;
+}
+
+export interface IAgentToolStreamItem {
+  id: string;
+  type: 'call' | 'result';
+  tool_name: string;
+  display_name: string;
+  payload: Record<string, unknown>;
+  success?: boolean;
+  error_message?: string | null;
+}
+
+export interface IAgentActionStreamItem extends IAgentActionItem {
+  isStreaming?: boolean;
+}
