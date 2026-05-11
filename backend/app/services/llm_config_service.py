@@ -49,19 +49,25 @@ class LlmConfigService:
         self.model_router = model_router or get_default_model_router()
 
     # 查询当前员工可见的个人和部门模型配置，并标记是否可管理
-    async def list_configs(self, current_user: dict) -> list[LlmConfigItem]:
+    async def list_configs(
+        self,
+        current_user: dict,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: str | None = None,
+        biz_type: str | None = None,
+        status: int | None = None,
+    ) -> dict:
         employee_id = self._current_employee_id(current_user)
         dept_ids = await self._employee_dept_ids(employee_id)
-        configs = []
-        configs.extend(await self.llm_repo.list_by_biz("employee", employee_id))
-        for dept_id in dept_ids:
-            configs.extend(await self.llm_repo.list_by_biz("dept", dept_id))
+        total = await self.llm_repo.count_employee_visible(employee_id, dept_ids, keyword, biz_type, status)
+        configs = await self.llm_repo.list_employee_visible(employee_id, dept_ids, page, page_size, keyword, biz_type, status)
         items = []
         for config in configs:
             item = LlmConfigItem.model_validate(config)
             item.can_manage = await self._can_manage_config(config, current_user)
             items.append(item)
-        return items
+        return {"total": total, "items": items}
 
     # 构建当前员工可选择的模型列表，包含配置文件默认模型兜底项
     async def list_model_options(self, current_user: dict) -> list[LlmModelOption]:
@@ -93,6 +99,15 @@ class LlmConfigService:
             "model_name": body.model_name,
             "fallback_model_name": body.fallback_model_name,
             "extra_body": body.extra_body,
+            "enable_thinking": body.enable_thinking,
+            "enable_tools": body.enable_tools,
+            "enable_prompt_cache": body.enable_prompt_cache,
+            "enable_memory": body.enable_memory,
+            "temperature": body.temperature,
+            "top_p": body.top_p,
+            "max_tokens": body.max_tokens,
+            "presence_penalty": body.presence_penalty,
+            "frequency_penalty": body.frequency_penalty,
             "timeout_seconds": body.timeout_seconds,
             "max_retries": body.max_retries,
             "status": body.status,
@@ -323,6 +338,15 @@ class LlmConfigService:
             timeout_seconds=config.timeout_seconds,
             max_retries=config.max_retries,
             source=source,
+            enable_thinking=bool(config.enable_thinking),
+            enable_tools=bool(config.enable_tools),
+            enable_prompt_cache=bool(config.enable_prompt_cache),
+            enable_memory=bool(config.enable_memory),
+            temperature=float(config.temperature),
+            top_p=float(config.top_p),
+            max_tokens=int(config.max_tokens),
+            presence_penalty=float(config.presence_penalty),
+            frequency_penalty=float(config.frequency_penalty),
         )
 
     # 构建配置文件默认模型的运行时配置
@@ -334,4 +358,5 @@ class LlmConfigService:
             fallback_model_name=settings.FALLBACK_MODEL,
             extra_body={"enable_thinking": False},
             source="env",
+            **{key: value for key, value in DEFAULT_RUNTIME_PARAMS.items() if key != "extra_body"},
         )

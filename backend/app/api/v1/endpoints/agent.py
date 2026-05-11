@@ -1,9 +1,12 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
+from app.core.exceptions import BizError
 from app.deps import get_cache, get_current_user, get_db
 from app.repositories.agent_repository import AgentRepository
 from app.repositories.agent_memory_repository import AgentMemoryRepository
@@ -23,6 +26,7 @@ from app.services.llm_config_service import LlmConfigService
 
 llm_router = APIRouter()
 agent_router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def get_llm_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> LlmConfigService:
@@ -50,12 +54,18 @@ async def list_model_options(
     return ApiResponse(data=await service.list_model_options(current_user))
 
 
-@llm_router.get("/llm-configs", response_model=ApiResponse[list[LlmConfigItem]])
+@llm_router.get("/llm-configs", response_model=ApiResponse[PageData])
 async def list_llm_configs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    keyword: str | None = Query(None, max_length=100),
+    biz_type: str | None = Query(None, pattern="^(employee|dept)$"),
+    status: int | None = Query(None, ge=0, le=1),
     service: LlmConfigService = Depends(get_llm_service),
     current_user: dict = Depends(get_current_user),
-) -> ApiResponse[list[LlmConfigItem]]:
-    return ApiResponse(data=await service.list_configs(current_user))
+) -> ApiResponse[PageData]:
+    data = await service.list_configs(current_user, page, page_size, keyword, biz_type, status)
+    return ApiResponse(data=PageData(**data))
 
 
 @llm_router.post("/llm-configs", response_model=ApiResponse[LlmConfigItem])
@@ -163,9 +173,17 @@ async def stream_message(
     current_user: dict = Depends(get_current_user),
 ) -> StreamingResponse:
     async def event_generator():
-        async for event in service.stream_message(session_id, body, current_user):
-            payload = json.dumps(event.data, ensure_ascii=False)
-            yield f"event: {event.event}\ndata: {payload}\n\n"
+        try:
+            async for event in service.stream_message(session_id, body, current_user):
+                payload = json.dumps(event.data, ensure_ascii=False)
+                yield f"event: {event.event}\ndata: {payload}\n\n"
+        except BizError as exc:
+            payload = json.dumps({"message": exc.message, "code": exc.code}, ensure_ascii=False)
+            yield f"event: error\ndata: {payload}\n\n"
+        except SQLAlchemyError:
+            logger.exception("Agent流式接口数据库异常：session_id=%s", session_id)
+            payload = json.dumps({"message": "Agent服务暂不可用，请稍后重试", "code": 500}, ensure_ascii=False)
+            yield f"event: error\ndata: {payload}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

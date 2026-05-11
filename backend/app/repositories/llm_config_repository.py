@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,6 +45,64 @@ class LlmConfigRepository:
             .where(LlmModelConfig.status == 1, LlmModelConfig.is_deleted == 0, or_(*conditions))
             .order_by(LlmModelConfig.update_time.desc(), LlmModelConfig.id.desc())
         )
+        return result.scalars().all()
+
+    def _employee_visible_query(
+        self,
+        employee_id: int,
+        dept_ids: list[int],
+        keyword: str | None = None,
+        biz_type: str | None = None,
+        status: int | None = None,
+    ):
+        conditions = [(LlmModelConfig.biz_type == "employee") & (LlmModelConfig.biz_id == employee_id)]
+        if dept_ids:
+            conditions.append((LlmModelConfig.biz_type == "dept") & (LlmModelConfig.biz_id.in_(dept_ids)))
+        query = select(LlmModelConfig).where(LlmModelConfig.is_deleted == 0, or_(*conditions))
+        if keyword:
+            like_keyword = f"%{keyword}%"
+            query = query.where(
+                or_(
+                    LlmModelConfig.config_name.like(like_keyword),
+                    LlmModelConfig.model_name.like(like_keyword),
+                    LlmModelConfig.base_url.like(like_keyword),
+                )
+            )
+        if biz_type:
+            query = query.where(LlmModelConfig.biz_type == biz_type)
+        if status is not None:
+            query = query.where(LlmModelConfig.status == status)
+        return query
+
+    async def count_employee_visible(
+        self,
+        employee_id: int,
+        dept_ids: list[int],
+        keyword: str | None = None,
+        biz_type: str | None = None,
+        status: int | None = None,
+    ) -> int:
+        query = self._employee_visible_query(employee_id, dept_ids, keyword, biz_type, status)
+        result = await self.db.execute(query.with_only_columns(func.count(LlmModelConfig.id)).order_by(None))
+        return result.scalar() or 0
+
+    async def list_employee_visible(
+        self,
+        employee_id: int,
+        dept_ids: list[int],
+        page: int,
+        page_size: int,
+        keyword: str | None = None,
+        biz_type: str | None = None,
+        status: int | None = None,
+    ) -> list[LlmModelConfig]:
+        query = (
+            self._employee_visible_query(employee_id, dept_ids, keyword, biz_type, status)
+            .order_by(LlmModelConfig.update_time.desc(), LlmModelConfig.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        result = await self.db.execute(query)
         return result.scalars().all()
 
     async def create(self, **kwargs) -> LlmModelConfig:
