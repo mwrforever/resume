@@ -15,6 +15,15 @@ class LlmConfigItem(BaseModel):
     model_name: str
     fallback_model_name: str | None = None
     extra_body: dict[str, Any] | None = None
+    enable_thinking: bool = False
+    enable_tools: bool = True
+    enable_prompt_cache: bool = False
+    enable_memory: bool = True
+    temperature: float = 0.7
+    top_p: float = 0.9
+    max_tokens: int = 2048
+    presence_penalty: float = 0
+    frequency_penalty: float = 0
     timeout_seconds: int
     max_retries: int
     status: int
@@ -36,6 +45,29 @@ class LlmModelOption(BaseModel):
     biz_id: int | None = None
     config_name: str
     base_url: str
+
+
+class AgentUserModelRuntimeConfigItem(BaseModel):
+    id: int | None = None
+    employee_id: int
+    model_name: str
+    model_source: str
+    llm_config_id: int | None = None
+    enable_thinking: bool = False
+    enable_tools: bool = True
+    enable_prompt_cache: bool = False
+    enable_memory: bool = True
+    temperature: float = 0.7
+    top_p: float = 0.9
+    max_tokens: int = 2048
+    presence_penalty: float = 0
+    frequency_penalty: float = 0
+    extra_body: dict[str, Any] | None = None
+    last_used_at: datetime | None = None
+    create_time: datetime | None = None
+    update_time: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentSessionItem(BaseModel):

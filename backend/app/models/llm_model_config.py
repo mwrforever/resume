@@ -1,7 +1,8 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Index, JSON, SmallInteger, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Index, Integer, JSON, Numeric, SmallInteger, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -27,6 +28,15 @@ class LlmModelConfig(Base):
     model_name: Mapped[str] = mapped_column(String(100), nullable=False, comment="模型名称")
     fallback_model_name: Mapped[str | None] = mapped_column(String(100), comment="兜底模型名称")
     extra_body: Mapped[dict[str, Any] | None] = mapped_column(JSON, comment="扩展参数")
+    enable_thinking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, comment="是否开启思考模式")
+    enable_tools: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment="是否启用工具调用")
+    enable_prompt_cache: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, comment="是否启用LLM前缀缓存")
+    enable_memory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment="是否启用上下文记忆")
+    temperature: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.70"), comment="生成随机性")
+    top_p: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.90"), comment="核采样参数")
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=2048, comment="最大输出Token")
+    presence_penalty: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.00"), comment="话题出现惩罚")
+    frequency_penalty: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.00"), comment="频率惩罚")
     timeout_seconds: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=120, comment="请求超时时间")
     max_retries: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2, comment="最大重试次数")
     status: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, comment="状态：1启用，0停用")

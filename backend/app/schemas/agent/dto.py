@@ -13,6 +13,15 @@ class LLMRuntimeConfigDTO(BaseModel):
     timeout_seconds: int = 120
     max_retries: int = 2
     source: str = "env"
+    enable_thinking: bool = False
+    enable_tools: bool = True
+    enable_prompt_cache: bool = False
+    enable_memory: bool = True
+    temperature: float = 0.7
+    top_p: float = 0.9
+    max_tokens: int = 2048
+    presence_penalty: float = 0
+    frequency_penalty: float = 0
 
 
 class LLMResultDTO(BaseModel):
