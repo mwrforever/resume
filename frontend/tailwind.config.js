@@ -9,7 +9,10 @@ export default {
       colors: {
         foreground: 'var(--foreground)',
         background: 'var(--background)',
-        card: 'var(--card)',
+        card: {
+          DEFAULT: 'var(--card)',
+          foreground: 'var(--card-foreground)',
+        },
         primary: {
           DEFAULT: 'var(--primary)',
           foreground: 'var(--primary-foreground)',
@@ -28,7 +31,11 @@ export default {
         },
         destructive: 'var(--destructive)',
         border: 'var(--border)',
+        input: 'var(--border)',
         ring: 'var(--ring)',
+        success: '#16a34a',
+        warning: '#d97706',
+        danger: '#dc2626',
       },
       borderRadius: {
         DEFAULT: 'var(--radius)',

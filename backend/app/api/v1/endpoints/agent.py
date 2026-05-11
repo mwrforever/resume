@@ -8,7 +8,7 @@ from app.repositories.dept_repository import DeptRepository
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.llm_config_repository import LlmConfigRepository
 from app.schemas.common import ApiResponse, PageData
-from app.schemas.agent.request import AgentActionReject, AgentMessageCreate, AgentModelSelect, AgentSessionCreate, LlmConfigCreate, LlmConfigUpdate
+from app.schemas.agent.request import AgentActionReject, AgentMessageCreate, AgentModelSelect, AgentSessionCreate, AgentSessionUpdate, LlmConfigCreate, LlmConfigUpdate
 from app.schemas.agent.response import AgentActionItem, AgentReply, AgentRunItem, AgentSessionDetail, AgentSessionItem, LlmConfigItem, LlmModelOption
 from app.services.agent_context_service import AgentContextService
 from app.services.agent_service import AgentService
@@ -96,10 +96,11 @@ async def create_session(
 async def list_sessions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    keyword: str | None = Query(None, max_length=100),
     service: AgentService = Depends(get_agent_service),
     current_user: dict = Depends(get_current_user),
 ) -> ApiResponse[PageData]:
-    return ApiResponse(data=PageData(**await service.list_sessions(page, page_size, current_user)))
+    return ApiResponse(data=PageData(**await service.list_sessions(page, page_size, current_user, keyword)))
 
 
 @agent_router.get("/sessions/{session_id}", response_model=ApiResponse[AgentSessionDetail])
@@ -109,6 +110,26 @@ async def get_session_detail(
     current_user: dict = Depends(get_current_user),
 ) -> ApiResponse[AgentSessionDetail]:
     return ApiResponse(data=await service.get_session_detail(session_id, current_user))
+
+
+@agent_router.put("/sessions/{session_id}", response_model=ApiResponse[AgentSessionItem])
+async def update_session(
+    session_id: int,
+    body: AgentSessionUpdate,
+    service: AgentService = Depends(get_agent_service),
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse[AgentSessionItem]:
+    return ApiResponse(message="更新成功", data=await service.update_session(session_id, body, current_user))
+
+
+@agent_router.delete("/sessions/{session_id}", response_model=ApiResponse)
+async def delete_session(
+    session_id: int,
+    service: AgentService = Depends(get_agent_service),
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse:
+    await service.delete_session(session_id, current_user)
+    return ApiResponse(message="删除成功")
 
 
 @agent_router.post("/sessions/{session_id}/messages", response_model=ApiResponse[AgentReply])

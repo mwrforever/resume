@@ -1,36 +1,42 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: #f8fafc;
+  --background: #f0f9ff;
   --foreground: #0f172a;
   --card: #ffffff;
   --card-foreground: #0f172a;
-  --primary: #0f172a;
+  --primary: #0369a1;
   --primary-foreground: #ffffff;
-  --secondary: #f1f5f9;
-  --secondary-foreground: #475569;
-  --accent: #3b82f6;
+  --secondary: #e0f2fe;
+  --secondary-foreground: #075985;
+  --accent: #0ea5e9;
   --accent-foreground: #ffffff;
-  --muted: #f1f5f9;
-  --muted-foreground: #64748b;
-  --destructive: #ef4444;
-  --border: #e2e8f0;
-  --ring: #3b82f6;
-  --radius: 0.75rem;
+  --muted: #eaf4fb;
+  --muted-foreground: #475569;
+  --destructive: #dc2626;
+  --border: #cbd5e1;
+  --ring: #0284c7;
+  --radius: 0.875rem;
 }
 
 @layer base {
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    font-family: 'Source Sans 3', system-ui, sans-serif;
   }
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'Outfit', system-ui, sans-serif;
+    font-family: 'Lexend', system-ui, sans-serif;
     @apply tracking-tight;
+  }
+  button, a, input, select, textarea {
+    @apply transition-colors duration-200;
+  }
+  button:not(:disabled), a[href], select {
+    @apply cursor-pointer;
   }
 }
 

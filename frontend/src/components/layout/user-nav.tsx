@@ -20,9 +20,9 @@ export function UserNav() {
           key={item.href}
           to={item.href}
           className={cn(
-            'inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            'inline-flex items-center gap-2 rounded-full border border-transparent px-3 py-2 text-sm font-semibold text-slate-600 hover:border-sky-100 hover:bg-sky-50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
             location.pathname.startsWith(item.href)
-              ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary hover:text-primary-foreground'
+              ? 'border-primary/20 bg-primary text-primary-foreground shadow-sm shadow-sky-900/10 hover:bg-primary hover:text-primary-foreground'
               : ''
           )}
         >
@@ -33,7 +33,7 @@ export function UserNav() {
       <button
         type="button"
         onClick={logout}
-        className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-red-50 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-red-50 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <LogOut className="h-4 w-4" aria-hidden="true" />
         退出

@@ -11,8 +11,8 @@ from . import Base
 class LlmModelConfig(Base):
     __tablename__ = "llm_model_config"
     __table_args__ = (
-        UniqueConstraint("biz_type", "biz_id", "model_name", name="uk_biz_model"),
-        Index("idx_biz", "biz_type", "biz_id", "status"),
+        UniqueConstraint("biz_type", "biz_id", "model_name", "is_deleted", name="uk_biz_model_deleted"),
+        Index("idx_biz", "biz_type", "biz_id", "status", "is_deleted"),
         Index("idx_model_name", "model_name"),
     )
 
@@ -30,6 +30,7 @@ class LlmModelConfig(Base):
     timeout_seconds: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=120, comment="请求超时时间")
     max_retries: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2, comment="最大重试次数")
     status: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, comment="状态：1启用，0停用")
+    is_deleted: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, comment="软删除标记：0未删除，删除时写入Unix微秒时间戳")
     last_test_at: Mapped[datetime | None] = mapped_column(DateTime, comment="最近测试时间")
     last_test_status: Mapped[int | None] = mapped_column(SmallInteger, comment="最近测试状态")
     last_test_message: Mapped[str | None] = mapped_column(String(500), comment="最近测试结果")

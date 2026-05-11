@@ -17,6 +17,7 @@ export interface ILlmConfigItem {
   last_test_message?: string | null;
   create_time?: string | null;
   update_time?: string | null;
+  can_manage?: boolean;
 }
 
 export interface ILlmConfigPayload {
@@ -163,6 +164,7 @@ export interface IAgentReply {
   user_message: IAgentMessageItem;
   agent_message: IAgentMessageItem;
   run: IAgentRunItem;
+  session?: IAgentSessionItem | null;
   snapshot?: IAgentContextSnapshotItem | null;
   memories: IAgentMemoryItem[];
   session_window?: IAgentSessionWindowItem | null;

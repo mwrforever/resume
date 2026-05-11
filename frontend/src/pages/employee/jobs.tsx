@@ -238,14 +238,14 @@ export default function EmployeeJobs() {
       breadcrumbs={[{ label: '岗位管理' }]}
       title="岗位管理"
       headerAction={
-        <Button onClick={() => setDialogMode('create')} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white">
+        <Button onClick={() => setDialogMode('create')}>
           <Plus size={16} className="mr-1.5" aria-hidden="true" />
           创建岗位
         </Button>
       }
     >
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-white/80 bg-white/85 p-3 shadow-sm shadow-slate-200/70 backdrop-blur">
         <Input
           type="search"
           placeholder="搜索岗位名称…"
@@ -270,7 +270,7 @@ export default function EmployeeJobs() {
           onClick={handleRefresh}
           disabled={refreshing}
           aria-label="刷新"
-          className="inline-flex items-center gap-1.5 px-3 h-9 rounded-md border border-[#E2E8F0] bg-white text-sm text-[#64748B] hover:bg-[#F8FAFC] transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+          className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-600 shadow-sm hover:border-primary/40 hover:bg-sky-50 hover:text-primary disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} aria-hidden="true" />
           刷新
@@ -278,32 +278,32 @@ export default function EmployeeJobs() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
+      <div className="overflow-hidden rounded-2xl border border-white/80 bg-white/90 shadow-sm shadow-slate-200/70 backdrop-blur">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-              <th className="text-left px-4 py-3 font-medium text-[#64748B]">岗位名称</th>
-              <th className="text-left px-4 py-3 font-medium text-[#64748B]">部门</th>
-              <th className="text-left px-4 py-3 font-medium text-[#64748B]">状态</th>
-              <th className="text-left px-4 py-3 font-medium text-[#64748B] tabular-nums">简历数</th>
-              <th className="text-left px-4 py-3 font-medium text-[#64748B]">发布时间</th>
-              <th className="text-right px-4 py-3 font-medium text-[#64748B]">操作</th>
+            <tr className="border-b border-slate-200 bg-slate-50/80">
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">岗位名称</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">部门</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">状态</th>
+              <th className="px-4 py-3 text-left font-semibold tabular-nums text-slate-600">简历数</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">发布时间</th>
+              <th className="px-4 py-3 text-right font-semibold text-slate-600">操作</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               [...Array(4)].map((_, i) => (
-                <tr key={i} className="border-b border-[#F1F5F9]">
+                <tr key={i} className="border-b border-slate-100">
                   {[...Array(6)].map((__, j) => (
                     <td key={j} className="px-4 py-3">
-                      <div className="h-4 bg-[#F1F5F9] rounded animate-pulse" />
+                      <div className="h-4 animate-pulse rounded bg-slate-100" />
                     </td>
                   ))}
                 </tr>
               ))
             ) : jobs.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-16 text-center text-[#94A3B8]">
+                <td colSpan={6} className="px-4 py-16 text-center text-slate-400">
                   <p className="mb-3">还没有创建过岗位</p>
                   <Button variant="outline" size="sm" onClick={() => setDialogMode('create')}>去创建第一个岗位</Button>
                 </td>
@@ -313,19 +313,19 @@ export default function EmployeeJobs() {
                 const resumeCount = job.resume_count ?? 0;
                 const canEdit = job.status !== 1 && resumeCount === 0;
                 return (
-                <tr key={job.id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors">
+                <tr key={job.id} className="border-b border-slate-100 transition-colors hover:bg-sky-50/50">
                   <td className="px-4 py-3">
                     <button
                       onClick={() => openEdit(job)}
                       disabled={!canEdit}
-                      className="font-medium text-[#1E293B] hover:text-[#2563EB] transition-colors focus-visible:outline-none focus-visible:underline text-left disabled:cursor-not-allowed disabled:text-[#64748B] disabled:hover:text-[#64748B]"
+                      className="text-left font-semibold text-slate-900 hover:text-primary focus-visible:outline-none focus-visible:underline disabled:cursor-not-allowed disabled:text-slate-500 disabled:hover:text-slate-500"
                     >
                       {job.name}
                     </button>
                   </td>
                   <td className="px-4 py-3 text-[#64748B]">
                     {job.dept_name
-                      ? <span>{job.dept_name}{job.dept_code && <span className="ml-1.5 text-xs text-[#94A3B8]">({job.dept_code})</span>}</span>
+                      ? <span>{job.dept_name}{job.dept_code && <span className="ml-1.5 text-xs text-slate-400">({job.dept_code})</span>}</span>
                       : '—'}
                   </td>
                   <td className="px-4 py-3">
@@ -336,15 +336,15 @@ export default function EmployeeJobs() {
                       : <Badge className="bg-[#F1F5F9] text-[#64748B] border-[#E2E8F0]">已下架</Badge>
                     }
                   </td>
-                  <td className="px-4 py-3 text-[#64748B] tabular-nums">{resumeCount}</td>
-                  <td className="px-4 py-3 text-[#64748B]">
+                  <td className="px-4 py-3 tabular-nums text-slate-600">{resumeCount}</td>
+                  <td className="px-4 py-3 text-slate-600">
                     {new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(job.create_time))}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => navigate(`/employee/jobs/${job.id}/preview`)}
-                        className="inline-flex items-center gap-1 text-xs text-[#64748B] hover:underline px-2 py-1 rounded hover:bg-[#F1F5F9] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         <Eye size={13} aria-hidden="true" />
                         预览
@@ -353,7 +353,7 @@ export default function EmployeeJobs() {
                         <button
                           onClick={() => handlePublish(job)}
                           disabled={publishingId === job.id}
-                          className="inline-flex items-center gap-1 text-xs text-green-600 hover:underline px-2 py-1 rounded hover:bg-green-50 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-green-600 hover:bg-green-50 hover:underline disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
                         >
                           {publishingId === job.id ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Send size={13} aria-hidden="true" />}
                           发布
@@ -363,14 +363,14 @@ export default function EmployeeJobs() {
                         onClick={() => openEdit(job)}
                         disabled={!canEdit}
                         title={!canEdit ? '招聘中或已有投递的岗位不能编辑' : undefined}
-                        className="inline-flex items-center gap-1 text-xs text-[#2563EB] hover:underline px-2 py-1 rounded hover:bg-blue-50 transition-colors disabled:cursor-not-allowed disabled:text-[#94A3B8] disabled:hover:no-underline disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-primary hover:bg-sky-50 hover:underline disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-transparent disabled:hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         <Pencil size={13} aria-hidden="true" />
                         编辑
                       </button>
                       <button
                         onClick={() => setDeleteTarget(job)}
-                        className="inline-flex items-center gap-1 text-xs text-red-500 hover:underline px-2 py-1 rounded hover:bg-red-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-red-500 hover:bg-red-50 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
                       >
                         <Trash2 size={13} aria-hidden="true" />
                         删除

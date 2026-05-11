@@ -44,24 +44,24 @@ export default function EmployeeDashboard() {
     : [];
 
   return (
-    <AdminLayout breadcrumbs={[{ label: '工作台' }]}>
+    <AdminLayout breadcrumbs={[{ label: '工作台' }]} title="招聘工作台">
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
+      <div className="mb-6 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {loading
           ? [...Array(4)].map((_, i) => (
-              <div key={i} className="h-28 bg-white rounded-lg animate-pulse" />
+              <div key={i} className="h-28 animate-pulse rounded-2xl bg-white/80 shadow-sm shadow-slate-200/70" />
             ))
           : statCards.map((stat, idx) => {
               const Icon = stat.icon;
               return (
-                <Card key={idx}>
-                  <CardContent className="p-5 flex items-center gap-4">
-                    <div className={`w-12 h-12 rounded-xl ${stat.bg} flex items-center justify-center flex-shrink-0`}>
+                <Card key={idx} className="border-white/80 bg-white/90 backdrop-blur">
+                  <CardContent className="flex items-center gap-4 p-5">
+                    <div className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl ${stat.bg}`}>
                       <Icon size={22} className={stat.color} aria-hidden="true" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm text-[#64748B] mb-0.5">{stat.label}</p>
-                      <p className="text-2xl font-bold text-[#1E293B] tabular-nums">{stat.value}</p>
+                      <p className="mb-0.5 text-sm text-slate-600">{stat.label}</p>
+                      <p className="text-2xl font-bold tabular-nums text-slate-900">{stat.value}</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -69,30 +69,30 @@ export default function EmployeeDashboard() {
             })}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Recent Activity - Timeline */}
-        <Card>
+        <Card className="border-white/80 bg-white/90 backdrop-blur">
           <CardContent className="p-5">
-            <h2 className="text-base font-semibold text-[#1E293B] mb-4">最近动态</h2>
+            <h2 className="mb-4 text-base font-semibold text-slate-900">最近动态</h2>
             {loading ? (
               <div className="space-y-3">
-                {[...Array(4)].map((_, i) => <div key={i} className="h-10 bg-[#F1F5F9] rounded animate-pulse" />)}
+                {[...Array(4)].map((_, i) => <div key={i} className="h-10 animate-pulse rounded-xl bg-slate-100" />)}
               </div>
             ) : !stats || stats.recent_activities.length === 0 ? (
-              <p className="text-sm text-[#94A3B8] text-center py-6">暂无动态</p>
+              <p className="py-6 text-center text-sm text-slate-400">暂无动态</p>
             ) : (
               <div className="relative pl-5">
-                <div className="absolute left-1.5 top-0 bottom-0 w-px bg-[#E2E8F0]" aria-hidden="true" />
+                <div className="absolute bottom-0 left-1.5 top-0 w-px bg-slate-200" aria-hidden="true" />
                 <div className="space-y-4">
                   {stats.recent_activities.map((activity) => (
                     <div key={activity.id} className="relative flex items-start gap-3">
                       <div
-                        className={`absolute -left-5 mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${ACTIVITY_DOT_COLOR[activity.type] ?? 'bg-[#94A3B8]'}`}
+                        className={`absolute -left-5 mt-1.5 h-2.5 w-2.5 flex-shrink-0 rounded-full ${ACTIVITY_DOT_COLOR[activity.type] ?? 'bg-slate-400'}`}
                         aria-hidden="true"
                       />
                       <div className="min-w-0">
-                        <p className="text-sm text-[#1E293B]">{activity.text}</p>
-                        <p className="text-xs text-[#94A3B8] mt-0.5">
+                        <p className="text-sm text-slate-900">{activity.text}</p>
+                        <p className="mt-0.5 text-xs text-slate-400">
                           {new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(activity.time))}
                         </p>
                       </div>
@@ -105,9 +105,9 @@ export default function EmployeeDashboard() {
         </Card>
 
         {/* Quick Actions */}
-        <Card>
+        <Card className="border-white/80 bg-white/90 backdrop-blur">
           <CardContent className="p-5">
-            <h2 className="text-base font-semibold text-[#1E293B] mb-4">快捷操作</h2>
+            <h2 className="mb-4 text-base font-semibold text-slate-900">快捷操作</h2>
             <div className="grid grid-cols-2 gap-3">
               {[
                 { to: '', icon: Plus, label: '发布岗位', sub: '创建新职位', color: 'text-blue-600', bg: 'bg-blue-50', onClick: () => setCreateModalOpen(true) },
@@ -118,16 +118,16 @@ export default function EmployeeDashboard() {
                 const Icon = item.icon;
                 const inner = (
                   <>
-                    <div className={`w-9 h-9 rounded-lg ${item.bg} flex items-center justify-center flex-shrink-0`}>
+                    <div className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl ${item.bg}`}>
                       <Icon size={18} className={item.color} aria-hidden="true" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-[#1E293B] truncate">{item.label}</p>
-                      <p className="text-xs text-[#94A3B8] truncate">{item.sub}</p>
+                      <p className="truncate text-sm font-semibold text-slate-900">{item.label}</p>
+                      <p className="truncate text-xs text-slate-400">{item.sub}</p>
                     </div>
                   </>
                 );
-                const cls = 'p-4 rounded-lg border border-[#E2E8F0] hover:border-[#2563EB] hover:bg-blue-50/40 transition-all flex items-center gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] w-full text-left';
+                const cls = 'flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white/70 p-4 text-left transition-[background-color,border-color,box-shadow] hover:border-primary/40 hover:bg-sky-50/70 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
                 return item.onClick ? (
                   <button key={item.label} type="button" onClick={item.onClick} className={cls}>{inner}</button>
                 ) : (

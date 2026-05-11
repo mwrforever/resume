@@ -3,6 +3,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+MAX_LLM_TIMEOUT_SECONDS = 120
+MAX_LLM_MAX_RETRIES = 2
+
+
 class LlmConfigCreate(BaseModel):
     biz_type: Literal["employee", "dept"]
     biz_id: int
@@ -13,8 +17,8 @@ class LlmConfigCreate(BaseModel):
     model_name: str = Field(min_length=1, max_length=100)
     fallback_model_name: str | None = Field(default=None, max_length=100)
     extra_body: dict[str, Any] | None = None
-    timeout_seconds: int = Field(default=120, ge=1, le=600)
-    max_retries: int = Field(default=2, ge=0, le=5)
+    timeout_seconds: int = Field(default=120, ge=1, le=MAX_LLM_TIMEOUT_SECONDS)
+    max_retries: int = Field(default=2, ge=0, le=MAX_LLM_MAX_RETRIES)
     status: int = Field(default=1, ge=0, le=1)
 
 
@@ -25,8 +29,8 @@ class LlmConfigUpdate(BaseModel):
     model_name: str | None = Field(default=None, min_length=1, max_length=100)
     fallback_model_name: str | None = Field(default=None, max_length=100)
     extra_body: dict[str, Any] | None = None
-    timeout_seconds: int | None = Field(default=None, ge=1, le=600)
-    max_retries: int | None = Field(default=None, ge=0, le=5)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=MAX_LLM_TIMEOUT_SECONDS)
+    max_retries: int | None = Field(default=None, ge=0, le=MAX_LLM_MAX_RETRIES)
     status: int | None = Field(default=None, ge=0, le=1)
 
 
@@ -35,8 +39,12 @@ class AgentSessionCreate(BaseModel):
     selected_model_name: str | None = Field(default=None, max_length=100)
 
 
+class AgentSessionUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=100)
+
+
 class AgentModelSelect(BaseModel):
-    model_name: str = Field(min_length=1, max_length=100)
+    model_name: str | None = Field(default=None, max_length=100)
 
 
 class AgentMessageCreate(BaseModel):

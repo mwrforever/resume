@@ -10,9 +10,9 @@ from . import Base
 class AgentSession(Base):
     __tablename__ = "agent_session"
     __table_args__ = (
-        UniqueConstraint("session_key", name="uk_session_key"),
+        UniqueConstraint("session_key", "is_deleted", name="uk_session_key"),
         Index("idx_employee_time", "employee_id", "create_time"),
-        Index("idx_status", "status"),
+        Index("idx_status", "status", "is_deleted"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -20,6 +20,7 @@ class AgentSession(Base):
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
+    is_deleted: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     selected_model_name: Mapped[str | None] = mapped_column(String(100))
     selected_model_source: Mapped[str | None] = mapped_column(String(20))
     context_summary: Mapped[str | None] = mapped_column(String(1000))

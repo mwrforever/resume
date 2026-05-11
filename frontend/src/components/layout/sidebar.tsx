@@ -56,23 +56,23 @@ export function Sidebar() {
   return (
     <aside
       style={{ width: collapsed ? 64 : 240 }}
-      className="flex-shrink-0 flex flex-col h-full bg-[#1E293B] transition-[width] duration-200 ease-in-out overflow-hidden"
+      className="flex-shrink-0 flex flex-col h-full overflow-hidden border-r border-white/10 bg-[linear-gradient(180deg,#082f49_0%,#0f172a_56%,#020617_100%)] transition-[width] duration-200 ease-in-out"
     >
       {/* Logo */}
-      <div className="flex items-center h-14 px-4 border-b border-white/10 flex-shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-[#2563EB] flex items-center justify-center flex-shrink-0">
-          <span className="text-white text-xs font-bold">HR</span>
+      <div className="flex h-16 flex-shrink-0 items-center border-b border-white/10 px-4">
+        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-2xl bg-sky-400 text-xs font-bold text-slate-950 shadow-lg shadow-sky-500/20">
+          <span>HR</span>
         </div>
         {!collapsed && (
-          <span className="ml-3 text-white font-semibold text-sm truncate">招聘管理系统</span>
+          <span className="ml-3 truncate text-sm font-semibold text-white">招聘管理系统</span>
         )}
       </div>
 
       {/* Nav items */}
-      <nav className="flex-1 py-3 px-2 space-y-3" aria-label="主导航">
+      <nav className="flex-1 space-y-3 overflow-y-auto px-2 py-4" aria-label="主导航">
         {NAV_GROUPS.map((group) => (
           <div key={group.label} className="space-y-0.5">
-            {!collapsed && <div className="px-3 pb-1 pt-2 text-xs font-medium text-[#64748B]">{group.label}</div>}
+            {!collapsed && <div className="px-3 pb-1 pt-2 text-xs font-semibold tracking-wide text-sky-100/60">{group.label}</div>}
             {group.items.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname.startsWith(item.href);
@@ -83,10 +83,10 @@ export function Sidebar() {
                   aria-label={collapsed ? item.label : undefined}
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]',
+                    'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300',
                     isActive
-                      ? 'bg-[#2563EB] text-white'
-                      : 'text-[#94A3B8] hover:bg-white/10 hover:text-white'
+                      ? 'bg-sky-400 text-slate-950 shadow-sm shadow-sky-500/20'
+                      : 'text-slate-300 hover:bg-white/10 hover:text-white'
                   )}
                 >
                   <Icon size={18} className="flex-shrink-0" aria-hidden="true" />
@@ -103,7 +103,7 @@ export function Sidebar() {
         <button
           onClick={() => setCollapsed(!collapsed)}
           aria-label={collapsed ? '展开菜单' : '折叠菜单'}
-          className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-[#94A3B8] hover:bg-white/10 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+          className="flex w-full items-center justify-center gap-2 rounded-xl py-2 text-slate-300 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
         >
           {collapsed
             ? <ChevronRight size={18} aria-hidden="true" />

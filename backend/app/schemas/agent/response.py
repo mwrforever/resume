@@ -23,6 +23,7 @@ class LlmConfigItem(BaseModel):
     last_test_message: str | None = None
     create_time: datetime | None = None
     update_time: datetime | None = None
+    can_manage: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -165,6 +166,7 @@ class AgentReply(BaseModel):
     user_message: AgentMessageItem
     agent_message: AgentMessageItem
     run: AgentRunItem
+    session: AgentSessionItem | None = None
     snapshot: AgentContextSnapshotItem | None = None
     memories: list[AgentMemoryItem] = Field(default_factory=list)
     session_window: AgentSessionWindowItem | None = None

@@ -266,13 +266,14 @@ CREATE TABLE IF NOT EXISTS `llm_model_config`
     `timeout_seconds`      SMALLINT     NOT NULL DEFAULT 120 COMMENT '请求超时时间',
     `max_retries`          SMALLINT     NOT NULL DEFAULT 2 COMMENT '最大重试次数',
     `status`               SMALLINT     NOT NULL DEFAULT 1 COMMENT '状态：1启用，0停用',
+    `is_deleted`            BIGINT       NOT NULL DEFAULT 0 COMMENT '软删除标记：0未删除，删除时写入Unix微秒时间戳',
     `last_test_at`         DATETIME              DEFAULT NULL COMMENT '最近测试时间',
     `last_test_status`     SMALLINT              DEFAULT NULL COMMENT '最近测试状态',
     `last_test_message`    VARCHAR(500)          DEFAULT NULL COMMENT '最近测试结果',
     `create_time`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY `uk_biz_model` (`biz_type`, `biz_id`, `model_name`),
-    KEY `idx_biz` (`biz_type`, `biz_id`, `status`),
+    UNIQUE KEY `uk_biz_model_deleted` (`biz_type`, `biz_id`, `model_name`, `is_deleted`),
+    KEY `idx_biz` (`biz_type`, `biz_id`, `status`, `is_deleted`),
     KEY `idx_model_name` (`model_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM模型配置表';
 
@@ -283,6 +284,7 @@ CREATE TABLE IF NOT EXISTS `agent_session`
     `employee_id`           BIGINT       NOT NULL COMMENT '员工ID',
     `title`                 VARCHAR(100) NOT NULL COMMENT '会话标题',
     `status`                SMALLINT     NOT NULL DEFAULT 1 COMMENT '状态',
+    `is_deleted`            SMALLINT     NOT NULL DEFAULT 0 COMMENT '是否删除：0否，1是',
     `selected_model_name`   VARCHAR(100)          DEFAULT NULL COMMENT '选中模型名称',
     `selected_model_source` VARCHAR(20)           DEFAULT NULL COMMENT '选中模型来源',
     `context_summary`       VARCHAR(1000)         DEFAULT NULL COMMENT '上下文摘要',
@@ -290,9 +292,9 @@ CREATE TABLE IF NOT EXISTS `agent_session`
     `version`               INT          NOT NULL DEFAULT 0 COMMENT '版本号',
     `create_time`           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY `uk_session_key` (`session_key`),
+    UNIQUE KEY `uk_session_key` (`session_key`, `is_deleted`),
     KEY `idx_employee_time` (`employee_id`, `create_time`),
-    KEY `idx_status` (`status`)
+    KEY `idx_status` (`status`, `is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent会话表';
 
 CREATE TABLE IF NOT EXISTS `agent_message`
