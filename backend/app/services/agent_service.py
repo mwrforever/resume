@@ -1,3 +1,17 @@
+"""
+Agent 服务层 - 核心业务编排模块
+
+本模块负责员工 Agent 会话的全部业务流程编排，包括：
+- 会话管理（创建/查询/更新/删除）
+- 消息处理（普通发送和流式发送）
+- Prompt 构建（含长期记忆注入）
+- Runtime Graph 执行（LangGraph 状态图）
+- 临时动作生成与执行（需用户确认的业务操作）
+- 业务数据快照构建（供内置工具使用）
+
+调用链路：Endpoint → AgentService → AgentRepository/AgentContextService/AgentRuntimeGraph
+"""
+
 import logging
 import time
 import uuid
@@ -16,98 +30,185 @@ from app.repositories.evaluation_repository import EvalRepository
 from app.repositories.job_repository import JobRepository
 from app.schemas.agent.dto import AgentGraphStateDTO, LLMResultDTO, LLMRuntimeConfigDTO
 from app.schemas.agent.request import (
-    AgentActionReject,
     AgentMessageCreate,
     AgentSessionCreate,
     AgentSessionUpdate,
+    AgentTemporaryActionExecute,
 )
 from app.schemas.agent.response import (
-    AgentActionItem,
     AgentMessageItem,
     AgentReply,
-    AgentRunItem,
     AgentSessionDetail,
     AgentSessionItem,
     AgentStreamEvent,
+    AgentTemporaryActionItem,
 )
 from app.services.agent_context_service import AgentContextService
-from app.services.agent_runtime_config_service import AgentRuntimeConfigService
 from app.services.llm_config_service import LlmConfigService
 
 logger = logging.getLogger(__name__)
 
 
-# 负责编排员工 Agent 会话、消息发送、模型调用和动作确认等核心业务流程
 class AgentService:
+    """
+    Agent 核心服务类 - 编排员工 Agent 会话的全部业务流程
+
+    职责：
+    1. 会话生命周期管理（CRUD）
+    2. 消息发送与流式响应处理
+    3. Prompt 构建与记忆管理
+    4. Runtime Graph 执行编排
+    5. 临时动作（待确认操作）的生成与执行
+    6. 业务数据快照构建（供内置工具查询）
+
+    该服务为无状态设计，所有请求级别的状态通过方法参数传递
+    """
+
     def __init__(
         self,
         agent_repo: AgentRepository,
         llm_service: LlmConfigService,
         context_service: AgentContextService | None = None,
-        runtime_config_service: AgentRuntimeConfigService | None = None,
         runtime_graph: AgentRuntimeGraph | None = None,
         job_repo: JobRepository | None = None,
         app_repo: ApplicationRepository | None = None,
         eval_repo: EvalRepository | None = None,
     ) -> None:
+        """
+        初始化 Agent 服务
+
+        Args:
+            agent_repo: 会话/消息数据访问层，负责数据库持久化
+            llm_service: LLM 配置服务，负责模型路由和运行时配置构建
+            context_service: 上下文服务，负责长期记忆管理和 Prompt 构建（可选）
+            runtime_graph: LangGraph 运行时图，负责 Agent 执行流程编排（可选，默认创建新实例）
+            job_repo: 岗位数据访问层，供内置工具查询员工岗位数据（可选）
+            app_repo: 投递数据访问层，供内置工具查询投递数据（可选）
+            eval_repo: 评估数据访问层，供内置工具查询评估数据（可选）
+        """
         self._agent_repo = agent_repo
         self._llm_service = llm_service
         self._context_service = context_service
-        self._runtime_config_service = runtime_config_service
+        # 如果未提供 runtime_graph，则创建默认实例（使用全局默认模型路由器）
         self._runtime_graph = runtime_graph or AgentRuntimeGraph()
         self._job_repo = job_repo
         self._app_repo = app_repo
         self._eval_repo = eval_repo
 
-    # 创建员工 Agent 会话，并在指定模型时记录模型来源
     async def create_session(self, body: AgentSessionCreate, current_user: dict) -> AgentSessionItem:
+        """
+        创建新的 Agent 会话
+
+        Args:
+            body: 会话创建请求，包含可选的初始模型选择
+            current_user: 当前登录用户信息，必须为员工类型
+
+        Returns:
+            AgentSessionItem: 创建成功的会话概要信息
+
+        流程：
+        1. 从 current_user 提取员工 ID
+        2. 如果指定了模型，构建运行时配置以获取模型来源
+        3. 调用 repository 创建会话记录
+        4. 返回会话概要
+        """
+        # 从登录信息中提取当前用户的员工 ID
         employee_id = self._get_employee_id(current_user)
         selected_model_source = None
+
+        # 如果请求中指定了模型名称，则查询该模型的运行时配置以获取其来源标识
+        # 模型来源用于区分配置来源于个人还是部门
         if body.selected_model_name:
             runtime_config = await self._build_runtime_config(current_user, body.selected_model_name)
             selected_model_source = runtime_config.source
+
+        # 创建会话记录，使用 UUID 作为会话唯一标识
         session = await self._agent_repo.create_session(
-            session_key=uuid.uuid4().hex,
-            employee_id=employee_id,
-            title=body.title,
-            selected_model_name=body.selected_model_name,
-            selected_model_source=selected_model_source,
+            session_key=uuid.uuid4().hex,  # 全局唯一标识，用于安全引用
+            employee_id=employee_id,        # 会话所属员工
+            title=body.title,              # 会话标题（可为空）
+            selected_model_name=body.selected_model_name,    # 选中的模型名
+            selected_model_source=selected_model_source,    # 模型来源（env/personal/dept）
         )
+        await self._agent_repo.commit()
         return AgentSessionItem.model_validate(session)
 
-    # 分页查询当前员工的未删除会话，并支持按会话名称搜索
     async def list_sessions(self, page: int, page_size: int, current_user: dict, keyword: str | None = None) -> dict:
+        """
+        分页查询当前员工的未删除会话列表
+
+        Args:
+            page: 页码，从 1 开始
+            page_size: 每页数量，范围 1-100
+            current_user: 当前登录用户
+            keyword: 可选的会话标题搜索关键字
+
+        Returns:
+            dict: 包含 total（总数量）和 items（会话列表）的分页数据
+        """
+        # 提取员工 ID 用于查询
         employee_id = self._get_employee_id(current_user)
+
+        # 计算分页偏移量：(page - 1) * page_size
         skip = (page - 1) * page_size
+
+        # 查询会话总数（用于分页导航）和会话列表
         total = await self._agent_repo.count_sessions(employee_id, keyword)
         items = await self._agent_repo.list_sessions(employee_id, skip, page_size, keyword)
+
+        # 将 ORM 模型转换为 Pydantic 响应模型
         return {"total": total, "items": [AgentSessionItem.model_validate(item) for item in items]}
 
-    # 获取会话详情，组装消息、记忆、快照和上下文窗口
     async def get_session_detail(self, session_id: int, current_user: dict) -> AgentSessionDetail:
+        """
+        获取会话详情，包括消息列表和长期记忆
+
+        Args:
+            session_id: 会话 ID
+            current_user: 当前登录用户
+
+        Returns:
+            AgentSessionDetail: 包含会话概要、消息列表和记忆列表的完整详情
+
+        流程：
+        1. 校验会话归属权
+        2. 查询该会话下的所有消息（按时间排序）
+        3. 查询该员工的长期记忆（用于上下文理解）
+        4. 组装返回
+        """
+        # _get_session 会校验会话是否存在且属于当前用户
         session = await self._get_session(session_id, current_user)
+
+        # 查询会话内的所有消息，按 sort_order 排序
         messages = await self._agent_repo.list_messages(session.id)
+
+        # 初始化记忆列表（如果没有配置 context_service 则为空）
         memories: list = []
-        snapshots: list = []
-        session_window = None
         if self._context_service:
+            # 从长期记忆服务获取该员工的记忆
             memories = await self._context_service.list_memories(session.employee_id)
-            snapshots = await self._context_service.list_snapshots(session.id)
-            session_window = await self._context_service.build_session_window(session.id, messages, session.employee_id)
+
+        # 组装完整的会话详情响应
         return AgentSessionDetail(
-            session=AgentSessionItem.model_validate(session),
-            messages=[AgentMessageItem.model_validate(m) for m in messages],
-            memories=memories,
-            snapshots=snapshots,
-            session_window=session_window,
+            session=AgentSessionItem.model_validate(session),           # 会话概要
+            messages=[AgentMessageItem.model_validate(m) for m in messages],  # 消息列表
+            memories=memories,                                           # 长期记忆列表
         )
 
-    # 更新会话选中的模型；空模型表示使用配置文件默认模型
     async def select_model(self, session_id: int, model_name: str | None, current_user: dict) -> AgentSessionItem:
+        """
+        更新会话选中的模型
+
+        Args:
+            session_id: 会话 ID
+            model_name: 新的模型名称，None 表示使用配置文件默认模型
+            current_user: 当前登录用户
+
+        Returns:
+            AgentSessionItem: 更新后的会话概要
+        """
         session = await self._get_session(session_id, current_user)
         runtime_config = await self._build_runtime_config(current_user, model_name)
-        if self._runtime_config_service:
-            await self._runtime_config_service.select_model(current_user, model_name)
         updated = await self._agent_repo.update_session(
             session.id,
             selected_model_name=model_name,
@@ -115,183 +216,348 @@ class AgentService:
         )
         if not updated:
             raise NotFoundError("会话不存在")
+        await self._agent_repo.commit()
         return AgentSessionItem.model_validate(updated)
 
-    # 更新会话基础信息，目前用于重命名会话
     async def update_session(self, session_id: int, body: AgentSessionUpdate, current_user: dict) -> AgentSessionItem:
+        """
+        更新会话基础信息，目前主要用于重命名会话标题
+
+        Args:
+            session_id: 会话 ID
+            body: 更新请求，目前只支持 title（标题）
+            current_user: 当前登录用户
+
+        Returns:
+            AgentSessionItem: 更新后的会话概要
+        """
         session = await self._get_session(session_id, current_user)
         updated = await self._agent_repo.update_session(session.id, title=body.title)
         if not updated:
             raise NotFoundError("会话不存在")
+        await self._agent_repo.commit()
         return AgentSessionItem.model_validate(updated)
 
-    # 软删除会话，保留历史数据但从列表和详情中隐藏
     async def delete_session(self, session_id: int, current_user: dict) -> None:
+        """
+        软删除会话
+
+        执行后会话从列表和详情中隐藏，但数据保留以供审计。
+        软删除通过 is_deleted 字段实现，比硬删除更安全。
+
+        Args:
+            session_id: 会话 ID
+            current_user: 当前登录用户
+        """
         session = await self._get_session(session_id, current_user)
         await self._agent_repo.soft_delete_session(session.id)
+        await self._agent_repo.commit()
 
-    # 处理用户消息发送，持久化消息、运行记录并调用 Agent Runtime 生成回复
-    async def send_message(self, session_id: int, body: AgentMessageCreate, current_user: dict) -> AgentReply:
+    async def _prepare_message_run(
+        self,
+        session_id: int,
+        body: AgentMessageCreate,
+        current_user: dict,
+    ) -> tuple[Any, Any, Any, str, str | None, dict | None]:
+        """send_message 与 stream_message 共用的前置准备逻辑：校验会话、构建运行时配置、创建用户消息、组装 Prompt。"""
         session = await self._get_session(session_id, current_user)
-        runtime_config = await self._build_runtime_config(current_user, session.selected_model_name)
-        runtime_snapshot = self._runtime_config_snapshot(runtime_config)
-        user_message, run = await self._create_user_message_run(session, body, runtime_snapshot)
-        prompt, session_title, _ = await self._prepare_prompt(session, body, user_message, run, runtime_snapshot)
-        return await self._execute_graph(runtime_config, prompt, user_message, session, run, session_title)
+        runtime_config = await self._build_runtime_config(current_user, session.selected_model_name, body)
+        user_message = await self._create_user_message(session, body)
+        prompt, session_title, replay_payload = await self._prepare_prompt(
+            session, body, user_message, runtime_config.enable_memory
+        )
+        return session, runtime_config, user_message, prompt, session_title, replay_payload
+
+    async def send_message(self, session_id: int, body: AgentMessageCreate, current_user: dict) -> AgentReply:
+        """
+        处理用户普通消息发送（非流式）
+
+        与流式发送的区别：不逐步 yield 中间状态，直接返回最终结果。
+        适用于对实时性要求不高的场景。
+
+        Args:
+            session_id: 会话 ID
+            body: 消息创建请求，包含内容和运行时选项
+            current_user: 当前登录用户
+
+        Returns:
+            AgentReply: 完整的回复结果，包含用户消息、Agent 回复和更新后的会话信息
+        """
+        logger.info(
+            "Agent消息发送开始：session_id=%s model_name=%s",
+            session_id,
+            body.selected_model_name or "默认",
+        )
+        session, runtime_config, user_message, prompt, session_title, _ = await self._prepare_message_run(
+            session_id, body, current_user
+        )
+        return await self._execute_graph(runtime_config, prompt, user_message, session, session_title)
 
     async def stream_message(self, session_id: int, body: AgentMessageCreate, current_user: dict) -> AsyncIterator[AgentStreamEvent]:
-        session = await self._get_session(session_id, current_user)
-        runtime_config = await self._build_runtime_config(current_user, session.selected_model_name)
-        runtime_snapshot = self._runtime_config_snapshot(runtime_config)
-        user_message, run = await self._create_user_message_run(session, body, runtime_snapshot)
-        prompt, session_title, replay_payload = await self._prepare_prompt(session, body, user_message, run, runtime_snapshot)
-        yield AgentStreamEvent(event="user_message", data={"message": AgentMessageItem.model_validate(user_message).model_dump(mode="json")})
-        yield AgentStreamEvent(event="run_started", data={"run": AgentRunItem.model_validate(run).model_dump(mode="json")})
-        if replay_payload:
-            yield AgentStreamEvent(event="context_ready", data={"run_id": run.id, "input_payload": replay_payload})
+        """
+        处理用户消息发送（流式），通过 SSE 向客户端逐步推送事件
+
+        事件序列：
+        1. user_message    - 用户消息已创建
+        2. tool_call        - 规划了工具调用（可选）
+        3. tool_result      - 工具执行完成（可选）
+        4. action_required  - 生成了待确认动作（可选）
+        5. token            - LLM 流式输出增量
+        6. final/error      - 最终回复或错误
+
+        Args:
+            session_id: 会话 ID
+            body: 消息创建请求
+            current_user: 当前登录用户
+
+        Yields:
+            AgentStreamEvent: 逐步推送的流式事件
+        """
+        logger.info(
+            "Agent流式消息发送开始：session_id=%s model_name=%s",
+            session_id,
+            body.selected_model_name or "默认",
+        )
+        session, runtime_config, user_message, prompt, session_title, replay_payload = await self._prepare_message_run(
+            session_id, body, current_user
+        )
+
+        yield AgentStreamEvent(
+            event="user_message",
+            data={"message": AgentMessageItem.model_validate(user_message).model_dump(mode="json")}
+        )
+
         started_at = time.perf_counter()
         llm_result = None
-        tool_results = []
+
         try:
-            tool_context = await self._build_tool_context(session.employee_id, replay_payload, await self._agent_repo.list_runs(session.id))
+            tool_context = await self._build_tool_context(session.employee_id, replay_payload)
+
             async for chunk in self._runtime_graph.stream(prompt, runtime_config, tool_context):
                 if chunk.tool_call:
-                    yield AgentStreamEvent(event="tool_call", data={"tool_call": chunk.tool_call.model_dump(mode="json")})
+                    yield AgentStreamEvent(
+                        event="tool_call",
+                        data={"tool_call": chunk.tool_call.model_dump(mode="json")}
+                    )
+
                 if chunk.tool_result:
                     tool_result_data = chunk.tool_result.model_dump(mode="json")
-                    tool_results.append(tool_result_data)
-                    yield AgentStreamEvent(event="tool_result", data={"tool_result": tool_result_data})
+                    yield AgentStreamEvent(
+                        event="tool_result",
+                        data={"tool_result": tool_result_data}
+                    )
+
+                    # 只有 prepare_application_status_action 工具会生成此 payload
                     action_payload = (chunk.tool_result.output_payload or {}).get("action_required")
                     if isinstance(action_payload, dict):
-                        action = await self._create_pending_action(session, user_message.id, run.id, action_payload)
-                        yield AgentStreamEvent(event="action_required", data={"action": AgentActionItem.model_validate(action).model_dump(mode="json")})
+                        action = self._build_temporary_action(session, user_message.id, action_payload)
+                        yield AgentStreamEvent(
+                            event="action_required",
+                            data={"action": action.model_dump(mode="json")}
+                        )
+
                 if chunk.delta:
-                    yield AgentStreamEvent(event="token", data={"delta": chunk.delta})
+                    yield AgentStreamEvent(
+                        event="token",
+                        data={"delta": chunk.delta}
+                    )
+
                 if chunk.result:
                     llm_result = chunk.result
+
         except (LLMGatewayError, RuntimeError, ValueError, SQLAlchemyError) as exc:
             if isinstance(exc, SQLAlchemyError):
                 await self._agent_repo.rollback()
-            logger.exception("Agent流式消息执行失败：session_id=%s run_id=%s", session.id, run.id)
-            latency_ms = int((time.perf_counter() - started_at) * 1000)
-            reply = await self._build_reply(
-                session, user_message, run.id, runtime_config.model_name, latency_ms, str(exc), session_title, failed=True, use_memory=runtime_config.enable_memory
+
+            logger.exception("Agent流式消息执行失败：session_id=%s", session.id)
+            reply = await self._make_run_reply(
+                session, user_message, runtime_config, started_at, session_title,
+                failed=True, error_text=str(exc),
             )
-            yield AgentStreamEvent(event="error", data={"message": str(exc), "reply": reply.model_dump(mode="json")})
+            yield AgentStreamEvent(
+                event="error",
+                data={"message": str(exc), "reply": reply.model_dump(mode="json")}
+            )
             return
-        latency_ms = int((time.perf_counter() - started_at) * 1000)
+
         if not llm_result:
             llm_result = LLMResultDTO(content="", model_name=runtime_config.model_name)
-        reply = await self._build_reply(
-            session,
-            user_message,
-            run.id,
-            llm_result.model_name,
-            latency_ms,
-            None,
-            session_title,
-            failed=False,
-            llm_result=llm_result,
-            tool_results=tool_results,
-            use_memory=runtime_config.enable_memory,
+
+        reply = await self._make_run_reply(
+            session, user_message, runtime_config, started_at, session_title,
+            failed=False, llm_result=llm_result,
         )
         yield AgentStreamEvent(event="final", data={"reply": reply.model_dump(mode="json")})
 
-    # 创建用户消息与运行记录，确保后续 Prompt 构建和 Trace 回放有稳定关联
-    async def _create_user_message_run(self, session, body: AgentMessageCreate, runtime_snapshot: dict[str, Any]):
+    async def _create_user_message(self, session, body: AgentMessageCreate):
+        """
+        创建用户消息记录
+
+        用户消息作为 Agent 回复和临时动作事件的关联锚点，
+        通过 parent_message_id 形成对话链条。
+
+        Args:
+            session: 会话对象
+            body: 消息创建请求
+
+        Returns:
+            创建的消息记录（ORM 对象）
+        """
         user_message = await self._agent_repo.create_message(
             session_id=session.id,
             role="user",
             message_type="text",
-            content={"context_refs": body.context_refs, "blocks": [{"type": "text", "text": body.content}]},
+            content={
+                "context_refs": body.context_refs,
+                "blocks": [{"type": "text", "text": body.content}],
+            },
             sort_order=await self._agent_repo.next_message_order(session.id),
         )
-        run = await self._agent_repo.create_run(
-            trace_id=uuid.uuid4().hex,
-            session_id=session.id,
-            message_id=user_message.id,
-            run_type="llm",
-            status=1,
-            input_payload={"message_id": user_message.id, "content": body.content, "context_refs": body.context_refs, "runtime_config": runtime_snapshot},
-        )
-        return user_message, run
+        return user_message
 
-    # 根据用户输入、长期记忆和会话窗口构建最终提交给模型的 Prompt
     async def _prepare_prompt(
         self,
         session,
         body: AgentMessageCreate,
         user_message,
-        run,
-        runtime_snapshot: dict[str, Any],
+        enable_memory: bool,
     ) -> tuple[str, str | None, dict | None]:
+        """
+        构建最终提交给 LLM 的 Prompt
+
+        Prompt 构建策略：
+        1. 如果禁用记忆或未配置 context_service，直接返回用户输入
+        2. 否则，从用户输入中提取偏好存入长期记忆
+        3. 合并长期记忆和近期消息，通过 PromptManager 渲染完整模板
+
+        Args:
+            session: 会话对象
+            body: 消息创建请求
+            user_message: 已创建的用户消息对象
+            enable_memory: 是否启用记忆功能
+
+        Returns:
+            tuple[str, str | None, dict | None]:
+            - prompt: 完整 Prompt 文本
+            - session_title: 如果是首条消息，生成会话标题
+            - replay_payload: 上下文数据，用于构建工具执行时的业务快照
+        """
+        # 如果是会话的第一条消息（sort_order == 1），从用户输入生成简短标题
         session_title = self._build_session_title(body.content) if user_message.sort_order == 1 else None
-        if not runtime_snapshot.get("enable_memory") or not self._context_service:
+
+        # 禁用记忆或无 context_service 时，直接返回原始输入
+        if not enable_memory or not self._context_service:
             return body.content, session_title, None
 
-        await self._context_service.upsert_preference_memory(session.employee_id, session.id, body.content)
-        memories = await self._context_service.list_memories(session.employee_id, True)
-        messages_before_run = await self._agent_repo.list_messages(session.id)
-        session_window = await self._context_service.build_session_window(
-            session.id,
-            messages_before_run,
-            session.employee_id,
-            exclude_message_id=user_message.id,
-            touch_access_time=True,
+        await self._context_service.upsert_preference_memory(
+            session.employee_id, session.id, body.content
         )
-        prompt = await self._context_service.build_prompt(body.content, session_window, memories)
+
+        memories = await self._context_service.list_memories(session.employee_id, True)
+
+        messages_before_run = await self._agent_repo.list_messages(session.id)
+        recent_messages = [message for message in messages_before_run if message.id != user_message.id]
+
+        prompt = await self._context_service.build_prompt(body.content, recent_messages, memories)
+
         replay_payload = self._context_service.build_replay_payload(
             raw_content=body.content,
             context_refs=body.context_refs,
             resolved_prompt=prompt,
-            session_window=session_window,
+            recent_messages=recent_messages,
             memories=memories,
             user_message_id=user_message.id,
         )
-        replay_payload["runtime_config"] = runtime_snapshot
-        await self._agent_repo.update_run(
-            run.id,
-            input_payload=replay_payload,
-        )
         return prompt, session_title, replay_payload
 
-    async def _build_tool_context(self, employee_id: int, replay_payload: dict | None, runs: list) -> dict[str, Any]:
+    async def _build_tool_context(self, employee_id: int, replay_payload: dict | None) -> dict[str, Any]:
+        """
+        构建工具执行时的上下文数据
+
+        这个上下文传递给内置工具，供工具查询业务数据。
+        包含：近期消息引用、记忆引用、业务数据快照。
+
+        Args:
+            employee_id: 员工 ID
+            replay_payload: _prepare_prompt 返回的上下文数据
+
+        Returns:
+            dict: 包含 recent_messages、memories、business 的工具上下文
+        """
         context = replay_payload or {}
         return {
-            "prompt_prefix_hash": context.get("prompt_prefix_hash"),
-            "snapshot_id": context.get("snapshot_id"),
-            "recent_messages": [{"id": message_id} for message_id in context.get("recent_message_ids", [])],
-            "memories": [{"id": memory_id} for memory_id in context.get("memory_ids", [])],
-            "runs": [AgentRunItem.model_validate(run).model_dump(mode="json") for run in runs[:5]],
+            "recent_messages": [
+                {"id": message_id} for message_id in context.get("recent_message_ids", [])
+            ],
+            "memories": [
+                {"id": memory_id} for memory_id in context.get("memory_ids", [])
+            ],
             "business": await self._build_business_tool_snapshot(employee_id),
         }
 
     async def _build_business_tool_snapshot(self, employee_id: int) -> dict[str, Any]:
+        """
+        构建业务数据快照，供内置工具查询
+
+        该快照在 Agent 执行开始时构建，包含员工可见的：
+        - 岗位列表（最多20个）
+        - 投递列表（最多20个）
+        - 评估列表（最多10个）
+
+        Args:
+            employee_id: 员工 ID
+
+        Returns:
+            dict: 包含 jobs、applications、evaluations 的业务快照
+        """
+        # 如果未配置业务数据访问层，返回空快照
+        # 这允许 Agent 在没有完整数据权限时仍能运行（但功能受限）
         if not self._job_repo or not self._app_repo or not self._eval_repo:
             return {"jobs": [], "applications": [], "evaluations": []}
+
+        # 查询该员工负责的所有岗位（用于后续筛选投递）
         jobs = await self._job_repo.get_by_employee(employee_id)
-        job_ids = [job.id for job in jobs[:20]]
+        job_ids = [job.id for job in jobs[:20]]  # 最多取20个岗位
+
+        # 如果员工没有负责任何岗位，返回空快照
         if not job_ids:
-            logger.info("Agent业务工具快照构建完成：employee_id=%s job_count=0 application_count=0 evaluation_count=0", employee_id)
+            logger.info(
+                "Agent业务工具快照构建完成：employee_id=%s job_count=0 application_count=0 evaluation_count=0",
+                employee_id
+            )
             return {"jobs": [], "applications": [], "evaluations": []}
+
+        # 批量查询各岗位的投递数量（用于展示）
         application_counts = await self._job_repo.batch_count_applications(job_ids)
+
+        # 查询这些岗位下的所有投递（最多20个）
         app_rows = await self._app_repo.get_all(0, 20, job_ids=job_ids)
-        match_map = await self._eval_repo.get_matches_by_application_ids([row[0].id for row in app_rows])
+
+        # 收集投递 ID 用于查询评估数据
+        application_ids = [row[0].id for row in app_rows]
+
+        # 批量查询投递的匹配评估信息
+        match_map = await self._eval_repo.get_matches_by_application_ids(application_ids)
+
+        # 一次性批量拉取所有需要的评估详情，消除 N+1
+        match_ids = [mid for mid in match_map.values() if mid]
+        matches = await self._eval_repo.get_matches_by_ids(match_ids) if match_ids else {}
+
+        # 构建评估列表（包含分数、标签等）
         evaluations = []
-        for application, _ in app_rows[:10]:
+        for application, _ in app_rows[:10]:  # 最多10个评估
             match_id = match_map.get(application.id)
-            match = await self._eval_repo.get_match_by_id(match_id) if match_id else None
+            match = matches.get(match_id) if match_id else None
             if match:
-                evaluations.append(
-                    {
-                        "match_id": match.id,
-                        "application_id": application.id,
-                        "job_id": application.job_id,
-                        "final_score": float(match.final_score) if match.final_score is not None else None,
-                        "final_label": match.final_label,
-                        "error_message": match.error_message,
-                    }
-                )
+                evaluations.append({
+                    "match_id": match.id,
+                    "application_id": application.id,
+                    "job_id": application.job_id,
+                    "final_score": float(match.final_score) if match.final_score is not None else None,
+                    "final_label": match.final_label,
+                    "error_message": match.error_message,
+                })
+
         snapshot = {
             "jobs": [
                 {
@@ -318,6 +584,7 @@ class AgentService:
             ],
             "evaluations": evaluations,
         }
+
         logger.info(
             "Agent业务工具快照构建完成：employee_id=%s job_count=%s application_count=%s evaluation_count=%s",
             employee_id,
@@ -327,13 +594,31 @@ class AgentService:
         )
         return snapshot
 
-    # 创建待确认动作记录，等待人工确认后再执行写操作
-    async def _create_pending_action(self, session, message_id: int, run_id: int, action_payload: dict[str, Any]):
-        idempotency_key = f"{session.id}:{run_id}:{action_payload.get('capability_key')}:{action_payload.get('target_id')}"
-        action = await self._agent_repo.create_action(
+    def _build_temporary_action(
+        self,
+        session,
+        message_id: int,
+        action_payload: dict[str, Any],
+    ) -> AgentTemporaryActionItem:
+        """
+        构造本次流式响应内的临时待确认动作
+
+        临时动作不写入数据库，仅存在于当前流式响应中。
+        前端收到 action_required 事件后弹出确认对话框，
+        用户确认后调用 execute_temporary_action 执行真正的业务操作。
+
+        Args:
+            session: 会话对象
+            message_id: 触发该动作的用户消息 ID
+            action_payload: 工具返回的动作详情
+
+        Returns:
+            AgentTemporaryActionItem: 待确认动作的响应模型
+        """
+        action = AgentTemporaryActionItem(
+            id=f"tmp-{uuid.uuid4().hex}",
             session_id=session.id,
             message_id=message_id,
-            run_id=run_id,
             employee_id=session.employee_id,
             capability_key=action_payload.get("capability_key") or "unknown",
             action_name=action_payload.get("action_name") or "待确认动作",
@@ -342,46 +627,105 @@ class AgentService:
             input_payload=action_payload.get("input_payload") or {},
             preview_payload=action_payload.get("preview_payload") or {},
             status=1,
-            idempotency_key=idempotency_key,
         )
-        logger.info("Agent待确认动作已创建：action_id=%s capability_key=%s", action.id, action.capability_key)
+        logger.info(
+            "Agent临时待确认动作已生成：action_id=%s capability_key=%s",
+            action.id,
+            action.capability_key,
+        )
         return action
 
-    # 执行 LangGraph Runtime，并将成功或失败结果统一转换为回复结构
     async def _execute_graph(
         self,
         runtime_config,
         prompt: str,
         user_message,
         session,
-        run,
         session_title: str | None,
     ) -> AgentReply:
-        started_at = time.perf_counter()
-        latency_ms = 0
+        """
+        执行 LangGraph Runtime，并将结果统一转换为回复结构
+
+        这是非流式消息发送的核心执行方法。
+        流式发送使用 _runtime_graph.stream()，最终也调用此逻辑。
+
+        Args:
+            runtime_config: 运行时配置（模型、参数等）
+            prompt: 完整的 Prompt 文本
+            user_message: 用户消息对象
+            session: 会话对象
+            session_title: 会话标题（首条消息时生成）
+
+        Returns:
+            AgentReply: 完整的回复结果
+        """
+        logger.info(
+            "Agent LangGraph 执行开始：session_id=%s model_name=%s",
+            session.id,
+            runtime_config.model_name,
+        )
+        started_at = time.perf_counter()  # 记录开始时间
+
         try:
-            graph_result = await self._runtime_graph.run(AgentGraphStateDTO(prompt=prompt, runtime_config=runtime_config))
+            # 执行 LangGraph 状态图
+            # 内部会依次执行 planner → tools → llm 节点
+            graph_result = await self._runtime_graph.run(
+                AgentGraphStateDTO(prompt=prompt, runtime_config=runtime_config)
+            )
+
         except (RuntimeError, ValueError) as exc:
-            latency_ms = int((time.perf_counter() - started_at) * 1000)
-            return await self._build_reply(
-                session, user_message, run.id, runtime_config.model_name, latency_ms, str(exc), session_title, failed=True, use_memory=runtime_config.enable_memory
+            return await self._make_run_reply(
+                session, user_message, runtime_config, started_at, session_title,
+                failed=True, error_text=str(exc),
             )
+
         if graph_result.error_message or not graph_result.result:
-            latency_ms = int((time.perf_counter() - started_at) * 1000)
-            return await self._build_reply(
-                session, user_message, run.id, runtime_config.model_name, latency_ms, graph_result.error_message or "模型调用失败", session_title, failed=True, use_memory=runtime_config.enable_memory
+            return await self._make_run_reply(
+                session, user_message, runtime_config, started_at, session_title,
+                failed=True, error_text=graph_result.error_message or "模型调用失败",
             )
-        latency_ms = int((time.perf_counter() - started_at) * 1000)
-        return await self._build_reply(
-            session, user_message, run.id, graph_result.result.model_name, latency_ms, None, session_title, failed=False, llm_result=graph_result.result, use_memory=runtime_config.enable_memory
+
+        return await self._make_run_reply(
+            session, user_message, runtime_config, started_at, session_title,
+            failed=False, llm_result=graph_result.result,
         )
 
-    # 构造 Agent 回复，统一更新运行记录、消息记录和会话状态
+    async def _make_run_reply(
+        self,
+        session,
+        user_message,
+        runtime_config,
+        started_at: float,
+        session_title: str | None,
+        *,
+        failed: bool,
+        error_text: str | None = None,
+        llm_result=None,
+    ) -> AgentReply:
+        """封装运行结束后构建回复的通用逻辑，自动计算耗时与推导模型名。"""
+        latency_ms = self._elapsed_ms(started_at)
+        model_name = llm_result.model_name if llm_result else runtime_config.model_name
+        return await self._build_reply(
+            session,
+            user_message,
+            model_name,
+            latency_ms,
+            error_text,
+            session_title,
+            failed=failed,
+            llm_result=llm_result,
+            use_memory=runtime_config.enable_memory,
+        )
+
+    @staticmethod
+    def _elapsed_ms(started_at: float) -> int:
+        """计算从 started_at 到当前的耗时（毫秒）。"""
+        return int((time.perf_counter() - started_at) * 1000)
+
     async def _build_reply(
         self,
         session,
         user_message,
-        run_id: int,
         model_name: str,
         latency_ms: int,
         error_text: str | None,
@@ -389,39 +733,40 @@ class AgentService:
         *,
         failed: bool,
         llm_result=None,
-        tool_results: list[dict[str, Any]] | None = None,
         use_memory: bool = True,
     ) -> AgentReply:
-        status = 3 if failed else 2
-        content = error_text or (llm_result.content if llm_result else None)
-        token_count = 0 if failed else llm_result.total_tokens
+        """
+        构造 Agent 回复
 
-        run_update: dict = {"status": status, "latency_ms": latency_ms}
-        if failed:
-            run_update["error_message"] = error_text
-        else:
-            run_update.update(
-                {
-                    "model_name": llm_result.model_name,
-                    "prompt_tokens": llm_result.prompt_tokens,
-                    "completion_tokens": llm_result.completion_tokens,
-                    "total_tokens": llm_result.total_tokens,
-                    "output_payload": {
-                        "content": llm_result.content,
-                        "usage_detail": llm_result.usage_detail,
-                        "raw_response_metadata": llm_result.raw_response_metadata,
-                        "tool_results": tool_results or [],
-                    },
-                }
-            )
-        updated_run = await self._agent_repo.update_run(run_id, **run_update)
+        将 LLM 调用结果（或错误信息）持久化为 Agent 消息，
+        并更新会话状态（标题、最近消息时间等）。
+
+        Args:
+            session: 会话对象
+            user_message: 关联的用户消息
+            model_name: 使用的模型名称
+            latency_ms: 执行耗时（毫秒）
+            error_text: 错误信息（如果有）
+            session_title: 会话标题（首条消息时生成）
+            failed: 是否为失败回复
+            llm_result: LLM 调用结果（成功时提供）
+            use_memory: 是否启用记忆
+
+        Returns:
+            AgentReply: 完整的回复结果
+        """
+        content = error_text or (llm_result.content if llm_result else None)
+        token_count = 0 if failed or not llm_result else llm_result.total_tokens
 
         agent_message = await self._agent_repo.create_message(
             session_id=session.id,
             parent_message_id=user_message.id,
             role="agent",
             message_type="text",
-            content={"context_refs": [], "blocks": [{"type": "text", "text": content}]},
+            content={
+                "context_refs": [],
+                "blocks": [{"type": "text", "text": content}],
+            },
             model_name=model_name,
             token_count=token_count,
             sort_order=await self._agent_repo.next_message_order(session.id),
@@ -430,187 +775,259 @@ class AgentService:
         session_status = 5 if failed else 1
         updated_session = await self._update_session_status(session.id, session_title, session_status)
 
-        memories, session_window, snapshot = await self._build_context_data(session, model_name) if not failed and use_memory else ([], None, None)
+        memories = await self._build_context_data(session) if not failed and use_memory else []
 
-        if not updated_run:
-            raise NotFoundError("执行记录不存在")
+        logger.info(
+            "Agent回复已完成：session_id=%s latency_ms=%s failed=%s",
+            session.id,
+            latency_ms,
+            failed,
+        )
 
+        await self._agent_repo.commit()
         return AgentReply(
             user_message=AgentMessageItem.model_validate(user_message),
             agent_message=AgentMessageItem.model_validate(agent_message),
-            run=AgentRunItem.model_validate(updated_run),
             session=AgentSessionItem.model_validate(updated_session) if updated_session else None,
-            snapshot=snapshot,
             memories=memories,
-            session_window=session_window,
         )
 
-    # 更新会话状态和最近消息时间，首条消息会同步生成会话标题摘要
-    async def _update_session_status(self, session_id: int, session_title: str | None, status: int):
-        session_payload: dict = {"status": status, "last_message_time": datetime.now()}
+    async def _update_session_status(
+        self,
+        session_id: int,
+        session_title: str | None,
+        status: int,
+    ):
+        """
+        更新会话状态和最近消息时间
+
+        首条消息时还会同步更新会话标题和上下文摘要。
+
+        Args:
+            session_id: 会话 ID
+            session_title: 会话标题（仅首条消息时提供）
+            status: 会话状态（1 正常 / 5 失败）
+
+        Returns:
+            更新后的会话对象
+        """
+        session_payload: dict = {
+            "status": status,
+            "last_message_time": datetime.now(),
+        }
         if session_title:
             session_payload["title"] = session_title
             session_payload["context_summary"] = session_title
+
         return await self._agent_repo.update_session(session_id, **session_payload)
 
-    # 重新加载当前会话的上下文窗口和长期记忆，供前端即时刷新展示
-    async def _build_context_data(self, session, model_name: str | None) -> tuple[list, object | None, object | None]:
+    async def _build_context_data(self, session) -> list:
+        """
+        重新加载长期记忆，供前端即时刷新展示
+
+        在每次成功回复后调用，获取最新的记忆数据。
+
+        Args:
+            session: 会话对象
+
+        Returns:
+            list: 长期记忆列表
+        """
         if not self._context_service:
-            return [], None, None
+            return []
+        return await self._context_service.list_memories(session.employee_id)
 
-        messages = await self._agent_repo.list_messages(session.id)
-        snapshot = None
-        if model_name:
-            snapshot = await self._context_service.maybe_create_snapshot(session.id, messages, model_name)
-        session_window = await self._context_service.build_session_window(session.id, messages, session.employee_id, touch_access_time=True)
-        memories = await self._context_service.list_memories(session.employee_id)
-        return memories, session_window, snapshot
+    async def _build_runtime_config(
+        self,
+        current_user: dict,
+        model_name: str | None,
+        body: AgentMessageCreate | None = None,
+    ) -> LLMRuntimeConfigDTO:
+        """
+        构建本次运行的运行时配置
 
-    # 合并模型连接配置和员工个人运行参数，确保 Agent 调用使用用户保存的模型运行设置
-    async def _build_runtime_config(self, current_user: dict, model_name: str | None) -> LLMRuntimeConfigDTO:
+        从 LLM 配置服务获取模型连接配置（API Key、Base URL 等），
+        并根据请求体的 runtime_options 应用临时覆盖（如思考模式开关）。
+
+        Args:
+            current_user: 当前登录用户
+            model_name: 模型名称，None 表示使用默认模型
+            body: 消息创建请求（可选），包含 runtime_options
+
+        Returns:
+            LLMRuntimeConfigDTO: 完整的运行时配置
+        """
         runtime_config = await self._llm_service.get_runtime_config(current_user, model_name)
-        if not self._runtime_config_service or runtime_config.source == "env":
-            return runtime_config
-        personal_config = await self._runtime_config_service.get_or_init_model_config(current_user, model_name)
-        return runtime_config.model_copy(
-            update={
-                "enable_thinking": personal_config.enable_thinking,
-                "enable_tools": personal_config.enable_tools,
-                "enable_prompt_cache": personal_config.enable_prompt_cache,
-                "enable_memory": personal_config.enable_memory,
-                "temperature": personal_config.temperature,
-                "top_p": personal_config.top_p,
-                "max_tokens": personal_config.max_tokens,
-                "presence_penalty": personal_config.presence_penalty,
-                "frequency_penalty": personal_config.frequency_penalty,
-                "extra_body": personal_config.extra_body,
-            }
+        if body and body.runtime_options and body.runtime_options.enable_thinking is not None:
+            return runtime_config.model_copy(
+                update={"enable_thinking": body.runtime_options.enable_thinking}
+            )
+        return runtime_config
+
+    async def execute_temporary_action(
+        self,
+        body: AgentTemporaryActionExecute,
+        current_user: dict,
+    ) -> AgentTemporaryActionItem:
+        """
+        执行前端回传的临时动作（用户确认后的业务操作）
+
+        该方法在用户确认 action_required 事件后被调用。
+        目前仅支持 application.update_status（投递状态更新）。
+
+        Args:
+            body: 临时动作执行请求，包含目标、能力、参数等
+            current_user: 当前登录用户
+
+        Returns:
+            AgentTemporaryActionItem: 执行结果
+        """
+        employee_id = self._get_employee_id(current_user)
+        if body.capability_key != "application.update_status":
+            raise ValidationError("临时动作能力未启用")
+        await self._execute_application_status_action(body, employee_id)
+
+        logger.info(
+            "Agent临时动作已执行：capability_key=%s target_id=%s",
+            body.capability_key,
+            body.target_id,
         )
 
-    # 记录实际提交给模型的非敏感运行参数快照，便于 Trace 面板排查运行差异
-    def _runtime_config_snapshot(self, runtime_config: LLMRuntimeConfigDTO) -> dict[str, Any]:
-        return {
-            "model_name": runtime_config.model_name,
-            "source": runtime_config.source,
-            "base_url": runtime_config.base_url,
-            "fallback_model_name": runtime_config.fallback_model_name,
-            "enable_thinking": runtime_config.enable_thinking,
-            "enable_tools": runtime_config.enable_tools,
-            "enable_prompt_cache": runtime_config.enable_prompt_cache,
-            "enable_memory": runtime_config.enable_memory,
-            "temperature": runtime_config.temperature,
-            "top_p": runtime_config.top_p,
-            "max_tokens": runtime_config.max_tokens,
-            "presence_penalty": runtime_config.presence_penalty,
-            "frequency_penalty": runtime_config.frequency_penalty,
-            "timeout_seconds": runtime_config.timeout_seconds,
-            "max_retries": runtime_config.max_retries,
-            "extra_body": runtime_config.extra_body,
-        }
+        return AgentTemporaryActionItem(
+            id=f"tmp-executed-{uuid.uuid4().hex}",
+            session_id=0,
+            message_id=None,
+            employee_id=employee_id,
+            capability_key=body.capability_key,
+            action_name=body.action_name,
+            target_type=body.target_type,
+            target_id=body.target_id,
+            input_payload=body.input_payload,
+            preview_payload=body.preview_payload,
+            status=4,  # 4 = 已执行
+        )
 
-    # 查询指定会话的运行 Trace 记录
-    async def list_runs(self, session_id: int, current_user: dict) -> list[AgentRunItem]:
-        session = await self._get_session(session_id, current_user)
-        runs = await self._agent_repo.list_runs(session.id)
-        return [AgentRunItem.model_validate(run) for run in runs]
+    async def _execute_application_status_action(
+        self,
+        action: AgentTemporaryActionExecute,
+        employee_id: int,
+    ) -> None:
+        """
+        执行投递状态变更临时动作
 
-    # 查询指定会话产生的待确认动作记录
-    async def list_actions(self, session_id: int, current_user: dict) -> list[AgentActionItem]:
-        session = await self._get_session(session_id, current_user)
-        actions = await self._agent_repo.list_actions(session.id)
-        return [AgentActionItem.model_validate(action) for action in actions]
+        重新校验权限和数据完整性，然后调用 ApplicationRepository 执行状态更新。
+        整个操作在事务内完成，确保数据一致性。
 
-    # 确认待执行动作，并记录确认与执行时间
-    async def confirm_action(self, action_id: int, current_user: dict) -> AgentActionItem:
-        employee_id = self._get_employee_id(current_user)
-        action = await self._agent_repo.get_action(action_id, employee_id)
-        if not action:
-            raise NotFoundError("动作不存在")
-        if action.status != 1:
-            raise ValidationError("动作状态不允许确认")
-        if action.capability_key == "application.update_status":
-            updated = await self._confirm_application_status_action(action, employee_id)
-        else:
-            updated = await self._agent_repo.update_pending_action(action.id, status=3, confirmed_at=datetime.now(), executed_at=datetime.now())
-            if not updated:
-                raise ValidationError("动作状态不允许确认")
-        return AgentActionItem.model_validate(updated)
+        Args:
+            action: 动作执行请求
+            employee_id: 当前员工 ID
 
-    # 确认投递状态变更动作，重新校验数据边界并统一提交投递与动作状态
-    async def _confirm_application_status_action(self, action, employee_id: int):
+        Raises:
+            ValidationError: 参数校验失败
+            NotFoundError: 投递不存在
+            ForbiddenError: 无权操作该投递
+        """
         if not self._app_repo or not self._job_repo:
             raise ValidationError("投递状态更新能力未启用")
+
         application_id, status = self._parse_application_status_payload(action)
         application = await self._app_repo.get_by_id(application_id)
         if not application:
             raise NotFoundError("投递不存在")
+
         jobs = await self._job_repo.get_by_employee(employee_id)
         if application.job_id not in {job.id for job in jobs}:
             raise ForbiddenError("无权操作该投递")
+
         try:
             changed = await self._app_repo.update_status_active_without_commit(application_id, status)
             if not changed:
                 await self._agent_repo.rollback()
                 raise NotFoundError("投递不存在")
-            updated = await self._agent_repo.update_pending_action_without_commit(
-                action.id,
-                status=3,
-                confirmed_at=datetime.now(),
-                executed_at=datetime.now(),
-            )
-            if not updated:
-                await self._agent_repo.rollback()
-                raise ValidationError("动作状态不允许确认")
             await self._agent_repo.commit()
-            logger.info("Agent确认动作已执行：action_id=%s application_id=%s status=%s", action.id, application_id, status)
-            return updated
+
+            logger.info(
+                "Agent临时投递状态动作已执行：application_id=%s status=%s",
+                application_id,
+                status,
+            )
+
         except SQLAlchemyError:
             await self._agent_repo.rollback()
-            logger.exception("Agent确认动作事务提交失败：action_id=%s", action.id)
+            logger.exception("Agent临时动作事务提交失败：application_id=%s", application_id)
             raise
 
-    # 解析并校验投递状态动作参数，避免 Agent 写入越权目标或非法状态
     def _parse_application_status_payload(self, action) -> tuple[int, int]:
+        """
+        解析并校验投递状态动作参数
+
+        Args:
+            action: 动作执行请求
+
+        Returns:
+            tuple[int, int]: (application_id, target_status)
+
+        Raises:
+            ValidationError: 参数缺失或非法
+        """
         try:
             application_id = int(action.input_payload.get("application_id") or 0)
             status = int(action.input_payload.get("status") or -1)
         except (TypeError, ValueError) as exc:
             raise ValidationError("投递状态更新参数不完整") from exc
-        if application_id <= 0 or status < 0:
-            raise ValidationError("投递状态更新参数不完整")
+
+        if application_id <= 0:
+            raise ValidationError("投递 ID 不合法")
         if status not in {1, 2, 3, 4, 5}:
             raise ValidationError("投递目标状态不合法")
+
+        # 校验 target_id 与 application_id 一致（防止数据篡改）
         if action.target_id != application_id:
             raise ValidationError("动作目标与投递参数不一致")
+
         return application_id, status
 
-    # 拒绝待执行动作，并保存拒绝原因
-    async def reject_action(self, action_id: int, body: AgentActionReject, current_user: dict) -> AgentActionItem:
-        action = await self._agent_repo.get_action(action_id, self._get_employee_id(current_user))
-        if not action:
-            raise NotFoundError("动作不存在")
-        if action.status != 1:
-            raise ValidationError("动作状态不允许拒绝")
-        updated = await self._agent_repo.update_pending_action(action.id, status=4, rejected_at=datetime.now(), error_message=body.reason)
-        if not updated:
-            raise ValidationError("动作状态不允许拒绝")
-        return AgentActionItem.model_validate(updated)
-
-    # 校验当前员工是否拥有指定会话，并返回会话实体
     async def _get_session(self, session_id: int, current_user: dict):
-        session = await self._agent_repo.get_session(session_id, self._get_employee_id(current_user))
+        """
+        校验当前员工是否拥有指定会话，并返回会话实体
+
+        这是所有会话操作的权限校验入口，确保用户只能访问自己的会话。
+
+        Args:
+            session_id: 会话 ID
+            current_user: 当前登录用户
+
+        Returns:
+            会话实体对象
+
+        Raises:
+            NotFoundError: 会话不存在或不属于当前用户
+        """
+        employee_id = self._get_employee_id(current_user)
+
+        # 调用 repository 查询会话，同时校验归属权
+        session = await self._agent_repo.get_session(session_id, employee_id)
         if not session:
             raise NotFoundError("会话不存在")
         return session
 
-    # 从登录态中提取员工 ID，并限制仅员工账号可访问 Agent 能力
     def _get_employee_id(self, current_user: dict) -> int:
+        """
+        从登录态中提取员工 ID，并校验用户类型
+
+        Args:
+            current_user: 当前登录用户信息
+
+        Returns:
+            int: 员工 ID
+
+        Raises:
+            ForbiddenError: 非员工账号尝试访问 Agent 能力
+        """
         if current_user.get("user_type") != "employee":
             raise ForbiddenError("仅员工账号可访问")
         return int(current_user["sub"])
 
-    # 根据首条用户消息生成简短会话标题
-    def _build_session_title(self, content: str) -> str | None:
-        if len(content) <= 30:
-            return content
-        return content[:30] + "..."
+    def _build_session_title(self, content: str) -> str:
+        """根据首条用户消息生成简短会话标题，超出 30 字符截断并追加省略号。"""
+        return content if len(content) <= 30 else content[:30] + "..."

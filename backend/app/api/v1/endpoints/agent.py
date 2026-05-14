@@ -10,8 +10,6 @@ from app.core.exceptions import BizError
 from app.deps import get_cache, get_current_user, get_db
 from app.repositories.agent_repository import AgentRepository
 from app.repositories.agent_memory_repository import AgentMemoryRepository
-from app.repositories.agent_user_model_runtime_config_repository import AgentUserModelRuntimeConfigRepository
-from app.repositories.agent_workspace_preference_repository import AgentWorkspacePreferenceRepository
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.dept_repository import DeptRepository
 from app.repositories.employee_repository import EmployeeRepository
@@ -19,10 +17,9 @@ from app.repositories.evaluation_repository import EvalRepository
 from app.repositories.job_repository import JobRepository
 from app.repositories.llm_config_repository import LlmConfigRepository
 from app.schemas.common import ApiResponse, PageData
-from app.schemas.agent.request import AgentActionReject, AgentMessageCreate, AgentModelSelect, AgentRuntimeConfigUpdate, AgentSessionCreate, AgentSessionUpdate, LlmConfigCreate, LlmConfigUpdate
-from app.schemas.agent.response import AgentActionItem, AgentReply, AgentRunItem, AgentSessionDetail, AgentSessionItem, AgentUserModelRuntimeConfigItem, LlmConfigItem, LlmModelOption
+from app.schemas.agent.request import AgentMessageCreate, AgentModelSelect, AgentSessionCreate, AgentSessionUpdate, AgentTemporaryActionExecute, LlmConfigCreate, LlmConfigUpdate
+from app.schemas.agent.response import AgentReply, AgentSessionDetail, AgentSessionItem, AgentTemporaryActionItem, LlmConfigItem, LlmModelOption
 from app.services.agent_context_service import AgentContextService
-from app.services.agent_runtime_config_service import AgentRuntimeConfigService
 from app.services.agent_service import AgentService
 from app.services.cache_service import CacheService
 from app.services.llm_config_service import LlmConfigService
@@ -39,31 +36,13 @@ def get_llm_service(db: AsyncSession = Depends(get_db), cache: CacheService = De
 def get_agent_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> AgentService:
     llm_service = LlmConfigService(LlmConfigRepository(db), EmployeeRepository(db), DeptRepository(db), cache)
     context_service = AgentContextService(AgentMemoryRepository(db), cache)
-    runtime_config_service = AgentRuntimeConfigService(
-        AgentUserModelRuntimeConfigRepository(db),
-        AgentWorkspacePreferenceRepository(db),
-        llm_service,
-    )
     return AgentService(
         AgentRepository(db),
         llm_service,
         context_service,
-        runtime_config_service=runtime_config_service,
         job_repo=JobRepository(db),
         app_repo=ApplicationRepository(db),
         eval_repo=EvalRepository(db),
-    )
-
-
-def get_agent_runtime_config_service(
-    db: AsyncSession = Depends(get_db),
-    cache: CacheService = Depends(get_cache),
-) -> AgentRuntimeConfigService:
-    llm_service = LlmConfigService(LlmConfigRepository(db), EmployeeRepository(db), DeptRepository(db), cache)
-    return AgentRuntimeConfigService(
-        AgentUserModelRuntimeConfigRepository(db),
-        AgentWorkspacePreferenceRepository(db),
-        llm_service,
     )
 
 
@@ -125,34 +104,6 @@ async def test_llm_config(
     current_user: dict = Depends(get_current_user),
 ) -> ApiResponse[LlmConfigItem]:
     return ApiResponse(message="测试完成", data=await service.test_config(config_id, current_user))
-
-
-@agent_router.get("/runtime-config", response_model=ApiResponse[AgentUserModelRuntimeConfigItem])
-async def get_recent_runtime_config(
-    service: AgentRuntimeConfigService = Depends(get_agent_runtime_config_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse[AgentUserModelRuntimeConfigItem]:
-    return ApiResponse(data=await service.get_recent_or_default(current_user))
-
-
-@agent_router.get("/runtime-configs/{model_name}", response_model=ApiResponse[AgentUserModelRuntimeConfigItem])
-async def get_model_runtime_config(
-    model_name: str,
-    service: AgentRuntimeConfigService = Depends(get_agent_runtime_config_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse[AgentUserModelRuntimeConfigItem]:
-    return ApiResponse(data=await service.get_or_init_model_config(current_user, model_name))
-
-
-@agent_router.put("/runtime-configs/{model_name}", response_model=ApiResponse[AgentUserModelRuntimeConfigItem])
-async def update_model_runtime_config(
-    model_name: str,
-    body: AgentRuntimeConfigUpdate,
-    service: AgentRuntimeConfigService = Depends(get_agent_runtime_config_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse[AgentUserModelRuntimeConfigItem]:
-    data = await service.update_model_config(current_user, model_name, body)
-    return ApiResponse(message="保存成功", data=data)
 
 
 @agent_router.post("/sessions", response_model=ApiResponse[AgentSessionItem])
@@ -221,18 +172,25 @@ async def stream_message(
     service: AgentService = Depends(get_agent_service),
     current_user: dict = Depends(get_current_user),
 ) -> StreamingResponse:
+    def _yield_error_event(message: str, code: int = 500) -> str:
+        """生成 SSE error 事件的格式化字符串，包含 JSON 化的错误信息与状态码。"""
+        payload = json.dumps({"message": message, "code": code}, ensure_ascii=False)
+        return f"event: error\ndata: {payload}\n\n"
+
     async def event_generator():
         try:
             async for event in service.stream_message(session_id, body, current_user):
                 payload = json.dumps(event.data, ensure_ascii=False)
                 yield f"event: {event.event}\ndata: {payload}\n\n"
         except BizError as exc:
-            payload = json.dumps({"message": exc.message, "code": exc.code}, ensure_ascii=False)
-            yield f"event: error\ndata: {payload}\n\n"
+            yield _yield_error_event(exc.message, exc.code)
         except SQLAlchemyError:
             logger.exception("Agent流式接口数据库异常：session_id=%s", session_id)
-            payload = json.dumps({"message": "Agent服务暂不可用，请稍后重试", "code": 500}, ensure_ascii=False)
-            yield f"event: error\ndata: {payload}\n\n"
+            yield _yield_error_event("Agent服务暂不可用，请稍后重试")
+        except Exception:
+            logger.exception("Agent流式接口未预期异常：session_id=%s", session_id)
+            yield _yield_error_event("Agent服务暂不可用，请稍后重试")
+            raise
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -247,38 +205,10 @@ async def select_model(
     return ApiResponse(message="选择成功", data=await service.select_model(session_id, body.model_name, current_user))
 
 
-@agent_router.get("/sessions/{session_id}/runs", response_model=ApiResponse[list[AgentRunItem]])
-async def list_runs(
-    session_id: int,
+@agent_router.post("/actions/execute", response_model=ApiResponse[AgentTemporaryActionItem])
+async def execute_temporary_action(
+    body: AgentTemporaryActionExecute,
     service: AgentService = Depends(get_agent_service),
     current_user: dict = Depends(get_current_user),
-) -> ApiResponse[list[AgentRunItem]]:
-    return ApiResponse(data=await service.list_runs(session_id, current_user))
-
-
-@agent_router.get("/sessions/{session_id}/actions", response_model=ApiResponse[list[AgentActionItem]])
-async def list_actions(
-    session_id: int,
-    service: AgentService = Depends(get_agent_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse[list[AgentActionItem]]:
-    return ApiResponse(data=await service.list_actions(session_id, current_user))
-
-
-@agent_router.post("/actions/{action_id}/confirm", response_model=ApiResponse[AgentActionItem])
-async def confirm_action(
-    action_id: int,
-    service: AgentService = Depends(get_agent_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse[AgentActionItem]:
-    return ApiResponse(message="确认成功", data=await service.confirm_action(action_id, current_user))
-
-
-@agent_router.post("/actions/{action_id}/reject", response_model=ApiResponse[AgentActionItem])
-async def reject_action(
-    action_id: int,
-    body: AgentActionReject,
-    service: AgentService = Depends(get_agent_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse[AgentActionItem]:
-    return ApiResponse(message="已拒绝", data=await service.reject_action(action_id, body, current_user))
+) -> ApiResponse[AgentTemporaryActionItem]:
+    return ApiResponse(message="确认成功", data=await service.execute_temporary_action(body, current_user))

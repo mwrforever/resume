@@ -20,13 +20,20 @@ class EvalRepository:
     async def create_match(self, application_id: int, resume_id: int, job_id: int) -> ResumeJobMatch:
         match = ResumeJobMatch(application_id=application_id, resume_id=resume_id, job_id=job_id)
         self.db.add(match)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(match)
         return match
 
     async def get_match_by_id(self, match_id: int) -> ResumeJobMatch:
         result = await self.db.execute(select(ResumeJobMatch).where(ResumeJobMatch.id == match_id))
         return result.scalar_one_or_none()
+
+    async def get_matches_by_ids(self, match_ids: list[int]) -> dict[int, ResumeJobMatch]:
+        """批量查询评估匹配记录，返回 match_id -> ResumeJobMatch 字典"""
+        if not match_ids:
+            return {}
+        result = await self.db.execute(select(ResumeJobMatch).where(ResumeJobMatch.id.in_(match_ids)))
+        return {match.id: match for match in result.scalars().all()}
 
     async def get_match_by_application_id(self, application_id: int) -> ResumeJobMatch:
         result = await self.db.execute(
@@ -47,7 +54,7 @@ class EvalRepository:
                 error_message=None,
             )
         )
-        await self.db.commit()
+        await self.db.flush()
         return True
 
     async def update_match_error(self, match_id: int, error_message: str) -> bool:
@@ -56,7 +63,7 @@ class EvalRepository:
             .where(ResumeJobMatch.id == match_id)
             .values(error_message=error_message)
         )
-        await self.db.commit()
+        await self.db.flush()
         return True
 
     async def create_eval_detail(self, match_id: int, dimension_id: int, score: float, advantage: str, disadvantage: str) -> ResumeEvalDetail:
@@ -68,7 +75,7 @@ class EvalRepository:
             dimension_disadvantage=disadvantage,
         )
         self.db.add(detail)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(detail)
         return detail
 
@@ -92,7 +99,7 @@ class EvalRepository:
             error_message=error_message,
         )
         self.db.add(detail)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(detail)
         return detail
 
@@ -104,7 +111,7 @@ class EvalRepository:
 
     async def delete_eval_details_by_match(self, match_id: int) -> None:
         await self.db.execute(delete(ResumeEvalDetail).where(ResumeEvalDetail.match_id == match_id))
-        await self.db.commit()
+        await self.db.flush()
 
     async def create_skill_hit(self, match_id: int, skill_id: int, is_hit: int, hit_context: str) -> ResumeSkillHit:
         hit = ResumeSkillHit(
@@ -114,7 +121,7 @@ class EvalRepository:
             hit_context=hit_context,
         )
         self.db.add(hit)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(hit)
         return hit
 
@@ -126,7 +133,7 @@ class EvalRepository:
 
     async def delete_skill_hits_by_match(self, match_id: int) -> None:
         await self.db.execute(delete(ResumeSkillHit).where(ResumeSkillHit.match_id == match_id))
-        await self.db.commit()
+        await self.db.flush()
 
     async def get_match_distribution(self, job_id: int) -> dict:
         result = await self.db.execute(
@@ -325,3 +332,11 @@ class EvalRepository:
         if act_type == "resume_upload":
             return f"{name}上传了新简历"
         return ""
+
+    async def commit(self) -> None:
+        """提交当前事务，由 Service 层统一调度"""
+        await self.db.commit()
+
+    async def rollback(self) -> None:
+        """回滚当前事务，由 Service 层统一调度"""
+        await self.db.rollback()
