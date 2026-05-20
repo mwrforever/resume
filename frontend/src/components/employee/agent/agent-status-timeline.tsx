@@ -46,10 +46,10 @@ export function AgentStatusTimeline({ activeNodes }: AgentStatusTimelineProps) {
   return (
     <div className="ml-0 max-w-3xl rounded-3xl border border-sky-200 bg-sky-50/80 p-4 text-sm shadow-sm shadow-sky-100/70 md:ml-12">
       <div className="mb-3 flex items-center gap-2 font-semibold text-slate-950">
-        <Loader2 size={15} className="animate-spin duration-200 text-sky-600" aria-hidden="true" />
+        <Loader2 size={15} className="motion-reduce:animate-none animate-spin duration-200 text-sky-600" aria-hidden="true" />
         Agent 执行进度
       </div>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-center gap-0">
         {NODE_ORDER.map((nodeId, index) => {
           const node = nodeMap.get(nodeId);
           const status = node?.status || 'pending';
@@ -57,20 +57,21 @@ export function AgentStatusTimeline({ activeNodes }: AgentStatusTimelineProps) {
           const styles = STATUS_STYLES[status];
 
           return (
-            <div key={nodeId} className="flex flex-col items-center relative">
-              <div
-                className={`flex h-10 w-10 items-center justify-center rounded-full border-2 ${styles.container}`}
-              >
-                {status === 'success' && <CheckCircle2 size={20} className="text-emerald-600" aria-hidden="true" />}
-                {status === 'running' && <Loader2 size={18} className="animate-spin duration-200 text-sky-600" aria-hidden="true" />}
-                {status === 'failed' && <Circle size={18} className="text-red-600 fill-red-100" aria-hidden="true" />}
-                {status === 'pending' && <Circle size={18} className="text-slate-400" aria-hidden="true" />}
+            <div key={nodeId} className="flex items-center">
+              <div className="flex flex-col items-center">
+                <div
+                  className={`flex h-10 w-10 items-center justify-center rounded-full border-2 ${styles.container}`}
+                >
+                  {status === 'success' && <CheckCircle2 size={20} className="text-emerald-600" aria-hidden="true" />}
+                  {status === 'running' && <Loader2 size={18} className="motion-reduce:animate-none animate-spin duration-200 text-sky-600" aria-hidden="true" />}
+                  {status === 'failed' && <Circle size={18} className="text-red-600 fill-red-100" aria-hidden="true" />}
+                  {status === 'pending' && <Circle size={18} className="text-slate-400" aria-hidden="true" />}
+                </div>
+                <span className="mt-2 text-xs text-slate-600">{title}</span>
               </div>
-              <span className="mt-2 text-xs text-slate-600">{title}</span>
               {index < NODE_ORDER.length - 1 && (
                 <div
-                  className={`absolute h-0.5 w-8 ${styles.connector}`}
-                  style={{ left: `${index * 20 + 15}%` }}
+                  className={`h-0.5 w-8 ${styles.connector}`}
                   aria-hidden="true"
                 />
               )}

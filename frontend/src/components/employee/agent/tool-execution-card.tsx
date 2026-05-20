@@ -36,10 +36,9 @@ export function ToolExecutionCard({ tool }: ToolExecutionCardProps) {
               : 'bg-slate-100 text-slate-600'
           }`}
         >
-          {isRunning && <Loader2 size={16} className="animate-spin duration-200" aria-hidden="true" />}
+          {isRunning && <Loader2 size={16} className="motion-reduce:animate-none animate-spin duration-200" aria-hidden="true" />}
           {isSuccess && <CheckCircle2 size={16} aria-hidden="true" />}
           {isFailed && <XCircle size={16} aria-hidden="true" />}
-          {!isRunning && !isSuccess && !isFailed && <Wrench size={16} aria-hidden="true" />}
         </div>
 
         {/* 工具名称和状态 */}
@@ -83,9 +82,9 @@ export function ToolExecutionCard({ tool }: ToolExecutionCardProps) {
           {/* 脉冲动画（执行中） */}
           {isRunning && (
             <div className="mt-2 flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
-              <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" style={{ animationDelay: '150ms' }} />
-              <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" style={{ animationDelay: '300ms' }} />
+              <span className="h-1.5 w-1.5 rounded-full bg-sky-400 motion-reduce:animate-none animate-pulse" />
+              <span className="h-1.5 w-1.5 rounded-full bg-sky-400 motion-reduce:animate-none animate-pulse" style={{ animationDelay: '150ms' }} />
+              <span className="h-1.5 w-1.5 rounded-full bg-sky-400 motion-reduce:animate-none animate-pulse" style={{ animationDelay: '300ms' }} />
             </div>
           )}
         </div>

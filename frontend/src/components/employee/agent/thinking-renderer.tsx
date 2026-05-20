@@ -23,7 +23,7 @@ export function ThinkingRenderer({ content, status }: ThinkingRendererProps) {
           {status === 'running' ? 'Agent 思考中' : status === 'success' ? 'Agent 思考完成' : 'Agent 思考失败'}
         </span>
         {status === 'running' && (
-          <Loader2 size={14} className="animate-spin animate-duration-[200ms] text-violet-600 ml-auto" aria-hidden="true" />
+          <Loader2 size={14} className="motion-reduce:animate-none animate-spin duration-200 text-violet-600 ml-auto" aria-hidden="true" />
         )}
       </div>
 
@@ -34,9 +34,9 @@ export function ThinkingRenderer({ content, status }: ThinkingRendererProps) {
         </div>
       ) : (
         <div className="mt-2 flex items-center gap-1">
-          <span className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-pulse" />
-          <span className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-pulse" style={{ animationDelay: '150ms' }} />
-          <span className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-pulse" style={{ animationDelay: '300ms' }} />
+          <span className="h-1.5 w-1.5 rounded-full bg-violet-400 motion-reduce:animate-none animate-pulse" />
+          <span className="h-1.5 w-1.5 rounded-full bg-violet-400 motion-reduce:animate-none animate-pulse" style={{ animationDelay: '150ms' }} />
+          <span className="h-1.5 w-1.5 rounded-full bg-violet-400 motion-reduce:animate-none animate-pulse" style={{ animationDelay: '300ms' }} />
         </div>
       )}
     </div>
