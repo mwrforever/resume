@@ -49,7 +49,7 @@ export function AgentStatusTimeline({ activeNodes }: AgentStatusTimelineProps) {
               {index < NODE_ORDER.length - 1 && (
                 <div
                   className={`absolute h-0.5 w-8 ${
-                    status === 'success' ? 'bg-emerald-400' : 'bg-slate-200'
+                    status === 'success' ? 'bg-emerald-400' : 'bg-slate-200 border-dashed'
                   }`}
                   style={{ left: `${index * 20 + 15}%` }}
                   aria-hidden="true"
