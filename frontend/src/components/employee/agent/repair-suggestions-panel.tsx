@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Lightbulb, Loader2, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { IRepairSuggestionsPanelProps } from '@/types/agent';
@@ -15,6 +15,13 @@ export function RepairSuggestionsPanel({
 }: IRepairSuggestionsPanelProps) {
   const [localCustomInput, setLocalCustomInput] = useState(customInput);
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
+
+  // 当 customInputFirst 为 true 且自定义输入有内容时，清除建议选项的选中状态
+  useEffect(() => {
+    if (customInputFirst && localCustomInput.trim()) {
+      setSelectedIndices([]);
+    }
+  }, [localCustomInput, customInputFirst]);
 
   // 渲染自定义输入区域的分隔线
   const renderDivider = () => (
@@ -51,8 +58,8 @@ export function RepairSuggestionsPanel({
             key={index}
             className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-all duration-150 ${
               isSelected
-                ? 'border-amber-400 bg-amber-100/50'
-                : 'border-amber-200 bg-white/80 hover:border-amber-300'
+                ? 'border-amber-400 bg-amber-100/50 scale-102'
+                : 'border-amber-200 bg-white/80 opacity-60 scale-98 hover:opacity-100 hover:scale-100'
             } ${submitting ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             {selectionMode === 'single' ? (
