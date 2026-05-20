@@ -1,3 +1,126 @@
+/** Agent 流式协议 v1 与规划审批相关类型（与后端 schemas/agent 对齐） */
+
+export type TAgentStreamProtocolVersion = '1.0';
+
+/** 与后端 AgentNodeId 一致 */
+export type TAgentNodeId =
+  | 'input'
+  | 'analyst'
+  | 'human_feedback'
+  | 'planner'
+  | 'supervisor'
+  | 'serial_route'
+  | 'fan_out'
+  | 'domain_agent'
+  | 'result_merger'
+  | 'legacy_executor'
+  | 'evaluator'
+  | 'compressor'
+  | 'reporter';
+
+/** 与后端 AgentEventTypeV1 一致 */
+export type TAgentEventTypeV1 =
+  | 'lifecycle.run_started'
+  | 'lifecycle.run_finished'
+  | 'lifecycle.run_failed'
+  | 'lifecycle.node_enter'
+  | 'lifecycle.node_exit'
+  | 'lifecycle.node_error'
+  | 'lifecycle.interrupt'
+  | 'lifecycle.resume_ack'
+  | 'stream.text_delta'
+  | 'stream.text_done'
+  | 'stream.thought_delta'
+  | 'stream.thought_done'
+  | 'ui.render'
+  | 'ui.patch'
+  | 'ui.dismiss'
+  | 'plan.revision_started'
+  | 'plan.revision_rejected'
+  | 'plan.repair_suggestions'
+  | 'plan.approved'
+  | 'tool.call_start'
+  | 'tool.call_log'
+  | 'tool.call_end';
+
+export type TUiComponentKey = 'PlanReviewTree' | 'PlanRepairHints' | 'ActionConfirmCard' | 'AgentStatusTimeline' | 'ToolExecutionCard' | 'ThinkingRenderer' | 'RepairSuggestionsPanel';
+
+export type TPlanReviewDecision = 'approved' | 'rejected';
+
+export type TAgentDomain = 'job' | 'application' | 'evaluation' | 'memory' | 'generic';
+
+/** 规划子任务（对应后端 SubTaskDTO） */
+export interface IPlanSubTask {
+  task_id: string;
+  domain: TAgentDomain;
+  title: string;
+  instruction: string;
+  depends_on?: string[];
+  status?: string;
+  result_summary?: string | null;
+}
+
+/** SSE agent.v1 信封 */
+export interface IAgentStreamEnvelopeV1 {
+  protocol_version: TAgentStreamProtocolVersion;
+  seq: number;
+  run_id: string;
+  stream_id: string;
+  session_id: number;
+  node_id: TAgentNodeId;
+  event_type: TAgentEventTypeV1;
+  timestamp: number;
+  payload: Record<string, unknown>;
+  branch_id?: string | null;
+}
+
+/** ui.render · PlanReviewTree 载荷 */
+export interface IPlanReviewTreeRenderData {
+  plan_id?: string;
+  revision: number;
+  max_revisions?: number;
+  tasks: IPlanSubTask[];
+  editable?: boolean;
+}
+
+/** 前端规划审批 UI 状态 */
+export interface IPlanReviewUiState {
+  instanceId: string;
+  revision: number;
+  maxRevisions: number;
+  tasks: IPlanSubTask[];
+  editable: boolean;
+  repairSuggestions: string[];
+  feedbackDraft: string;
+  /** pending=待审批 submitting=已提交 resume 请求 */
+  phase: 'pending' | 'submitting';
+}
+
+/** 恢复 interrupt 请求体（对应 PlanReviewResumePayload） */
+export interface IPlanReviewResumePayload {
+  decision: TPlanReviewDecision;
+  tasks?: IPlanSubTask[] | null;
+  feedback?: string | null;
+}
+
+export interface IAgentRunResumeRequest {
+  interrupt_kind: 'plan_review';
+  payload: IPlanReviewResumePayload;
+}
+
+export interface IAgentRuntimeOptions {
+  enable_thinking?: boolean;
+}
+
+export interface IAgentTemporaryActionExecute {
+  capability_key: string;
+  action_name: string;
+  target_type?: string | null;
+  target_id?: number | null;
+  input_payload: Record<string, unknown>;
+  preview_payload: Record<string, unknown>;
+}
+
 export interface ILlmConfigItem {
   id: number;
   biz_type: 'employee' | 'dept';
@@ -211,7 +334,17 @@ export interface IAgentReply {
   session_window?: IAgentSessionWindowItem | null;
 }
 
-export type AgentStreamEventName = 'user_message' | 'run_started' | 'context_ready' | 'token' | 'final' | 'error' | 'tool_call' | 'tool_result' | 'action_required';
+export type AgentStreamEventName =
+  | 'user_message'
+  | 'run_started'
+  | 'context_ready'
+  | 'token'
+  | 'final'
+  | 'error'
+  | 'tool_call'
+  | 'tool_result'
+  | 'action_required'
+  | 'agent.v1';
 
 export interface IAgentStreamEvent {
   event: AgentStreamEventName | string;
@@ -230,4 +363,14 @@ export interface IAgentToolStreamItem {
 
 export interface IAgentActionStreamItem extends IAgentActionItem {
   isStreaming?: boolean;
+}
+
+/** 消息列表下方的运行时动态条目（思考、工具、待确认动作） */
+export interface IAgentRuntimeFeedItem {
+  id: string;
+  type: 'thinking' | 'tool' | 'action' | 'node';
+  status: 'running' | 'success' | 'failed' | 'pending';
+  title: string;
+  message?: string | null;
+  action?: IAgentActionStreamItem;
 }
