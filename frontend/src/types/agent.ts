@@ -374,3 +374,15 @@ export interface IAgentRuntimeFeedItem {
   message?: string | null;
   action?: IAgentActionStreamItem;
 }
+
+/** RepairSuggestionsPanel 组件 Props */
+export interface IRepairSuggestionsPanelProps {
+  suggestions: string[];
+  selectionMode: 'single' | 'multiple';
+  customInputFirst: boolean;
+  customInput: string;
+  onSuggestionToggle: (index: number) => void;
+  onCustomInputChange: (value: string) => void;
+  onSubmit: (selectedSuggestions: string[], customInput: string) => void;
+  submitting: boolean;
+}
