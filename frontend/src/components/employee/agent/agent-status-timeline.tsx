@@ -14,43 +14,62 @@ const NODE_LABELS: Record<string, string> = {
   reporter: '结果汇报',
 };
 
+/** 状态对应的颜色样式 */
+const STATUS_STYLES = {
+  success: {
+    container: 'border-emerald-500 bg-emerald-50',
+    connector: 'bg-emerald-400',
+  },
+  running: {
+    container: 'border-sky-500 bg-sky-50',
+    connector: 'bg-slate-200 border-dashed',
+  },
+  failed: {
+    container: 'border-red-500 bg-red-50',
+    connector: 'bg-slate-200 border-dashed',
+  },
+  pending: {
+    container: 'border-slate-300 bg-slate-50',
+    connector: 'bg-slate-200 border-dashed',
+  },
+} as const;
+
 export function AgentStatusTimeline({ activeNodes }: AgentStatusTimelineProps) {
+  // 预构建节点 Map，将 id 前缀解析后存入 Map，实现 O(1) 查找
+  const nodeMap = new Map<string, typeof activeNodes[0]>();
+  for (const node of activeNodes) {
+    // activeNodes 中的 id 格式为 "node-{nodeId}"，需剥离前缀
+    const key = node.id.replace(/^node-/, '');
+    nodeMap.set(key, node);
+  }
+
   return (
     <div className="ml-0 max-w-3xl rounded-3xl border border-sky-200 bg-sky-50/80 p-4 text-sm shadow-sm shadow-sky-100/70 md:ml-12">
       <div className="mb-3 flex items-center gap-2 font-semibold text-slate-950">
-        <Loader2 size={15} className="animate-spin text-sky-600" aria-hidden="true" />
+        <Loader2 size={15} className="animate-spin duration-200 text-sky-600" aria-hidden="true" />
         Agent 执行进度
       </div>
       <div className="flex items-center justify-between">
         {NODE_ORDER.map((nodeId, index) => {
-          const node = activeNodes.find((n) => n.id === `node-${nodeId}`);
+          const node = nodeMap.get(nodeId);
           const status = node?.status || 'pending';
           const title = NODE_LABELS[nodeId] || nodeId;
+          const styles = STATUS_STYLES[status];
 
           return (
             <div key={nodeId} className="flex flex-col items-center relative">
               <div
-                className={`flex h-10 w-10 items-center justify-center rounded-full border-2 ${
-                  status === 'success'
-                    ? 'border-emerald-500 bg-emerald-50'
-                    : status === 'running'
-                    ? 'border-sky-500 bg-sky-50'
-                    : status === 'failed'
-                    ? 'border-red-500 bg-red-50'
-                    : 'border-slate-300 bg-slate-50'
-                }`}
+                className={`flex h-10 w-10 items-center justify-center rounded-full border-2 ${styles.container}`}
               >
                 {status === 'success' && <CheckCircle2 size={20} className="text-emerald-600" aria-hidden="true" />}
-                {status === 'running' && <Loader2 size={18} className="animate-spin text-sky-600" aria-hidden="true" />}
+                {status === 'running' && <Loader2 size={18} className="animate-spin duration-200 text-sky-600" aria-hidden="true" />}
                 {status === 'failed' && <Circle size={18} className="text-red-600 fill-red-100" aria-hidden="true" />}
                 {status === 'pending' && <Circle size={18} className="text-slate-400" aria-hidden="true" />}
               </div>
               <span className="mt-2 text-xs text-slate-600">{title}</span>
               {index < NODE_ORDER.length - 1 && (
                 <div
-                  className={`absolute h-0.5 w-8 ${
-                    status === 'success' ? 'bg-emerald-400' : 'bg-slate-200 border-dashed'
-                  }`}
+                  className={`absolute h-0.5 w-8 ${styles.connector}`}
                   style={{ left: `${index * 20 + 15}%` }}
                   aria-hidden="true"
                 />
