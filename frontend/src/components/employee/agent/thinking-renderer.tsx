@@ -19,9 +19,11 @@ export function ThinkingRenderer({ content, status }: ThinkingRendererProps) {
     >
       <div className="mb-2 flex items-center gap-2 font-medium text-slate-700">
         <Brain size={15} className="text-violet-600" aria-hidden="true" />
-        <span>Agent 思考中</span>
+        <span>
+          {status === 'running' ? 'Agent 思考中' : status === 'success' ? 'Agent 思考完成' : 'Agent 思考失败'}
+        </span>
         {status === 'running' && (
-          <Loader2 size={14} className="animate-spin duration-200 text-violet-600 ml-auto" aria-hidden="true" />
+          <Loader2 size={14} className="animate-spin animate-duration-[200ms] text-violet-600 ml-auto" aria-hidden="true" />
         )}
       </div>
 
