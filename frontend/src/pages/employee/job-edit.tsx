@@ -3,6 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { employeeJobsApi } from '@/api/employee/jobs';
 import { employeeEvalTemplatesApi } from '@/api/employee/eval-templates';
+import { JobTemplatePreview } from '@/components/employee/job-template-tools';
+import { MarkdownPreviewDialog } from '@/components/common/markdown-preview-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,12 +12,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2 } from 'lucide-react';
 import type { IEvalTemplate } from '@/types/employee';
-
-const SKILL_TYPE_OPTIONS = [
-  { value: 1, label: '必须满足', cls: 'bg-red-100 text-red-700' },
-  { value: 2, label: '优先匹配', cls: 'bg-yellow-100 text-yellow-700' },
-  { value: 3, label: '普通技能', cls: 'bg-[#F1F5F9] text-[#64748B]' },
-];
 
 const getResponseData = <T,>(res: any, fallback: T): T => res?.data?.data ?? res?.data ?? fallback;
 
@@ -33,6 +29,7 @@ export default function EmployeeJobEdit() {
 
   const [templateId, setTemplateId] = useState<number | null>(null);
   const [templates, setTemplates] = useState<IEvalTemplate[]>([]);
+  const [previewPrompt, setPreviewPrompt] = useState<{ title: string; content: string } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -141,55 +138,7 @@ export default function EmployeeJobEdit() {
               </select>
             </div>
 
-            {selectedTemplate ? (
-              <div className="space-y-4 rounded-lg border border-[#E2E8F0] bg-[#FAFAFA] p-4">
-                <div>
-                  <h3 className="text-sm font-semibold text-[#1E293B]">{selectedTemplate.template_name}</h3>
-                  {selectedTemplate.description && <p className="mt-1 text-xs text-[#64748B]">{selectedTemplate.description}</p>}
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold text-[#64748B]">评估维度</p>
-                  {selectedTemplate.dimensions.length > 0 ? (
-                    selectedTemplate.dimensions.map(dimension => (
-                      <div key={dimension.dimension_id} className="flex items-center justify-between rounded-md bg-white px-3 py-2 text-sm">
-                        <span className="text-[#1E293B]">{dimension.dimension_name}</span>
-                        <span className="text-xs text-[#64748B]">权重 {dimension.weight}</span>
-                      </div>
-                    ))
-                  ) : <p className="text-xs text-[#94A3B8]">该模板暂无维度</p>}
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold text-[#64748B]">技能关联</p>
-                  {selectedTemplate.skills.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {selectedTemplate.skills.map((skill, index) => {
-                        const opt = SKILL_TYPE_OPTIONS.find(o => o.value === skill.skill_type) ?? SKILL_TYPE_OPTIONS[2];
-                        return (
-                          <span key={skill.id ?? index} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${opt.cls}`}>
-                            {skill.skill_name}<span className="opacity-60">·{opt.label}</span>
-                          </span>
-                        );
-                      })}
-                    </div>
-                  ) : <p className="text-xs text-[#94A3B8]">该模板暂无技能</p>}
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold text-[#64748B]">岗位标签</p>
-                  {selectedTemplate.tags.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {selectedTemplate.tags.map(tag => (
-                        <span key={tag.id} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-700">
-                          {tag.tag_name}
-                        </span>
-                      ))}
-                    </div>
-                  ) : <p className="text-xs text-[#94A3B8]">该模板暂无标签</p>}
-                </div>
-              </div>
-            ) : <p className="text-xs text-[#94A3B8]">请选择评估模板</p>}
+            <JobTemplatePreview template={selectedTemplate ?? null} onPreviewPrompt={(title, content) => setPreviewPrompt({ title, content })} />
           </CardContent>
         </Card>
 
@@ -201,6 +150,7 @@ export default function EmployeeJobEdit() {
           </Button>
         </div>
       </form>
+      <MarkdownPreviewDialog open={!!previewPrompt} title={previewPrompt?.title ?? '提示词预览'} content={previewPrompt?.content ?? ''} onClose={() => setPreviewPrompt(null)} />
     </AdminLayout>
   );
 }

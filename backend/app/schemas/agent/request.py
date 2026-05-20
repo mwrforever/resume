@@ -1,23 +1,19 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.schemas.agent.enums import AgentInterruptKind, PlanReviewDecision
+from app.schemas.agent.orchestrator_state import SubTaskDTO
 
 
 MAX_LLM_TIMEOUT_SECONDS = 120
 MAX_LLM_MAX_RETRIES = 2
 
 
-class AgentRuntimeConfigUpdate(BaseModel):
-    enable_thinking: bool = False
-    enable_tools: bool = True
-    enable_prompt_cache: bool = False
-    enable_memory: bool = True
-    temperature: float = Field(default=0.7, ge=0, le=2)
-    top_p: float = Field(default=0.9, ge=0, le=1)
-    max_tokens: int = Field(default=2048, ge=1, le=32000)
-    presence_penalty: float = Field(default=0, ge=-2, le=2)
-    frequency_penalty: float = Field(default=0, ge=-2, le=2)
-    extra_body: dict[str, Any] | None = None
+class AgentRuntimeOptions(BaseModel):
+    """单次 Agent 消息请求的运行时选项，仅影响当前请求行为，不持久化。"""
+
+    enable_thinking: bool | None = None
 
 
 class LlmConfigCreate(BaseModel):
@@ -81,7 +77,39 @@ class AgentModelSelect(BaseModel):
 class AgentMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
     context_refs: list[dict[str, Any]] = Field(default_factory=list)
+    runtime_options: AgentRuntimeOptions | None = None
 
 
-class AgentActionReject(BaseModel):
-    reason: str | None = Field(default=None, max_length=500)
+class PlanReviewResumePayload(BaseModel):
+    """规划审批恢复载荷（interrupt 之后由前端回传）。"""
+
+    decision: PlanReviewDecision
+    tasks: list[SubTaskDTO] | None = None
+    feedback: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_decision_payload(self) -> "PlanReviewResumePayload":
+        if self.decision == PlanReviewDecision.REJECTED and not (self.feedback or "").strip():
+            raise ValueError("驳回规划时必须提供 feedback")
+        return self
+
+
+class AgentRunResumeRequest(BaseModel):
+    """恢复被 interrupt 暂停的编排运行。"""
+
+    interrupt_kind: AgentInterruptKind
+    payload: PlanReviewResumePayload
+
+
+class AgentTemporaryActionExecute(BaseModel):
+    """Agent 临时动作执行请求体，用于前端确认后真正执行业务写操作。
+
+    所有字段由 SSE 中的 action_required 事件携带，用户确认后原样回传。
+    """
+
+    capability_key: str = Field(min_length=1, max_length=80)
+    action_name: str = Field(min_length=1, max_length=100)
+    target_type: str | None = Field(default=None, max_length=50)
+    target_id: int | None = None
+    input_payload: dict[str, Any] = Field(default_factory=dict)
+    preview_payload: dict[str, Any] = Field(default_factory=dict)

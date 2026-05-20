@@ -31,8 +31,8 @@ export function MarkdownPreviewDialog({ open, title = 'Markdown 预览', content
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose} containerClassName="w-[90vw] max-w-4xl overflow-hidden">
-      <DialogContent className="flex max-h-[88vh] flex-col overflow-hidden p-0">
+    <Dialog open={open} onOpenChange={onClose} containerClassName="z-[70] w-[90vw] max-w-4xl overflow-hidden">
+      <DialogContent className="flex h-[88vh] flex-col overflow-hidden p-0">
         <div className="flex items-center justify-between border-b border-[#E2E8F0] px-6 py-4">
           <div className="flex items-center gap-3">
             <DialogTitle className="mb-0 text-base font-semibold text-[#1E293B]">{title}</DialogTitle>
@@ -49,11 +49,11 @@ export function MarkdownPreviewDialog({ open, title = 'Markdown 预览', content
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto bg-[#F8FAFC] p-6">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-[#F8FAFC] p-6">
           {editing ? (
-            <Textarea value={draft} onChange={event => setDraft(event.target.value)} className="min-h-[75vh] resize-none bg-white font-mono text-sm" />
+            <Textarea value={draft} onChange={event => setDraft(event.target.value)} className="mx-auto h-full max-w-3xl resize-none bg-white font-mono text-sm leading-7" />
           ) : draft.trim() ? (
-            <div className="mx-auto max-w-3xl rounded-lg border border-[#E2E8F0] bg-white p-6 text-sm leading-7 text-[#334155] shadow-sm">
+            <div className="mx-auto min-h-full max-w-3xl rounded-lg border border-[#E2E8F0] bg-white p-6 text-sm leading-7 text-[#334155] shadow-sm">
               <ReactMarkdown
                 components={{
                   h1: ({ children }) => <h1 className="mb-4 border-b border-[#E2E8F0] pb-2 text-xl font-semibold text-[#0F172A]">{children}</h1>,

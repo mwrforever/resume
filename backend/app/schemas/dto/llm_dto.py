@@ -1,3 +1,3 @@
-from app.schemas.agent.dto import AgentGraphStateDTO, LLMResultDTO, LLMRuntimeConfigDTO
+from app.schemas.agent.dto import ResumeAnalyseState, LLMResultDTO, LLMRuntimeConfigDTO
 
-__all__ = ["AgentGraphStateDTO", "LLMResultDTO", "LLMRuntimeConfigDTO"]
+__all__ = ["ResumeAnalyseState", "LLMResultDTO", "LLMRuntimeConfigDTO"]

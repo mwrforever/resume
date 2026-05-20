@@ -255,6 +255,12 @@ export default function EmployeeLlmConfigs() {
 
   const filteredConfigs = useMemo(() => configs, [configs]);
 
+  const loadDepts = useCallback(async () => {
+    if (depts.length > 0) return;
+    const res = await deptApi.listDepts();
+    setDepts(res.data || []);
+  }, [depts.length]);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -262,16 +268,16 @@ export default function EmployeeLlmConfigs() {
       if (keyword.trim()) params.keyword = keyword.trim();
       if (scopeFilter !== 'all') params.biz_type = scopeFilter;
       if (statusFilter !== 'all') params.status = Number(statusFilter);
-      const [configRes, deptRes] = await Promise.all([employeeLlmApi.listConfigs(params), deptApi.listDepts()]);
+      const configRes = await employeeLlmApi.listConfigs(params);
       setConfigs(configRes.data?.items || []);
       setTotal(configRes.data?.total || 0);
-      setDepts(deptRes.data || []);
     } finally {
       setLoading(false);
     }
   }, [keyword, page, pageSize, scopeFilter, statusFilter]);
 
   useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { if (dialogState) loadDepts().catch(() => setErrorMessage('部门列表加载失败，请稍后重试。')); }, [dialogState, loadDepts]);
 
   const closeDialog = () => { setDialogState(null); setErrorMessage(''); };
   const canManageConfig = (config: ILlmConfigItem) => Boolean(config.can_manage) || (config.biz_type === 'employee' && config.biz_id === Number(userId || 0));

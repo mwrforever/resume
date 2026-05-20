@@ -1,8 +1,11 @@
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
+from app.core.exceptions import ValidationError
 from app.schemas.agent.dto import AgentToolCallDTO, AgentToolResultDTO
+from app.utils.resume_parser import extract_resume_text
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +89,7 @@ class BuiltinAgentToolRegistry:
             "list_recent_applications": lambda: self._list_recent_applications(tool_context),
             "summarize_evaluations": lambda: self._summarize_evaluations(tool_context),
             "prepare_application_status_action": lambda: self._prepare_application_status_action(call, tool_context),
+            "parse_resume_file": lambda: self._parse_resume_file(call, tool_context),
         }
         handler = handlers.get(call.tool_name)
         result = handler() if handler else self._build_missing_tool_result(call)
@@ -204,6 +208,75 @@ class BuiltinAgentToolRegistry:
                         "target_status": target_status,
                     },
                 }
+            },
+        )
+
+    def _parse_resume_file(self, call: AgentToolCallDTO, tool_context: dict[str, Any]) -> AgentToolResultDTO:
+        """
+        从 PDF/DOCX 简历文件抽取纯文本（编排 resume_extract 节点显式调用）。
+
+        input_payload 或 tool_context.resume_attachment 需提供 resume_id、file_path。
+        """
+        attachment = tool_context.get("resume_attachment") or {}
+        resume_id = call.input_payload.get("resume_id") or attachment.get("resume_id")
+        file_path = attachment.get("file_path") or call.input_payload.get("file_path")
+        file_name = attachment.get("file_name") or call.input_payload.get("file_name") or ""
+
+        if not file_path:
+            return AgentToolResultDTO(
+                tool_name="parse_resume_file",
+                display_name=call.display_name,
+                success=False,
+                error_message="缺少简历文件路径，无法解析",
+            )
+
+        full_path = Path(file_path)
+        if not full_path.is_absolute():
+            from app.utils.storage.registry import StorageRegistry
+
+            full_path = Path(StorageRegistry.get().get_full_path(str(file_path)))
+
+        if not full_path.exists():
+            return AgentToolResultDTO(
+                tool_name="parse_resume_file",
+                display_name=call.display_name,
+                success=False,
+                error_message="简历文件不存在",
+            )
+
+        try:
+            raw_text = extract_resume_text(full_path).strip()
+        except ValidationError as exc:
+            logger.warning("parse_resume_file 失败：resume_id=%s path=%s err=%s", resume_id, full_path, exc.message)
+            return AgentToolResultDTO(
+                tool_name="parse_resume_file",
+                display_name=call.display_name,
+                success=False,
+                error_message=exc.message,
+            )
+
+        if not raw_text:
+            return AgentToolResultDTO(
+                tool_name="parse_resume_file",
+                display_name=call.display_name,
+                success=False,
+                error_message="简历文件未解析到文本内容",
+            )
+
+        logger.info(
+            "parse_resume_file 成功：resume_id=%s file=%s length=%s",
+            resume_id,
+            file_name or full_path.name,
+            len(raw_text),
+        )
+        return AgentToolResultDTO(
+            tool_name="parse_resume_file",
+            display_name=call.display_name,
+            output_payload={
+                "resume_id": resume_id,
+                "file_name": file_name or full_path.name,
+                "raw_text": raw_text,
+                "text_length": len(raw_text),
             },
         )
 

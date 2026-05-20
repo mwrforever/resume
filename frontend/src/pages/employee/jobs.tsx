@@ -8,98 +8,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { useDebounce, useThrottleCallback } from '@/hooks/use-debounce';
-import { Plus, Pencil, Trash2, RefreshCw, Loader2, X, Eye, Send } from 'lucide-react';
+import { Plus, Pencil, Trash2, RefreshCw, Loader2, Eye, Send } from 'lucide-react';
 import { CreateJobModal } from '@/components/employee/create-job-modal';
-
-// ─── Edit-only dialog ──────────────────────────────────────────────────────
-
-interface JobEditDialogProps {
-  jobId: number;
-  onClose: () => void;
-  onSuccess: () => void;
-}
-
-function JobEditDialog({ jobId, onClose, onSuccess }: JobEditDialogProps) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [status, setStatus] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    employeeJobsApi.get(jobId).then(res => {
-      const job = res.data?.data ?? res.data;
-      setName(job.name ?? '');
-      setDescription(job.description ?? '');
-      setStatus(job.status ?? 1);
-    }).catch(() => setError('加载失败，请关闭重试')).finally(() => setLoading(false));
-  }, [jobId]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return;
-    setSaving(true); setError('');
-    try {
-      await employeeJobsApi.update(jobId, { name, description, status });
-      onSuccess();
-    } catch {
-      setError('保存失败，请重试');
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Dialog open onOpenChange={onClose} containerClassName="max-w-lg">
-      <DialogContent>
-        <div className="flex items-center justify-between mb-4">
-          <DialogTitle className="mb-0">编辑岗位</DialogTitle>
-          <button onClick={onClose} aria-label="关闭" className="text-[#94A3B8] hover:text-[#1E293B] transition-colors focus-visible:outline-none">
-            <X size={18} />
-          </button>
-        </div>
-        {loading ? (
-          <div className="flex items-center justify-center py-10 text-[#94A3B8]">
-            <Loader2 size={20} className="animate-spin mr-2" />加载中…
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="edit-job-name">岗位名称 <span className="text-red-500">*</span></Label>
-              <Input id="edit-job-name" value={name} onChange={e => setName(e.target.value)} required className="h-10" />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="edit-job-desc">岗位描述</Label>
-              <Textarea id="edit-job-desc" value={description} onChange={e => setDescription(e.target.value)} className="min-h-[90px] resize-none" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>岗位状态</Label>
-              <div className="flex gap-3">
-                {[{ val: 2, label: '待发布', active: 'bg-amber-100 text-amber-700 border-amber-300' }, { val: 0, label: '已下架', active: 'bg-[#F1F5F9] text-[#64748B] border-[#CBD5E1]' }].map(opt => (
-                  <button key={opt.val} type="button" onClick={() => setStatus(opt.val)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors focus-visible:outline-none ${status === opt.val ? opt.active : 'bg-white text-[#64748B] border-[#E2E8F0] hover:bg-[#F8FAFC]'}`}>
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {error && <p className="text-sm text-red-500">{error}</p>}
-            <div className="flex justify-end gap-2 pt-1">
-              <Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
-              <Button type="submit" disabled={saving || !name.trim()} className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white">
-                {saving ? <><Loader2 size={14} className="animate-spin mr-1.5" />保存中…</> : '保存修改'}
-              </Button>
-            </div>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -125,8 +36,7 @@ export default function EmployeeJobs() {
   const [deleteTarget, setDeleteTarget] = useState<Job | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [publishingId, setPublishingId] = useState<number | null>(null);
-  const [dialogMode, setDialogMode] = useState<'create' | 'edit' | null>(null);
-  const [editJobId, setEditJobId] = useState<number | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [searchText, setSearchText] = useState(searchParams.get('search') ?? '');
 
   const searchInput = searchParams.get('search') ?? '';
@@ -218,13 +128,11 @@ export default function EmployeeJobs() {
 
   const openEdit = (job: Job) => {
     if (job.status === 1 || (job.resume_count ?? 0) > 0) return;
-    setEditJobId(job.id);
-    setDialogMode('edit');
+    navigate(`/employee/jobs/${job.id}/edit`);
   };
 
   const closeDialog = () => {
-    setDialogMode(null);
-    setEditJobId(null);
+    setCreateOpen(false);
   };
 
   const handleDialogSuccess = () => {
@@ -238,7 +146,7 @@ export default function EmployeeJobs() {
       breadcrumbs={[{ label: '岗位管理' }]}
       title="岗位管理"
       headerAction={
-        <Button onClick={() => setDialogMode('create')}>
+        <Button onClick={() => setCreateOpen(true)}>
           <Plus size={16} className="mr-1.5" aria-hidden="true" />
           创建岗位
         </Button>
@@ -305,7 +213,7 @@ export default function EmployeeJobs() {
               <tr>
                 <td colSpan={6} className="px-4 py-16 text-center text-slate-400">
                   <p className="mb-3">还没有创建过岗位</p>
-                  <Button variant="outline" size="sm" onClick={() => setDialogMode('create')}>去创建第一个岗位</Button>
+                  <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>去创建第一个岗位</Button>
                 </td>
               </tr>
             ) : (
@@ -398,18 +306,10 @@ export default function EmployeeJobs() {
       />
 
       <CreateJobModal
-        open={dialogMode === 'create'}
+        open={createOpen}
         onClose={closeDialog}
         onSuccess={handleDialogSuccess}
       />
-
-      {dialogMode === 'edit' && editJobId && (
-        <JobEditDialog
-          jobId={editJobId}
-          onClose={closeDialog}
-          onSuccess={handleDialogSuccess}
-        />
-      )}
     </AdminLayout>
   );
 }

@@ -22,7 +22,7 @@ interface TemplatePreviewData {
 
 interface JobTemplatePreviewProps {
   template: TemplatePreviewData | null;
-  onPreviewPrompt: (title: string, content: string, dimensionIndex: number) => void;
+  onPreviewPrompt: (title: string, content: string, dimensionIndex?: number) => void;
 }
 
 export function JobTemplatePreview({ template, onPreviewPrompt }: JobTemplatePreviewProps) {

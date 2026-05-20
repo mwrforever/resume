@@ -47,29 +47,6 @@ class LlmModelOption(BaseModel):
     base_url: str
 
 
-class AgentUserModelRuntimeConfigItem(BaseModel):
-    id: int | None = None
-    employee_id: int
-    model_name: str
-    model_source: str
-    llm_config_id: int | None = None
-    enable_thinking: bool = False
-    enable_tools: bool = True
-    enable_prompt_cache: bool = False
-    enable_memory: bool = True
-    temperature: float = 0.7
-    top_p: float = 0.9
-    max_tokens: int = 2048
-    presence_penalty: float = 0
-    frequency_penalty: float = 0
-    extra_body: dict[str, Any] | None = None
-    last_used_at: datetime | None = None
-    create_time: datetime | None = None
-    update_time: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class AgentSessionItem(BaseModel):
     id: int
     session_key: str
@@ -87,6 +64,14 @@ class AgentSessionItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AgentResumeAttachmentItem(BaseModel):
+    """Agent 会话简历上传结果。"""
+
+    resume_id: int
+    file_name: str
+    job_id: int
+
+
 class AgentMessageItem(BaseModel):
     id: int
     session_id: int
@@ -102,33 +87,15 @@ class AgentMessageItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class AgentRunItem(BaseModel):
-    id: int
-    trace_id: str
-    parent_run_id: int | None = None
+class AgentTemporaryActionItem(BaseModel):
+    """Agent 临时动作项，仅存在于单次会话运行周期内，不写入持久化动作表。
+
+    id 为前端生成的临时标识（如 tmp-xxx），用于在流式会话中追踪待确认动作。
+    """
+
+    id: str
     session_id: int
     message_id: int | None = None
-    run_type: str
-    status: int
-    model_name: str | None = None
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    latency_ms: int | None = None
-    input_payload: dict[str, Any] | None = None
-    output_payload: dict[str, Any] | None = None
-    error_message: str | None = None
-    create_time: datetime | None = None
-    update_time: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class AgentActionItem(BaseModel):
-    id: int
-    session_id: int
-    message_id: int | None = None
-    run_id: int | None = None
     employee_id: int
     capability_key: str
     action_name: str
@@ -137,15 +104,7 @@ class AgentActionItem(BaseModel):
     input_payload: dict[str, Any]
     preview_payload: dict[str, Any]
     status: int
-    idempotency_key: str
     error_message: str | None = None
-    create_time: datetime | None = None
-    update_time: datetime | None = None
-    confirmed_at: datetime | None = None
-    rejected_at: datetime | None = None
-    executed_at: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentMemoryItem(BaseModel):
@@ -164,46 +123,21 @@ class AgentMemoryItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class AgentContextSnapshotItem(BaseModel):
-    id: int
-    session_id: int
-    snapshot_version: int
-    summary_text: str
-    covered_message_start_id: int
-    covered_message_end_id: int
-    message_count: int
-    token_count: int
-    model_name: str | None = None
-    create_time: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class AgentSessionWindowItem(BaseModel):
-    snapshot: AgentContextSnapshotItem | None = None
-    recent_messages: list[AgentMessageItem]
-    token_count: int
-    prompt_prefix_hash: str | None = None
-
-
 class AgentSessionDetail(BaseModel):
     session: AgentSessionItem
     messages: list[AgentMessageItem]
     memories: list[AgentMemoryItem] = Field(default_factory=list)
-    snapshots: list[AgentContextSnapshotItem] = Field(default_factory=list)
-    session_window: AgentSessionWindowItem | None = None
 
 
 class AgentReply(BaseModel):
     user_message: AgentMessageItem
     agent_message: AgentMessageItem
-    run: AgentRunItem
     session: AgentSessionItem | None = None
-    snapshot: AgentContextSnapshotItem | None = None
     memories: list[AgentMemoryItem] = Field(default_factory=list)
-    session_window: AgentSessionWindowItem | None = None
 
 
 class AgentStreamEvent(BaseModel):
+    """SSE 流式事件的数据载体，用于前端实时接收 token/tool_call/action_required 等事件。"""
+
     event: str
     data: dict[str, Any] = Field(default_factory=dict)

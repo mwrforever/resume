@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent 工作台布局方案</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; background: linear-gradient(135deg,#f8fafc,#e0f2fe); color: #0f172a; }
+    .page { min-height: 100vh; padding: 32px; }
+    .hero { max-width: 1180px; margin: 0 auto 24px; }
+    .eyebrow { color: #0369a1; font-size: 13px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; }
+    h1 { margin: 8px 0 8px; font-size: 30px; }
+    .subtitle { margin: 0; color: #475569; line-height: 1.7; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; max-width: 1180px; margin: 0 auto; }
+    .option { border: 1px solid rgba(125, 211, 252, .8); background: rgba(255,255,255,.88); border-radius: 28px; padding: 16px; box-shadow: 0 18px 50px rgba(15, 23, 42, .08); }
+    .option h2 { margin: 0 0 8px; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+    .tag { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; background: #e0f2fe; color: #0369a1; font-size: 12px; font-weight: 700; }
+    .desc { min-height: 70px; color: #475569; font-size: 13px; line-height: 1.65; }
+    .mock { height: 390px; border-radius: 22px; border: 1px solid #dbeafe; background: #f8fafc; padding: 10px; overflow: hidden; }
+    .topline { height: 30px; border-radius: 14px; background: white; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; color: #64748b; font-size: 11px; }
+    .layout { display: grid; gap: 8px; height: calc(100% - 40px); margin-top: 10px; }
+    .left { background: #0f172a; border-radius: 18px; padding: 9px; color: white; }
+    .chat { background: white; border-radius: 18px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; overflow: hidden; }
+    .right { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 18px; padding: 8px; }
+    .mini-title { height: 9px; width: 65%; border-radius: 99px; background: currentColor; opacity: .35; margin-bottom: 10px; }
+    .item { height: 26px; border-radius: 12px; background: rgba(255,255,255,.18); margin-bottom: 7px; }
+    .left .item.active { background: #0284c7; }
+    .messages { flex: 1; padding: 12px; background: radial-gradient(circle at top left, rgba(14,165,233,.08), transparent 140px), #fff; }
+    .bubble { max-width: 82%; border-radius: 16px; padding: 9px; font-size: 11px; line-height: 1.45; margin-bottom: 9px; }
+    .bot { background: #f8fafc; border: 1px solid #e2e8f0; }
+    .user { margin-left: auto; background: #0369a1; color: white; }
+    .composer { height: 48px; border-top: 1px solid #e2e8f0; padding: 8px; }
+    .input { height: 30px; border-radius: 15px; background: #f8fafc; border: 1px solid #e2e8f0; }
+    .tool { display: flex; align-items: center; gap: 8px; background: white; border: 1px solid #bae6fd; border-radius: 13px; padding: 8px; font-size: 11px; color: #075985; margin-bottom: 8px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #0ea5e9; box-shadow: 0 0 0 5px rgba(14,165,233,.14); animation: pulse 1.2s infinite; }
+    @keyframes pulse { 50% { transform: scale(1.35); opacity: .55; } }
+    .a .layout { grid-template-columns: 72px minmax(0,1fr) 54px; }
+    .b .layout { grid-template-columns: 82px minmax(0,1fr) 96px; }
+    .c .layout { grid-template-columns: minmax(0,1fr); }
+    .c .mock { position: relative; }
+    .c .drawer { position: absolute; right: 24px; top: 68px; width: 120px; bottom: 24px; }
+    .pros { margin-top: 12px; display: grid; gap: 8px; color: #334155; font-size: 13px; line-height: 1.6; }
+    .pros div { border-radius: 14px; background: #f8fafc; padding: 9px 10px; border: 1px solid #e2e8f0; }
+    @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } .mock { height: 360px; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Visual Review</div>
+      <h1>Agent 工作台布局方向选择</h1>
+      <p class="subtitle">请重点看空间分配、聊天优先级、右侧功能清单形态。我的推荐是方案 B：既保留 ChatGPT 式核心对话体验，又能完整承载 HR Agent 的工具、记忆、Trace 和配置能力。</p>
+    </section>
+    <section class="grid">
+      <article class="option a">
+        <h2><span class="tag">A</span> 极简窄功能栏</h2>
+        <p class="desc">保留当前三栏雏形，但删除头部标题，把右侧做成窄图标功能栏，点击后弹窗查看详情。开发成本低，但 Trace 和配置上下文容易被割裂。</p>
+        <div class="mock">
+          <div class="topline"><span>模型选择</span><span>功能栏</span></div>
+          <div class="layout">
+            <div class="left"><div class="mini-title"></div><div class="item active"></div><div class="item"></div><div class="item"></div></div>
+            <div class="chat"><div class="messages"><div class="bubble bot">Markdown 回复内容...</div><div class="bubble user">用户任务</div><div class="tool"><span class="dot"></span>调用工具</div></div><div class="composer"><div class="input"></div></div></div>
+            <div class="right"><div class="tool"><span class="dot"></span></div><div class="tool"></div><div class="tool"></div></div>
+          </div>
+        </div>
+        <div class="pros"><div>优点：改动小、风险低。</div><div>缺点：右侧信息密度不足。</div></div>
+      </article>
+      <article class="option b">
+        <h2><span class="tag">B</span> ChatGPT 主对话 + 可折叠 Trace</h2>
+        <p class="desc">左侧会话、中间最大化聊天区、右侧为可折叠分组面板。工具调用过程以内联动效卡片贴近当前回复，同时右侧沉淀完整 Trace。</p>
+        <div class="mock">
+          <div class="topline"><span>配置文件默认模型</span><span>思考模式 · 工具 · 记忆</span></div>
+          <div class="layout">
+            <div class="left"><div class="mini-title"></div><div class="item active"></div><div class="item"></div><div class="item"></div><div class="item"></div></div>
+            <div class="chat"><div class="messages"><div class="bubble bot"># 候选人分析<br/>- 优势<br/>- 风险</div><div class="tool"><span class="dot"></span>正在调用：查询候选人简历</div><div class="bubble user">帮我分析候选人</div></div><div class="composer"><div class="input"></div></div></div>
+            <div class="right"><div class="tool"><span class="dot"></span>配置</div><div class="tool">工具</div><div class="tool">记忆</div><div class="tool">Trace</div></div>
+          </div>
+        </div>
+        <div class="pros"><div>优点：聊天空间大，过程可见，功能完整。</div><div>缺点：需要较系统地拆分组件。</div></div>
+      </article>
+      <article class="option c">
+        <h2><span class="tag">C</span> 单列沉浸 + 浮层抽屉</h2>
+        <p class="desc">几乎完全模仿 ChatGPT：默认只显示聊天和输入，配置/Trace 全部进入右侧抽屉。最沉浸，但企业后台的可观测信息发现成本更高。</p>
+        <div class="mock">
+          <div class="topline"><span>Agent Chat</span><span>打开配置抽屉</span></div>
+          <div class="layout">
+            <div class="chat"><div class="messages"><div class="bubble bot">Markdown 长文回答...</div><div class="tool"><span class="dot"></span>工具调用浮层提示</div><div class="bubble user">用户问题</div></div><div class="composer"><div class="input"></div></div></div>
+            <div class="right drawer"><div class="tool">配置</div><div class="tool">Trace</div><div class="tool">记忆</div></div>
+          </div>
+        </div>
+        <div class="pros"><div>优点：最接近 ChatGPT，视觉极简。</div><div>缺点：HR Agent 功能清单不够常驻。</div></div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

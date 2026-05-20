@@ -142,14 +142,17 @@ async def get_employee_job(
     if not row:
         raise HTTPException(status_code=404, detail="岗位不存在")
     job, dept = row
-    item = await _build_job_item(job, dept, service)
+    resume_count = await service.job_repo.count_applications(job_id)
+    item = await _build_job_item(job, dept, service, resume_count)
     data = item.model_dump()
     data["template"] = await template_service.repo.get_template_detail(job.template_id) if job.template_id else None
     if data["template"]:
+        data["template_name"] = data["template"]["template_name"]
         data["dimensions"] = data["template"]["dimensions"]
         data["skills"] = data["template"]["skills"]
         data["tags"] = data["template"]["tags"]
     else:
+        data["template_name"] = None
         data["dimensions"] = []
         data["skills"] = []
         data["tags"] = []

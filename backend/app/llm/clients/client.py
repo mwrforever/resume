@@ -1,8 +1,20 @@
+import asyncio
+from typing import Coroutine, TypeVar
+
 from app.core.config import get_settings
 from app.llm.model_router import get_default_model_router
 from app.schemas.agent.dto import LLMResultDTO, LLMRuntimeConfigDTO
 
 settings = get_settings()
+T = TypeVar("T")
+
+
+def _run_async_completion(coro: Coroutine[object, object, T]) -> T:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    raise RuntimeError("同步LLM客户端不能在事件循环中直接调用，请使用asyncio.to_thread或异步模型路由")
 
 
 def llm_complete(prompt: str, model: str | None = None, max_retries: int = 3, timeout: int = 60) -> str:
@@ -16,8 +28,8 @@ def llm_complete(prompt: str, model: str | None = None, max_retries: int = 3, ti
         max_retries=max_retries,
         source="env",
     )
-    return get_default_model_router().complete(prompt, runtime_config).content
+    return _run_async_completion(get_default_model_router().complete(prompt, runtime_config)).content
 
 
 def llm_complete_with_result(prompt: str, runtime_config: LLMRuntimeConfigDTO) -> LLMResultDTO:
-    return get_default_model_router().complete(prompt, runtime_config)
+    return _run_async_completion(get_default_model_router().complete(prompt, runtime_config))

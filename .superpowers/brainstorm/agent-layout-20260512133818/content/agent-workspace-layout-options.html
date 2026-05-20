@@ -1,0 +1,61 @@
+<h2>Agent 工作台布局方案</h2>
+<p class="subtitle">请选择更符合你预期的沉浸式 Agent 工作模式。两种方案都会默认隐藏后台 Header 与侧边栏，并支持悬浮按钮、快捷键和记忆上次模式。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="height:420px;background:#eef6ff;border-radius:18px;padding:14px;display:grid;grid-template-columns:248px 1fr;gap:12px;color:#0f172a;font-family:Inter,system-ui,sans-serif;">
+        <div style="background:#0f172a;border-radius:16px;padding:12px;color:white;display:flex;flex-direction:column;gap:10px;">
+          <div style="font-weight:700;font-size:13px;display:flex;justify-content:space-between;align-items:center;">会话 <span style="background:#38bdf8;color:#082f49;border-radius:999px;padding:4px 8px;font-size:11px;">+</span></div>
+          <div style="background:rgba(56,189,248,.16);border:1px solid rgba(125,211,252,.35);border-radius:14px;padding:10px;font-size:12px;">候选人筛选策略<br><span style="opacity:.55">05/12 12:00</span></div>
+          <div style="background:rgba(255,255,255,.06);border-radius:14px;padding:10px;font-size:12px;">面试安排助手<br><span style="opacity:.45">05/11 11:00</span></div>
+        </div>
+        <div style="background:white;border-radius:16px;box-shadow:0 20px 50px rgba(15,23,42,.08);display:flex;flex-direction:column;overflow:hidden;">
+          <div style="height:58px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;padding:0 16px;">
+            <div style="font-weight:700;">候选人筛选策略</div>
+            <div style="display:flex;gap:8px;align-items:center;"><span style="border:1px solid #cbd5e1;border-radius:999px;padding:6px 10px;font-size:12px;">思考：开</span><span style="border:1px solid #cbd5e1;border-radius:999px;padding:6px 10px;font-size:12px;">设置</span><span style="background:#0f172a;color:white;border-radius:999px;padding:6px 10px;font-size:12px;">后台</span></div>
+          </div>
+          <div style="flex:1;padding:18px 28px;display:flex;flex-direction:column;gap:14px;">
+            <div style="align-self:flex-end;background:#0ea5e9;color:white;border-radius:18px;padding:10px 14px;font-size:12px;max-width:70%;">帮我总结最近收到的前端候选人。</div>
+            <div style="align-self:flex-start;border:1px solid #e2e8f0;border-radius:20px;padding:14px;font-size:12px;max-width:78%;background:#fff;">候选人概览<br><br>高匹配：2 位，React/TypeScript 经验完整。</div>
+            <div style="border-left:3px solid #38bdf8;background:#f8fafc;border-radius:12px;padding:10px 12px;font-size:11px;color:#475569;">▸ 工具调用：搜索候选人数据 · 已完成</div>
+          </div>
+          <div style="height:72px;border-top:1px solid #e2e8f0;padding:10px 18px;display:flex;align-items:center;gap:10px;"><div style="flex:1;border:1px solid #cbd5e1;border-radius:24px;height:44px;"></div><div style="width:44px;height:44px;border-radius:16px;background:#0ea5e9;"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 全屏内保留 Agent 会话栏</h3>
+      <p>默认隐藏后台导航，但保留 Agent 自己的会话侧栏。最接近 ChatGPT，历史会话切换效率最高。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="height:420px;background:#eef6ff;border-radius:18px;padding:14px;color:#0f172a;font-family:Inter,system-ui,sans-serif;position:relative;">
+        <div style="position:absolute;left:18px;top:18px;width:38px;height:38px;border-radius:14px;background:#0f172a;color:white;display:grid;place-items:center;font-size:12px;">☰</div>
+        <div style="height:100%;background:white;border-radius:18px;box-shadow:0 20px 50px rgba(15,23,42,.08);display:flex;flex-direction:column;overflow:hidden;margin-left:54px;">
+          <div style="height:58px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;padding:0 18px;">
+            <div style="font-weight:700;">新会话</div>
+            <div style="display:flex;gap:8px;align-items:center;"><span style="border:1px solid #cbd5e1;border-radius:999px;padding:6px 10px;font-size:12px;">qwen-plus</span><span style="border:1px solid #cbd5e1;border-radius:999px;padding:6px 10px;font-size:12px;">思考</span><span style="border:1px solid #cbd5e1;border-radius:999px;padding:6px 10px;font-size:12px;">设置</span></div>
+          </div>
+          <div style="flex:1;padding:22px 70px;display:flex;flex-direction:column;gap:14px;">
+            <div style="text-align:center;margin-top:34px;font-weight:700;font-size:18px;">开始一次招聘 Agent 对话</div>
+            <div style="height:50px;border-left:3px solid #38bdf8;background:#f8fafc;border-radius:12px;padding:10px 12px;font-size:11px;color:#475569;">⏳ 正在分析岗位 JD<br>▸ 检索候选人评估结果</div>
+            <div style="height:50px;border-left:3px solid #22c55e;background:#f8fafc;border-radius:12px;padding:10px 12px;font-size:11px;color:#475569;">✓ 工具结果：找到 8 位候选人</div>
+          </div>
+          <div style="height:76px;border-top:1px solid #e2e8f0;padding:10px 70px;display:flex;align-items:center;gap:10px;"><div style="flex:1;border:1px solid #cbd5e1;border-radius:24px;height:46px;"></div><div style="width:46px;height:46px;border-radius:16px;background:#0ea5e9;"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 极致沉浸式单聊天画布</h3>
+      <p>默认只展示聊天组件，会话入口折叠到悬浮按钮。空间最大，但历史会话管理多一步操作。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我的推荐</h3>
+  <p>推荐 A：隐藏后台壳层，但保留 Agent 会话栏。这样满足“直接进入 Agent 工作模式”，同时不会牺牲会话切换效率；设置与思考模式放在 Agent Header 右侧，事件以内嵌折叠时间线呈现。</p>
+</div>

@@ -11,7 +11,8 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
-from app.core.config import configure_logging, get_settings
+from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.db.mysql import mysql_manager
 from app.db.redis import redis_manager
 from app.core.exceptions import BizError

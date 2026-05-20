@@ -72,16 +72,17 @@ function handleAgentV1Event(data: Record<string, unknown>, deps: AgentStreamHand
     if (componentKey === 'PlanReviewTree') {
       const parsed = parsePlanReviewTreeData(renderData);
       if (!parsed) return;
-      deps.setPlanReview({
+      // 使用函数式更新，保留用户已填写的 feedbackDraft 和 repairSuggestions
+      deps.setPlanReview((prev) => ({
         instanceId: String(payload.instance_id || `plan-${parsed.revision}`),
         revision: parsed.revision,
-        maxRevisions: parsed.max_revisions ?? 3,
+        maxRevisions: parsed.max_revisions ?? (prev?.maxRevisions ?? 3),
         tasks: parsed.tasks,
         editable: parsed.editable !== false,
-        repairSuggestions: [],
-        feedbackDraft: '',
-        phase: 'pending',
-      });
+        repairSuggestions: prev?.repairSuggestions ?? [],
+        feedbackDraft: prev?.feedbackDraft ?? '',
+        phase: prev?.phase ?? 'pending',
+      }));
       return;
     }
     if (componentKey === 'PlanRepairHints') {
@@ -106,7 +107,8 @@ function handleAgentV1Event(data: Record<string, unknown>, deps: AgentStreamHand
   }
 
   if (eventType === 'lifecycle.interrupt') {
-    deps.setPlanReview((prev) => (prev ? { ...prev, phase: 'pending' } : prev));
+    // lifecycle.interrupt 只是通知前端进入中断状态，不要覆盖用户已填写的内容
+    // phase 保持不变，让 ui.render 事件来更新
   }
 
   if (eventType === 'lifecycle.node_enter') {
@@ -128,13 +130,25 @@ function handleAgentV1Event(data: Record<string, unknown>, deps: AgentStreamHand
   if (eventType === 'lifecycle.node_exit') {
     const nodeId = String(payload.node_id || '');
     const success = payload.error ? false : true;
-    deps.setRuntimeFeedItems((prev) =>
-      prev.map((item) =>
-        item.id === `node-${nodeId}`
-          ? { ...item, status: success ? 'success' : 'failed' as const }
-          : item
-      )
-    );
+    deps.setRuntimeFeedItems((prev) => {
+      const existing = prev.find((item) => item.id === `node-${nodeId}`);
+      if (existing) {
+        // 更新现有条目
+        return prev.map((item) =>
+          item.id === `node-${nodeId}`
+            ? { ...item, status: success ? 'success' : 'failed' as const }
+            : item
+        );
+      }
+      // 如果没有先收到 node_enter，直接创建条目（可能在 node_exit 之前没有 node_enter 事件）
+      return [...prev, {
+        id: `node-${nodeId}`,
+        type: 'node' as const,
+        status: success ? 'success' : 'failed' as const,
+        title: getNodeDisplayName(nodeId),
+        message: null,
+      }];
+    });
     return;
   }
 

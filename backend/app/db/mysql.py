@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 from typing import AsyncGenerator, Optional
 
 from sqlalchemy import text
@@ -13,6 +14,39 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.config import settings
 from app.models import Base
+
+logger = logging.getLogger(__name__)
+
+
+LLM_MODEL_CONFIG_SCHEMA_COLUMNS = {
+    "fallback_model_name": "ALTER TABLE llm_model_config ADD COLUMN fallback_model_name VARCHAR(100) DEFAULT NULL COMMENT '兜底模型名称' AFTER model_name",
+    "extra_body": "ALTER TABLE llm_model_config ADD COLUMN extra_body JSON DEFAULT NULL COMMENT '扩展参数' AFTER fallback_model_name",
+    "enable_thinking": "ALTER TABLE llm_model_config ADD COLUMN enable_thinking TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否开启思考模式' AFTER extra_body",
+    "enable_tools": "ALTER TABLE llm_model_config ADD COLUMN enable_tools TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用工具调用' AFTER enable_thinking",
+    "enable_prompt_cache": "ALTER TABLE llm_model_config ADD COLUMN enable_prompt_cache TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否启用LLM前缀缓存' AFTER enable_tools",
+    "enable_memory": "ALTER TABLE llm_model_config ADD COLUMN enable_memory TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用上下文记忆' AFTER enable_prompt_cache",
+    "temperature": "ALTER TABLE llm_model_config ADD COLUMN temperature DECIMAL(4, 2) NOT NULL DEFAULT 0.70 COMMENT '生成随机性' AFTER enable_memory",
+    "top_p": "ALTER TABLE llm_model_config ADD COLUMN top_p DECIMAL(4, 2) NOT NULL DEFAULT 0.90 COMMENT '核采样参数' AFTER temperature",
+    "max_tokens": "ALTER TABLE llm_model_config ADD COLUMN max_tokens INT NOT NULL DEFAULT 2048 COMMENT '最大输出Token' AFTER top_p",
+    "presence_penalty": "ALTER TABLE llm_model_config ADD COLUMN presence_penalty DECIMAL(4, 2) NOT NULL DEFAULT 0.00 COMMENT '话题出现惩罚' AFTER max_tokens",
+    "frequency_penalty": "ALTER TABLE llm_model_config ADD COLUMN frequency_penalty DECIMAL(4, 2) NOT NULL DEFAULT 0.00 COMMENT '频率惩罚' AFTER presence_penalty",
+    "timeout_seconds": "ALTER TABLE llm_model_config ADD COLUMN timeout_seconds SMALLINT NOT NULL DEFAULT 120 COMMENT '请求超时时间' AFTER frequency_penalty",
+    "max_retries": "ALTER TABLE llm_model_config ADD COLUMN max_retries SMALLINT NOT NULL DEFAULT 2 COMMENT '最大重试次数' AFTER timeout_seconds",
+    "status": "ALTER TABLE llm_model_config ADD COLUMN status SMALLINT NOT NULL DEFAULT 1 COMMENT '状态：1启用，0停用' AFTER max_retries",
+    "is_deleted": "ALTER TABLE llm_model_config ADD COLUMN is_deleted BIGINT NOT NULL DEFAULT 0 COMMENT '软删除标记：0未删除，删除时写入Unix微秒时间戳' AFTER status",
+    "last_test_at": "ALTER TABLE llm_model_config ADD COLUMN last_test_at DATETIME DEFAULT NULL COMMENT '最近测试时间' AFTER is_deleted",
+    "last_test_status": "ALTER TABLE llm_model_config ADD COLUMN last_test_status SMALLINT DEFAULT NULL COMMENT '最近测试状态' AFTER last_test_at",
+    "last_test_message": "ALTER TABLE llm_model_config ADD COLUMN last_test_message VARCHAR(500) DEFAULT NULL COMMENT '最近测试结果' AFTER last_test_status",
+}
+
+
+async def ensure_llm_model_config_schema(conn: AsyncConnection) -> None:
+    for column_name, alter_sql in LLM_MODEL_CONFIG_SCHEMA_COLUMNS.items():
+        column_result = await conn.execute(text(f"SHOW COLUMNS FROM llm_model_config LIKE '{column_name}'"))
+        if column_result.first():
+            continue
+        logger.info("LLM模型配置表缺少字段，正在自动补齐：column=%s", column_name)
+        await conn.execute(text(alter_sql))
 
 
 class MySQLManager:
@@ -75,6 +109,7 @@ class MySQLManager:
         )
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await ensure_llm_model_config_schema(conn)
 
     async def close_pool(self) -> None:
         """

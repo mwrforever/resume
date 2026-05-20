@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError

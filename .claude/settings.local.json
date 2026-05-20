@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(update-config)",
+      "Skill(superpowers:brainstorming)",
+      "Skill(superpowers:systematic-debugging)",
+      "Skill(document-skills:frontend-design)",
+      "Skill(ui-ux-pro-max:ui-ux-pro-max)",
+      "Skill(superpowers:writing-plans)",
+      "Skill(superpowers:subagent-driven-development)",
+      "Skill(superpowers:requesting-code-review)",
+      "Skill(superpowers:finishing-a-development-branch)"
+    ]
+  }
+}

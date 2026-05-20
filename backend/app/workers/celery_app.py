@@ -1,5 +1,6 @@
 from celery import Celery
-from app.core.config import configure_logging, get_settings
+from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.workers.db.sync_mysql import mysql_manager_sync
 from app.workers.db.sync_redis import redis_manager_sync
 

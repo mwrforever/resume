@@ -1,7 +1,7 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
@@ -15,10 +15,29 @@ from app.repositories.dept_repository import DeptRepository
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.evaluation_repository import EvalRepository
 from app.repositories.job_repository import JobRepository
+from app.repositories.resume_repository import ResumeRepository
 from app.repositories.llm_config_repository import LlmConfigRepository
 from app.schemas.common import ApiResponse, PageData
-from app.schemas.agent.request import AgentMessageCreate, AgentModelSelect, AgentSessionCreate, AgentSessionUpdate, AgentTemporaryActionExecute, LlmConfigCreate, LlmConfigUpdate
-from app.schemas.agent.response import AgentReply, AgentSessionDetail, AgentSessionItem, AgentTemporaryActionItem, LlmConfigItem, LlmModelOption
+from app.schemas.agent.enums import AgentSseEventName
+from app.schemas.agent.request import (
+    AgentMessageCreate,
+    AgentModelSelect,
+    AgentRunResumeRequest,
+    AgentSessionCreate,
+    AgentSessionUpdate,
+    AgentTemporaryActionExecute,
+    LlmConfigCreate,
+    LlmConfigUpdate,
+)
+from app.schemas.agent.response import (
+    AgentReply,
+    AgentResumeAttachmentItem,
+    AgentSessionDetail,
+    AgentSessionItem,
+    AgentTemporaryActionItem,
+    LlmConfigItem,
+    LlmModelOption,
+)
 from app.services.agent_context_service import AgentContextService
 from app.services.agent_service import AgentService
 from app.services.cache_service import CacheService
@@ -43,6 +62,7 @@ def get_agent_service(db: AsyncSession = Depends(get_db), cache: CacheService = 
         job_repo=JobRepository(db),
         app_repo=ApplicationRepository(db),
         eval_repo=EvalRepository(db),
+        resume_repo=ResumeRepository(db),
     )
 
 
@@ -155,6 +175,19 @@ async def delete_session(
     return ApiResponse(message="删除成功")
 
 
+@agent_router.post("/sessions/{session_id}/attachments/resume", response_model=ApiResponse[AgentResumeAttachmentItem])
+async def upload_session_resume(
+    session_id: int,
+    file: UploadFile = File(...),
+    job_id: int = Form(..., ge=1),
+    service: AgentService = Depends(get_agent_service),
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse[AgentResumeAttachmentItem]:
+    """上传候选人简历（PDF/DOCX），须绑定岗位 ID，发消息时在 context_refs 中引用。"""
+    data = await service.upload_session_resume(session_id, file, job_id, current_user)
+    return ApiResponse(message="上传成功", data=AgentResumeAttachmentItem.model_validate(data))
+
+
 @agent_router.post("/sessions/{session_id}/messages", response_model=ApiResponse[AgentReply])
 async def send_message(
     session_id: int,
@@ -181,7 +214,8 @@ async def stream_message(
         try:
             async for event in service.stream_message(session_id, body, current_user):
                 payload = json.dumps(event.data, ensure_ascii=False)
-                yield f"event: {event.event}\ndata: {payload}\n\n"
+                sse_name = event.event if event.event in {AgentSseEventName.V1.value, AgentSseEventName.LEGACY.value} else event.event
+                yield f"event: {sse_name}\ndata: {payload}\n\n"
         except BizError as exc:
             yield _yield_error_event(exc.message, exc.code)
         except SQLAlchemyError:
@@ -191,6 +225,30 @@ async def stream_message(
             logger.exception("Agent流式接口未预期异常：session_id=%s", session_id)
             yield _yield_error_event("Agent服务暂不可用，请稍后重试")
             raise
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@agent_router.post("/sessions/{session_id}/resume")
+async def resume_session(
+    session_id: int,
+    body: AgentRunResumeRequest,
+    service: AgentService = Depends(get_agent_service),
+    current_user: dict = Depends(get_current_user),
+) -> StreamingResponse:
+    """恢复 Planner 审批 interrupt，thread_id 使用会话 session_key。"""
+
+    async def event_generator():
+        try:
+            async for event in service.resume_session(session_id, body, current_user):
+                payload = json.dumps(event.data, ensure_ascii=False)
+                sse_name = event.event if event.event in {AgentSseEventName.V1.value, AgentSseEventName.LEGACY.value} else event.event
+                yield f"event: {sse_name}\ndata: {payload}\n\n"
+        except BizError as exc:
+            yield f"event: error\ndata: {json.dumps({'message': exc.message, 'code': exc.code}, ensure_ascii=False)}\n\n"
+        except SQLAlchemyError:
+            logger.exception("Agent恢复流式接口数据库异常：session_id=%s", session_id)
+            yield f"event: error\ndata: {json.dumps({'message': 'Agent服务暂不可用，请稍后重试'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

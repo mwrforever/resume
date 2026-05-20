@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { employeeJobsApi } from '@/api/employee/jobs';
+import { JobTemplatePreview } from '@/components/employee/job-template-tools';
+import { MarkdownPreviewDialog } from '@/components/common/markdown-preview-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import type { IDimension, ISkill, ITag } from '@/types/employee';
 
-const SKILL_TYPE_LABEL: Record<number, string> = { 1: '必须满足', 2: '优先匹配', 3: '普通技能' };
-const TAG_TYPE_LABEL: Record<number, string> = { 1: '岗位特性', 2: '福利待遇', 3: '技能加分' };
 const getResponseData = <T,>(res: any, fallback: T): T => res?.data?.data ?? res?.data ?? fallback;
 
 interface JobPreviewData {
@@ -19,6 +19,7 @@ interface JobPreviewData {
   status: number;
   dept_name?: string;
   dept_code?: string;
+  template_name?: string;
   create_time?: string;
   resume_count?: number;
   dimensions?: IDimension[];
@@ -32,6 +33,7 @@ export default function EmployeeJobPreview() {
   const jobId = Number(id);
   const [job, setJob] = useState<JobPreviewData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [previewPrompt, setPreviewPrompt] = useState<{ title: string; content: string } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -96,44 +98,19 @@ export default function EmployeeJobPreview() {
           </Card>
 
           <Card>
-            <CardContent className="p-6 space-y-3">
-              <h3 className="text-sm font-semibold text-[#1E293B]">评估维度</h3>
-              {(job.dimensions ?? []).length > 0 ? job.dimensions!.map(dim => (
-                <div key={dim.id ?? dim.dimension_name} className="rounded-lg border border-[#E2E8F0] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-[#1E293B]">{dim.dimension_name}</span>
-                    <span className="text-sm text-[#64748B]">权重 {Number(dim.weight).toFixed(2)}</span>
-                  </div>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[#64748B]">{dim.prompt_template}</p>
-                </div>
-              )) : <p className="text-sm text-[#94A3B8]">暂无评估维度</p>}
+            <CardContent className="p-6">
+              <JobTemplatePreview
+                template={{
+                  template_name: job.template_name || `${job.name}评估模板`,
+                  dimensions: job.dimensions ?? [],
+                  skills: job.skills ?? [],
+                  tags: job.tags ?? [],
+                }}
+                onPreviewPrompt={(title, content) => setPreviewPrompt({ title, content })}
+              />
             </CardContent>
           </Card>
-
-          <Card>
-            <CardContent className="p-6 space-y-4">
-              <div>
-                <h3 className="mb-3 text-sm font-semibold text-[#1E293B]">技能要求</h3>
-                <div className="flex flex-wrap gap-2">
-                  {(job.skills ?? []).length > 0 ? job.skills!.map(skill => (
-                    <span key={skill.id ?? skill.skill_name} className="rounded-full bg-[#F1F5F9] px-3 py-1 text-xs text-[#475569]">
-                      {skill.skill_name} · {SKILL_TYPE_LABEL[skill.skill_type] ?? '普通技能'}
-                    </span>
-                  )) : <span className="text-sm text-[#94A3B8]">暂无技能要求</span>}
-                </div>
-              </div>
-              <div>
-                <h3 className="mb-3 text-sm font-semibold text-[#1E293B]">岗位标签</h3>
-                <div className="flex flex-wrap gap-2">
-                  {(job.tags ?? []).length > 0 ? job.tags!.map(tag => (
-                    <span key={tag.id} className="rounded-full bg-blue-50 px-3 py-1 text-xs text-blue-700">
-                      {tag.tag_name} · {TAG_TYPE_LABEL[tag.tag_type] ?? `类型${tag.tag_type}`}
-                    </span>
-                  )) : <span className="text-sm text-[#94A3B8]">暂无岗位标签</span>}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <MarkdownPreviewDialog open={!!previewPrompt} title={previewPrompt?.title ?? '提示词预览'} content={previewPrompt?.content ?? ''} onClose={() => setPreviewPrompt(null)} />
         </div>
       )}
     </AdminLayout>

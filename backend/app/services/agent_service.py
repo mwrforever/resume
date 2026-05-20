@@ -23,12 +23,20 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.llm.gateway import LLMGatewayError
-from app.llm.graphs.agent_runtime_graph import AgentRuntimeGraph
+from app.llm.streaming.event_emitter import AgentStreamEventEmitter
+from app.schemas.agent.enums import AgentInterruptKind, AgentSseEventName
+from app.schemas.agent.dto import AgentToolContextDTO
+from app.schemas.agent.orchestrator_state import OrchestratorState
+from app.schemas.agent.request import AgentRunResumeRequest, PlanReviewResumePayload
+from app.llm.graphs.orchestrator_graph import AgentOrchestratorGraph
+from app.services.agent_orchestrator_runner import AgentOrchestratorRunner
+from app.services.agent_resume_pipeline_service import AgentResumePipelineService
 from app.repositories.agent_repository import AgentRepository
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.evaluation_repository import EvalRepository
 from app.repositories.job_repository import JobRepository
-from app.schemas.agent.dto import AgentGraphStateDTO, LLMResultDTO, LLMRuntimeConfigDTO
+from app.repositories.resume_repository import ResumeRepository
+from app.schemas.agent.dto import LLMResultDTO, LLMRuntimeConfigDTO
 from app.schemas.agent.request import (
     AgentMessageCreate,
     AgentSessionCreate,
@@ -69,10 +77,11 @@ class AgentService:
         agent_repo: AgentRepository,
         llm_service: LlmConfigService,
         context_service: AgentContextService | None = None,
-        runtime_graph: AgentRuntimeGraph | None = None,
+        orchestrator_runner: AgentOrchestratorRunner | None = None,
         job_repo: JobRepository | None = None,
         app_repo: ApplicationRepository | None = None,
         eval_repo: EvalRepository | None = None,
+        resume_repo: ResumeRepository | None = None,
     ) -> None:
         """
         初始化 Agent 服务
@@ -81,7 +90,7 @@ class AgentService:
             agent_repo: 会话/消息数据访问层，负责数据库持久化
             llm_service: LLM 配置服务，负责模型路由和运行时配置构建
             context_service: 上下文服务，负责长期记忆管理和 Prompt 构建（可选）
-            runtime_graph: LangGraph 运行时图，负责 Agent 执行流程编排（可选，默认创建新实例）
+            orchestrator_runner: 编排图运行器（可选，默认创建新实例）
             job_repo: 岗位数据访问层，供内置工具查询员工岗位数据（可选）
             app_repo: 投递数据访问层，供内置工具查询投递数据（可选）
             eval_repo: 评估数据访问层，供内置工具查询评估数据（可选）
@@ -89,11 +98,14 @@ class AgentService:
         self._agent_repo = agent_repo
         self._llm_service = llm_service
         self._context_service = context_service
-        # 如果未提供 runtime_graph，则创建默认实例（使用全局默认模型路由器）
-        self._runtime_graph = runtime_graph or AgentRuntimeGraph()
         self._job_repo = job_repo
         self._app_repo = app_repo
         self._eval_repo = eval_repo
+        self._resume_pipeline: AgentResumePipelineService | None = None
+        if resume_repo and job_repo:
+            self._resume_pipeline = AgentResumePipelineService(resume_repo, job_repo)
+        orchestrator_graph = AgentOrchestratorGraph(resume_pipeline=self._resume_pipeline)
+        self._orchestrator_runner = orchestrator_runner or AgentOrchestratorRunner(orchestrator_graph)
 
     async def create_session(self, body: AgentSessionCreate, current_user: dict) -> AgentSessionItem:
         """
@@ -291,7 +303,64 @@ class AgentService:
         session, runtime_config, user_message, prompt, session_title, _ = await self._prepare_message_run(
             session_id, body, current_user
         )
-        return await self._execute_graph(runtime_config, prompt, user_message, session, session_title)
+        return await self._execute_orchestrator(
+            runtime_config, prompt, user_message, session, session_title, body, current_user
+        )
+
+    async def resume_session(
+        self,
+        session_id: int,
+        body: AgentRunResumeRequest,
+        current_user: dict,
+    ) -> AsyncIterator[AgentStreamEvent]:
+        """恢复 Planner interrupt 后继续编排（thread_id=session_key）。"""
+        session = await self._get_session(session_id, current_user)
+        if body.interrupt_kind != AgentInterruptKind.PLAN_REVIEW:
+            raise ValidationError("当前仅支持规划审批恢复")
+
+        messages = await self._agent_repo.list_messages(session.id)
+        user_message = next((item for item in reversed(messages) if item.role == "user"), None)
+        if user_message is None:
+            raise ValidationError("未找到可关联的用户消息")
+
+        emitter = self._build_stream_emitter(session)
+        started_at = time.perf_counter()
+
+        try:
+            async for stream_event in self._consume_orchestrator_stream(
+                self._orchestrator_runner.stream_resume(
+                    session_key=session.session_key,
+                    resume_payload=body.payload,
+                    emitter=emitter,
+                ),
+                session=session,
+                user_message=user_message,
+            ):
+                yield stream_event
+
+            final_state, interrupted = await self._load_run_outcome(session.session_key)
+            if interrupted:
+                return
+
+            llm_result = self._orchestrator_runner.build_final_result(session.session_key, final_state)
+            if not llm_result:
+                raise ValidationError("编排执行未产生有效回复")
+
+            reply = await self._make_run_reply(
+                session,
+                user_message,
+                final_state.runtime_config,
+                started_at,
+                None,
+                failed=False,
+                llm_result=llm_result,
+            )
+            yield AgentStreamEvent(event="final", data={"reply": reply.model_dump(mode="json")})
+        except (LLMGatewayError, RuntimeError, ValueError, SQLAlchemyError) as exc:
+            if isinstance(exc, SQLAlchemyError):
+                await self._agent_repo.rollback()
+            logger.exception("Agent恢复执行失败：session_id=%s", session.id)
+            yield AgentStreamEvent(event="error", data={"message": str(exc)})
 
     async def stream_message(self, session_id: int, body: AgentMessageCreate, current_user: dict) -> AsyncIterator[AgentStreamEvent]:
         """
@@ -313,13 +382,14 @@ class AgentService:
         Yields:
             AgentStreamEvent: 逐步推送的流式事件
         """
-        logger.info(
-            "Agent流式消息发送开始：session_id=%s model_name=%s",
-            session_id,
-            body.selected_model_name or "默认",
-        )
         session, runtime_config, user_message, prompt, session_title, replay_payload = await self._prepare_message_run(
             session_id, body, current_user
+        )
+        logger.info(
+            "Agent流式消息发送开始：session_id=%s session_key=%s model_name=%s",
+            session_id,
+            session.session_key,
+            runtime_config.model_name,
         )
 
         yield AgentStreamEvent(
@@ -328,43 +398,41 @@ class AgentService:
         )
 
         started_at = time.perf_counter()
-        llm_result = None
+        emitter = self._build_stream_emitter(session)
+        orchestrator_state = await self._build_orchestrator_initial_state(
+            session=session,
+            body=body,
+            prompt=prompt,
+            runtime_config=runtime_config,
+            replay_payload=replay_payload,
+        )
 
         try:
-            tool_context = await self._build_tool_context(session.employee_id, replay_payload)
+            async for stream_event in self._consume_orchestrator_stream(
+                self._orchestrator_runner.stream_run(orchestrator_state, emitter=emitter),
+                session=session,
+                user_message=user_message,
+            ):
+                yield stream_event
 
-            async for chunk in self._runtime_graph.stream(prompt, runtime_config, tool_context):
-                if chunk.tool_call:
-                    yield AgentStreamEvent(
-                        event="tool_call",
-                        data={"tool_call": chunk.tool_call.model_dump(mode="json")}
-                    )
+            final_state, interrupted = await self._load_run_outcome(session.session_key)
+            if interrupted:
+                logger.info(
+                    "Agent流式执行暂停于 interrupt：session_key=%s thread_id=%s",
+                    session.session_key,
+                    session.session_key,
+                )
+                return
 
-                if chunk.tool_result:
-                    tool_result_data = chunk.tool_result.model_dump(mode="json")
-                    yield AgentStreamEvent(
-                        event="tool_result",
-                        data={"tool_result": tool_result_data}
-                    )
+            llm_result = self._orchestrator_runner.build_final_result(session.session_key, final_state)
+            if not llm_result:
+                llm_result = LLMResultDTO(content="", model_name=runtime_config.model_name)
 
-                    # 只有 prepare_application_status_action 工具会生成此 payload
-                    action_payload = (chunk.tool_result.output_payload or {}).get("action_required")
-                    if isinstance(action_payload, dict):
-                        action = self._build_temporary_action(session, user_message.id, action_payload)
-                        yield AgentStreamEvent(
-                            event="action_required",
-                            data={"action": action.model_dump(mode="json")}
-                        )
-
-                if chunk.delta:
-                    yield AgentStreamEvent(
-                        event="token",
-                        data={"delta": chunk.delta}
-                    )
-
-                if chunk.result:
-                    llm_result = chunk.result
-
+            reply = await self._make_run_reply(
+                session, user_message, runtime_config, started_at, session_title,
+                failed=False, llm_result=llm_result,
+            )
+            yield AgentStreamEvent(event="final", data={"reply": reply.model_dump(mode="json")})
         except (LLMGatewayError, RuntimeError, ValueError, SQLAlchemyError) as exc:
             if isinstance(exc, SQLAlchemyError):
                 await self._agent_repo.rollback()
@@ -378,16 +446,60 @@ class AgentService:
                 event="error",
                 data={"message": str(exc), "reply": reply.model_dump(mode="json")}
             )
-            return
 
-        if not llm_result:
-            llm_result = LLMResultDTO(content="", model_name=runtime_config.model_name)
+    async def upload_session_resume(
+        self,
+        session_id: int,
+        file,
+        job_id: int,
+        current_user: dict,
+    ) -> dict:
+        """
+        Agent 会话内上传候选人简历，须绑定岗位 ID（会话上下文）；文本解析在发消息时由内置工具完成。
 
-        reply = await self._make_run_reply(
-            session, user_message, runtime_config, started_at, session_title,
-            failed=False, llm_result=llm_result,
+        返回 resume_id 供发消息时写入 context_refs。
+        """
+        if not self._resume_pipeline:
+            raise ValidationError("简历上传服务未配置")
+        session = await self._get_session(session_id, current_user)
+        await self._resume_pipeline.ensure_job_owned_by_employee(job_id, session.employee_id)
+        uploaded = await self._resume_pipeline.upload_resume_for_employee(session.employee_id, file)
+        uploaded["job_id"] = job_id
+        logger.info(
+            "Agent 会话简历附件已上传：session_id=%s resume_id=%s job_id=%s",
+            session.id,
+            uploaded.get("resume_id"),
+            job_id,
         )
-        yield AgentStreamEvent(event="final", data={"reply": reply.model_dump(mode="json")})
+        return uploaded
+
+    async def _build_orchestrator_initial_state(
+        self,
+        *,
+        session,
+        body: AgentMessageCreate,
+        prompt: str,
+        runtime_config: LLMRuntimeConfigDTO,
+        replay_payload: dict | None,
+    ) -> OrchestratorState:
+        """根据消息体组装编排初始 State，含简历附件路由标记。"""
+        resume_context = None
+        has_resume = False
+        if self._resume_pipeline:
+            resume_context = self._resume_pipeline.parse_resume_context_ref(body.context_refs)
+            has_resume = resume_context is not None
+        tool_context = await self._build_tool_context(session.employee_id, replay_payload)
+        return OrchestratorState(
+            session_id=session.id,
+            session_key=session.session_key,
+            employee_id=session.employee_id,
+            user_input=body.content,
+            prompt=prompt,
+            runtime_config=runtime_config,
+            tool_context=tool_context,
+            has_resume_attachment=has_resume,
+            resume_context=resume_context,
+        )
 
     async def _create_user_message(self, session, body: AgentMessageCreate):
         """
@@ -470,9 +582,9 @@ class AgentService:
         )
         return prompt, session_title, replay_payload
 
-    async def _build_tool_context(self, employee_id: int, replay_payload: dict | None) -> dict[str, Any]:
+    async def _build_tool_context(self, employee_id: int, replay_payload: dict | None) -> AgentToolContextDTO:
         """
-        构建工具执行时的上下文数据
+        构建工具执行时的上下文实体。
 
         这个上下文传递给内置工具，供工具查询业务数据。
         包含：近期消息引用、记忆引用、业务数据快照。
@@ -482,18 +594,18 @@ class AgentService:
             replay_payload: _prepare_prompt 返回的上下文数据
 
         Returns:
-            dict: 包含 recent_messages、memories、business 的工具上下文
+            AgentToolContextDTO: 结构化工具上下文
         """
         context = replay_payload or {}
-        return {
-            "recent_messages": [
+        return AgentToolContextDTO(
+            recent_messages=[
                 {"id": message_id} for message_id in context.get("recent_message_ids", [])
             ],
-            "memories": [
+            memories=[
                 {"id": memory_id} for memory_id in context.get("memory_ids", [])
             ],
-            "business": await self._build_business_tool_snapshot(employee_id),
-        }
+            business=await self._build_business_tool_snapshot(employee_id),
+        )
 
     async def _build_business_tool_snapshot(self, employee_id: int) -> dict[str, Any]:
         """
@@ -635,60 +747,84 @@ class AgentService:
         )
         return action
 
-    async def _execute_graph(
+    async def _execute_orchestrator(
         self,
-        runtime_config,
+        runtime_config: LLMRuntimeConfigDTO,
         prompt: str,
         user_message,
         session,
         session_title: str | None,
+        body: AgentMessageCreate,
+        current_user: dict,
     ) -> AgentReply:
-        """
-        执行 LangGraph Runtime，并将结果统一转换为回复结构
-
-        这是非流式消息发送的核心执行方法。
-        流式发送使用 _runtime_graph.stream()，最终也调用此逻辑。
-
-        Args:
-            runtime_config: 运行时配置（模型、参数等）
-            prompt: 完整的 Prompt 文本
-            user_message: 用户消息对象
-            session: 会话对象
-            session_title: 会话标题（首条消息时生成）
-
-        Returns:
-            AgentReply: 完整的回复结果
-        """
-        logger.info(
-            "Agent LangGraph 执行开始：session_id=%s model_name=%s",
-            session.id,
-            runtime_config.model_name,
-        )
-        started_at = time.perf_counter()  # 记录开始时间
-
-        try:
-            # 执行 LangGraph 状态图
-            # 内部会依次执行 planner → tools → llm 节点
-            graph_result = await self._runtime_graph.run(
-                AgentGraphStateDTO(prompt=prompt, runtime_config=runtime_config)
-            )
-
-        except (RuntimeError, ValueError) as exc:
+        """非流式发送：消费编排流直至结束（若中断则提示需审批）。"""
+        started_at = time.perf_counter()
+        async for _event in self.stream_message(session.id, body, current_user):
+            pass
+        final_state, interrupted = await self._load_run_outcome(session.session_key)
+        if interrupted:
             return await self._make_run_reply(
-                session, user_message, runtime_config, started_at, session_title,
-                failed=True, error_text=str(exc),
+                session,
+                user_message,
+                runtime_config,
+                started_at,
+                session_title,
+                failed=True,
+                error_text="规划待审批，请使用流式界面确认计划后继续",
             )
-
-        if graph_result.error_message or not graph_result.result:
+        llm_result = self._orchestrator_runner.build_final_result(session.session_key, final_state)
+        if not llm_result or not llm_result.content:
             return await self._make_run_reply(
-                session, user_message, runtime_config, started_at, session_title,
-                failed=True, error_text=graph_result.error_message or "模型调用失败",
+                session,
+                user_message,
+                runtime_config,
+                started_at,
+                session_title,
+                failed=True,
+                error_text=final_state.error_message or "模型调用失败",
             )
-
         return await self._make_run_reply(
-            session, user_message, runtime_config, started_at, session_title,
-            failed=False, llm_result=graph_result.result,
+            session,
+            user_message,
+            runtime_config,
+            started_at,
+            session_title,
+            failed=False,
+            llm_result=llm_result,
         )
+
+    @staticmethod
+    def _build_stream_emitter(session) -> AgentStreamEventEmitter:
+        """构造流式事件发射器，run_id 每次消息唯一，thread_id 使用 session_key。"""
+        return AgentStreamEventEmitter(session_id=session.id, session_key=session.session_key)
+
+    async def _consume_orchestrator_stream(
+        self,
+        event_iterator: AsyncIterator[tuple[AgentSseEventName, dict]],
+        *,
+        session,
+        user_message,
+    ) -> AsyncIterator[AgentStreamEvent]:
+        """将编排 SSE 元组转为 AgentStreamEvent，并补全 action_required 临时动作结构。"""
+        async for sse_name, payload in event_iterator:
+            if sse_name == AgentSseEventName.LEGACY:
+                legacy_event = payload.get("event")
+                legacy_data = payload.get("data") or {}
+                if legacy_event == "action_required":
+                    action_payload = legacy_data.get("action")
+                    if isinstance(action_payload, dict):
+                        action = self._build_temporary_action(session, user_message.id, action_payload)
+                        legacy_data = {"action": action.model_dump(mode="json")}
+                yield AgentStreamEvent(event=str(legacy_event), data=legacy_data)
+                continue
+            yield AgentStreamEvent(event=sse_name.value, data=payload)
+
+    async def _load_run_outcome(self, session_key: str) -> tuple[OrchestratorState, bool]:
+        """读取 checkpoint 终态，并判断是否仍处于 interrupt。"""
+        snapshot = await self._orchestrator_runner.get_graph_state(session_key)
+        interrupted = bool(snapshot and snapshot.interrupts)
+        state = await self._orchestrator_runner.load_state(session_key)
+        return state, interrupted
 
     async def _make_run_reply(
         self,

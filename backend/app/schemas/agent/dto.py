@@ -48,6 +48,17 @@ class AgentToolResultDTO(BaseModel):
     error_message: str | None = None
 
 
+class AgentToolContextDTO(BaseModel):
+    """Agent 内置工具执行上下文（与 agent_service._build_tool_context 结构一致）。"""
+
+    recent_messages: list[dict[str, Any]] = Field(default_factory=list)
+    memories: list[dict[str, Any]] = Field(default_factory=list)
+    business: dict[str, Any] = Field(default_factory=dict)
+    prompt_prefix_hash: str | None = None
+    snapshot_id: str | None = None
+    runs: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class LLMStreamChunkDTO(BaseModel):
     delta: str = ""
     result: LLMResultDTO | None = None
@@ -56,7 +67,7 @@ class LLMStreamChunkDTO(BaseModel):
     error_message: str | None = None
 
 
-class AgentGraphStateDTO(BaseModel):
+class ResumeAnalyseState(BaseModel):
     prompt: str
     runtime_config: LLMRuntimeConfigDTO
     tool_context: dict[str, Any] = Field(default_factory=dict)
