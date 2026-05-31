@@ -1,4 +1,4 @@
-import { Loader2, CheckCircle2, XCircle, Wrench } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import type { IAgentToolStreamItem } from '@/types/agent';
 
 interface ToolExecutionCardProps {

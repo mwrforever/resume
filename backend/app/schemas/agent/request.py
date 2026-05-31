@@ -1,9 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
-
-from app.schemas.agent.enums import AgentInterruptKind, PlanReviewDecision
-from app.schemas.agent.orchestrator_state import SubTaskDTO
+from pydantic import BaseModel, Field
 
 
 MAX_LLM_TIMEOUT_SECONDS = 120
@@ -80,33 +77,20 @@ class AgentMessageCreate(BaseModel):
     runtime_options: AgentRuntimeOptions | None = None
 
 
-class PlanReviewResumePayload(BaseModel):
-    """规划审批恢复载荷（interrupt 之后由前端回传）。"""
+class AgentFormSubmit(BaseModel):
+    """前端表单卡提交载体，由 `form.requested` 事件触发渲染后回传。"""
 
-    decision: PlanReviewDecision
-    tasks: list[SubTaskDTO] | None = None
-    feedback: str | None = Field(default=None, max_length=2000)
-
-    @model_validator(mode="after")
-    def validate_decision_payload(self) -> "PlanReviewResumePayload":
-        if self.decision == PlanReviewDecision.REJECTED and not (self.feedback or "").strip():
-            raise ValueError("驳回规划时必须提供 feedback")
-        return self
+    request_id: str = Field(min_length=1, max_length=80)
+    values: dict[str, Any] = Field(default_factory=dict)
 
 
-class AgentRunResumeRequest(BaseModel):
-    """恢复被 interrupt 暂停的编排运行。"""
+class AgentActionExecute(BaseModel):
+    """Agent 写操作执行请求体（用户在 ActionCard 上确认后回传）。
 
-    interrupt_kind: AgentInterruptKind
-    payload: PlanReviewResumePayload
-
-
-class AgentTemporaryActionExecute(BaseModel):
-    """Agent 临时动作执行请求体，用于前端确认后真正执行业务写操作。
-
-    所有字段由 SSE 中的 action_required 事件携带，用户确认后原样回传。
+    所有字段由 SSE 中的 `action.requested` 事件携带，用户确认后原样回传。
     """
 
+    action_id: str = Field(min_length=1, max_length=80)
     capability_key: str = Field(min_length=1, max_length=80)
     action_name: str = Field(min_length=1, max_length=100)
     target_type: str | None = Field(default=None, max_length=50)

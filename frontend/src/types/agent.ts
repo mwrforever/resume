@@ -74,6 +74,40 @@ export interface IAgentStreamEnvelopeV1 {
   branch_id?: string | null;
 }
 
+export type TAgentStreamProtocolVersionV2 = '2.0';
+
+export type TAgentEventTypeV2 =
+  | 'lifecycle.run.started'
+  | 'lifecycle.run.finished'
+  | 'lifecycle.run.failed'
+  | 'lifecycle.node.enter'
+  | 'lifecycle.node.exit'
+  | 'lifecycle.node.error'
+  | 'message.delta'
+  | 'message.done'
+  | 'tool.started'
+  | 'tool.finished'
+  | 'form.requested'
+  | 'form.resolved'
+  | 'action.requested'
+  | 'action.resolved'
+  | 'data.card'
+  | 'data.evaluation_report'
+  | 'error';
+
+export interface IAgentStreamEnvelopeV2 {
+  schema_version: TAgentStreamProtocolVersionV2;
+  seq: number;
+  run_id: string;
+  session_id: number;
+  node_id: string;
+  agent_id?: string | null;
+  event: TAgentEventTypeV2 | string;
+  payload: Record<string, unknown>;
+  ts: number;
+  extensions?: Record<string, unknown> | null;
+}
+
 /** ui.render · PlanReviewTree 载荷 */
 export interface IPlanReviewTreeRenderData {
   plan_id?: string;
@@ -108,11 +142,17 @@ export interface IAgentRunResumeRequest {
   payload: IPlanReviewResumePayload;
 }
 
+export interface IAgentFormSubmitRequest {
+  request_id: string;
+  values: Record<string, unknown>;
+}
+
 export interface IAgentRuntimeOptions {
   enable_thinking?: boolean;
 }
 
 export interface IAgentTemporaryActionExecute {
+  action_id: string;
   capability_key: string;
   action_name: string;
   target_type?: string | null;
@@ -344,6 +384,7 @@ export type AgentStreamEventName =
   | 'tool_call'
   | 'tool_result'
   | 'action_required'
+  | 'agent'
   | 'agent.v1';
 
 export interface IAgentStreamEvent {
@@ -361,7 +402,8 @@ export interface IAgentToolStreamItem {
   error_message?: string | null;
 }
 
-export interface IAgentActionStreamItem extends IAgentActionItem {
+export interface IAgentActionStreamItem extends Omit<IAgentActionItem, 'id'> {
+  id: string;
   isStreaming?: boolean;
 }
 

@@ -67,6 +67,17 @@ class LLMStreamChunkDTO(BaseModel):
     error_message: str | None = None
 
 
+class ResumeContextDTO(BaseModel):
+    """Agent 会话中候选人简历附件的上下文数据。"""
+
+    resume_id: int
+    job_id: int | None = None
+    file_name: str = ""
+    file_path: str = ""
+    raw_text: str = ""
+    structured_markdown: str = ""
+
+
 class ResumeAnalyseState(BaseModel):
     prompt: str
     runtime_config: LLMRuntimeConfigDTO

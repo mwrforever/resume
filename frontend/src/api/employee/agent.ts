@@ -1,7 +1,7 @@
 import client from '@/api/client';
 import { useAuthStore } from '@/store/auth';
 import type {
-  IAgentReply,
+  IAgentFormSubmitRequest,
   IAgentRunResumeRequest,
   IAgentRuntimeOptions,
   IAgentSessionDetail,
@@ -98,10 +98,15 @@ async function streamAgentMessage(
   await consumeSseResponse(response, onEvent);
 }
 
-/** 恢复 Planner interrupt（批准/驳回），SSE 协议与发消息流一致 */
-async function streamAgentResume(id: number, data: IAgentRunResumeRequest, onEvent: (event: IAgentStreamEvent) => void) {
-  const response = await fetchStreamWithAuth(`/api/v1/employee/agent/sessions/${id}/resume`, JSON.stringify(data));
+/** 提交 LangGraph interrupt 表单/动作决议，SSE 协议与发消息流一致 */
+async function streamAgentFormSubmit(id: number, data: IAgentFormSubmitRequest, onEvent: (event: IAgentStreamEvent) => void) {
+  const response = await fetchStreamWithAuth(`/api/v1/employee/agent/sessions/${id}/forms/submit`, JSON.stringify(data));
   await consumeSseResponse(response, onEvent);
+}
+
+/** 兼容旧 Planner resume 调用，统一转为 v2 form submit。 */
+async function streamAgentResume(id: number, data: IAgentRunResumeRequest, onEvent: (event: IAgentStreamEvent) => void) {
+  await streamAgentFormSubmit(id, { request_id: data.interrupt_kind, values: { interrupt_kind: data.interrupt_kind, payload: data.payload } }, onEvent);
 }
 
 export const employeeLlmApi = {
@@ -113,11 +118,11 @@ export const employeeLlmApi = {
   testConfig: (id: number) => client.post(`/employee/llm-configs/${id}/test`, undefined, llmRequestConfig),
 };
 
-/** 上传 Agent 会话简历附件（须绑定 job_id） */
-async function uploadSessionResume(sessionId: number, file: File, jobId: number) {
+/** 上传 Agent 会话文件附件 */
+async function uploadSessionResume(sessionId: number, file: File, jobId?: number | null) {
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('job_id', String(jobId));
+  if (jobId != null) formData.append('job_id', String(jobId));
   const token = useAuthStore.getState().accessToken;
   const response = await fetch(`/api/v1/employee/agent/sessions/${sessionId}/attachments/resume`, {
     method: 'POST',
@@ -128,7 +133,7 @@ async function uploadSessionResume(sessionId: number, file: File, jobId: number)
     throw new Error(await readErrorMessage(response));
   }
   const payload = await response.json();
-  return payload as { code: number; message: string; data: { resume_id: number; file_name: string; job_id: number } };
+  return payload as { code: number; message: string; data: { resume_id: number; file_name: string; job_id: number | null } };
 }
 
 export const employeeAgentApi = {
@@ -137,10 +142,10 @@ export const employeeAgentApi = {
   getSession: (id: number) => client.get<unknown, { data: IAgentSessionDetail }>(`/employee/agent/sessions/${id}`),
   updateSession: (id: number, data: { title: string }) => client.put(`/employee/agent/sessions/${id}`, data),
   deleteSession: (id: number) => client.delete(`/employee/agent/sessions/${id}`),
-  sendMessage: (id: number, data: { content: string; context_refs?: Array<Record<string, unknown>>; runtime_options?: IAgentRuntimeOptions }) => client.post<unknown, { data: IAgentReply }>(`/employee/agent/sessions/${id}/messages`, data, llmRequestConfig),
   streamMessage: streamAgentMessage,
   uploadSessionResume,
   streamResume: streamAgentResume,
+  submitForm: streamAgentFormSubmit,
   selectModel: (id: number, model_name: string | null) => client.post(`/employee/agent/sessions/${id}/select-model`, { model_name }),
   executeAction: (data: IAgentTemporaryActionExecute) => client.post('/employee/agent/actions/execute', data),
 };

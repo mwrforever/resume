@@ -24,9 +24,7 @@ from app.repositories.job_repository import JobRepository
 
 from app.repositories.resume_repository import ResumeRepository
 
-from app.schemas.agent.dto import LLMRuntimeConfigDTO
-
-from app.schemas.agent.orchestrator_state import ResumeContextDTO
+from app.schemas.agent.dto import LLMRuntimeConfigDTO, ResumeContextDTO
 
 from app.utils.storage.registry import StorageRegistry
 
@@ -138,15 +136,17 @@ class AgentResumePipelineService:
 
         resume_id: int,
 
-        job_id: int,
+        job_id: int | None,
 
         employee_id: int,
 
     ) -> ResumeContextDTO:
 
-        """加载简历记录与文件路径，并校验岗位归属。"""
+        """加载简历记录与文件路径，并在存在岗位 ID 时校验归属。"""
 
-        await self.ensure_job_owned_by_employee(job_id, employee_id)
+        if job_id is not None:
+
+            await self.ensure_job_owned_by_employee(job_id, employee_id)
 
         resume = await self._resume_repo.get_by_id(resume_id)
 
@@ -220,7 +220,7 @@ class AgentResumePipelineService:
 
 
 
-        约定：{"type": "resume", "resume_id": int, "job_id": int}
+        约定：{"type": "resume", "resume_id": int, "job_id": int | None}
 
         """
 
@@ -234,15 +234,15 @@ class AgentResumePipelineService:
 
             job_id = ref.get("job_id")
 
-            if resume_id is None or job_id is None:
+            if resume_id is None:
 
-                raise ValidationError("简历附件缺少 resume_id 或 job_id")
+                raise ValidationError("简历附件缺少 resume_id")
 
             return ResumeContextDTO(
 
                 resume_id=int(resume_id),
 
-                job_id=int(job_id),
+                job_id=int(job_id) if job_id is not None else None,
 
                 file_name=str(ref.get("file_name") or ""),
 

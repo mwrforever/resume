@@ -1,3 +1,5 @@
+"""员工 Agent 工作台 + LLM 配置 API（协议 v2）。"""
+
 import json
 import logging
 
@@ -18,26 +20,24 @@ from app.repositories.job_repository import JobRepository
 from app.repositories.resume_repository import ResumeRepository
 from app.repositories.llm_config_repository import LlmConfigRepository
 from app.schemas.common import ApiResponse, PageData
-from app.schemas.agent.enums import AgentSseEventName
 from app.schemas.agent.request import (
+    AgentActionExecute,
+    AgentFormSubmit,
     AgentMessageCreate,
     AgentModelSelect,
-    AgentRunResumeRequest,
     AgentSessionCreate,
     AgentSessionUpdate,
-    AgentTemporaryActionExecute,
     LlmConfigCreate,
     LlmConfigUpdate,
 )
 from app.schemas.agent.response import (
-    AgentReply,
     AgentResumeAttachmentItem,
     AgentSessionDetail,
     AgentSessionItem,
-    AgentTemporaryActionItem,
     LlmConfigItem,
     LlmModelOption,
 )
+from app.schemas.agent.stream import SseEventName
 from app.services.agent_context_service import AgentContextService
 from app.services.agent_service import AgentService
 from app.services.cache_service import CacheService
@@ -48,12 +48,22 @@ agent_router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def get_llm_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> LlmConfigService:
-    return LlmConfigService(LlmConfigRepository(db), EmployeeRepository(db), DeptRepository(db), cache)
+def get_llm_service(
+    db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)
+) -> LlmConfigService:
+    """依赖注入：LLM 配置服务。"""
+    return LlmConfigService(
+        LlmConfigRepository(db), EmployeeRepository(db), DeptRepository(db), cache
+    )
 
 
-def get_agent_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> AgentService:
-    llm_service = LlmConfigService(LlmConfigRepository(db), EmployeeRepository(db), DeptRepository(db), cache)
+def get_agent_service(
+    db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)
+) -> AgentService:
+    """依赖注入：Agent 服务（含子 Agent 绑定）。"""
+    llm_service = LlmConfigService(
+        LlmConfigRepository(db), EmployeeRepository(db), DeptRepository(db), cache
+    )
     context_service = AgentContextService(AgentMemoryRepository(db), cache)
     return AgentService(
         AgentRepository(db),
@@ -64,6 +74,9 @@ def get_agent_service(db: AsyncSession = Depends(get_db), cache: CacheService = 
         eval_repo=EvalRepository(db),
         resume_repo=ResumeRepository(db),
     )
+
+
+# ----------------------------- LLM 配置 -------------------------------------
 
 
 @llm_router.get("/llm-model-options", response_model=ApiResponse[list[LlmModelOption]])
@@ -126,6 +139,9 @@ async def test_llm_config(
     return ApiResponse(message="测试完成", data=await service.test_config(config_id, current_user))
 
 
+# ----------------------------- Agent 会话 -----------------------------------
+
+
 @agent_router.post("/sessions", response_model=ApiResponse[AgentSessionItem])
 async def create_session(
     body: AgentSessionCreate,
@@ -175,82 +191,20 @@ async def delete_session(
     return ApiResponse(message="删除成功")
 
 
-@agent_router.post("/sessions/{session_id}/attachments/resume", response_model=ApiResponse[AgentResumeAttachmentItem])
+@agent_router.post(
+    "/sessions/{session_id}/attachments/resume",
+    response_model=ApiResponse[AgentResumeAttachmentItem],
+)
 async def upload_session_resume(
     session_id: int,
     file: UploadFile = File(...),
-    job_id: int = Form(..., ge=1),
+    job_id: int | None = Form(None, ge=1),
     service: AgentService = Depends(get_agent_service),
     current_user: dict = Depends(get_current_user),
 ) -> ApiResponse[AgentResumeAttachmentItem]:
-    """上传候选人简历（PDF/DOCX），须绑定岗位 ID，发消息时在 context_refs 中引用。"""
+    """上传候选人简历附件，发消息时通过 context_refs 引用。"""
     data = await service.upload_session_resume(session_id, file, job_id, current_user)
     return ApiResponse(message="上传成功", data=AgentResumeAttachmentItem.model_validate(data))
-
-
-@agent_router.post("/sessions/{session_id}/messages", response_model=ApiResponse[AgentReply])
-async def send_message(
-    session_id: int,
-    body: AgentMessageCreate,
-    service: AgentService = Depends(get_agent_service),
-    current_user: dict = Depends(get_current_user),
-) -> ApiResponse[AgentReply]:
-    return ApiResponse(data=await service.send_message(session_id, body, current_user))
-
-
-@agent_router.post("/sessions/{session_id}/messages/stream")
-async def stream_message(
-    session_id: int,
-    body: AgentMessageCreate,
-    service: AgentService = Depends(get_agent_service),
-    current_user: dict = Depends(get_current_user),
-) -> StreamingResponse:
-    def _yield_error_event(message: str, code: int = 500) -> str:
-        """生成 SSE error 事件的格式化字符串，包含 JSON 化的错误信息与状态码。"""
-        payload = json.dumps({"message": message, "code": code}, ensure_ascii=False)
-        return f"event: error\ndata: {payload}\n\n"
-
-    async def event_generator():
-        try:
-            async for event in service.stream_message(session_id, body, current_user):
-                payload = json.dumps(event.data, ensure_ascii=False)
-                sse_name = event.event if event.event in {AgentSseEventName.V1.value, AgentSseEventName.LEGACY.value} else event.event
-                yield f"event: {sse_name}\ndata: {payload}\n\n"
-        except BizError as exc:
-            yield _yield_error_event(exc.message, exc.code)
-        except SQLAlchemyError:
-            logger.exception("Agent流式接口数据库异常：session_id=%s", session_id)
-            yield _yield_error_event("Agent服务暂不可用，请稍后重试")
-        except Exception:
-            logger.exception("Agent流式接口未预期异常：session_id=%s", session_id)
-            yield _yield_error_event("Agent服务暂不可用，请稍后重试")
-            raise
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
-
-@agent_router.post("/sessions/{session_id}/resume")
-async def resume_session(
-    session_id: int,
-    body: AgentRunResumeRequest,
-    service: AgentService = Depends(get_agent_service),
-    current_user: dict = Depends(get_current_user),
-) -> StreamingResponse:
-    """恢复 Planner 审批 interrupt，thread_id 使用会话 session_key。"""
-
-    async def event_generator():
-        try:
-            async for event in service.resume_session(session_id, body, current_user):
-                payload = json.dumps(event.data, ensure_ascii=False)
-                sse_name = event.event if event.event in {AgentSseEventName.V1.value, AgentSseEventName.LEGACY.value} else event.event
-                yield f"event: {sse_name}\ndata: {payload}\n\n"
-        except BizError as exc:
-            yield f"event: error\ndata: {json.dumps({'message': exc.message, 'code': exc.code}, ensure_ascii=False)}\n\n"
-        except SQLAlchemyError:
-            logger.exception("Agent恢复流式接口数据库异常：session_id=%s", session_id)
-            yield f"event: error\ndata: {json.dumps({'message': 'Agent服务暂不可用，请稍后重试'}, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @agent_router.post("/sessions/{session_id}/select-model", response_model=ApiResponse[AgentSessionItem])
@@ -263,10 +217,77 @@ async def select_model(
     return ApiResponse(message="选择成功", data=await service.select_model(session_id, body.model_name, current_user))
 
 
-@agent_router.post("/actions/execute", response_model=ApiResponse[AgentTemporaryActionItem])
-async def execute_temporary_action(
-    body: AgentTemporaryActionExecute,
+# ----------------------------- SSE 流式接口 ---------------------------------
+
+
+def _format_sse(event_name: str, payload: dict) -> str:
+    """构造单条 SSE 文本块。"""
+    data = json.dumps(payload, ensure_ascii=False)
+    return f"event: {event_name}\ndata: {data}\n\n"
+
+
+def _format_error_event(message: str, code: str = "internal_error") -> str:
+    """构造 error 事件 SSE 文本块。"""
+    return _format_sse(SseEventName.ERROR.value, {"code": code, "message": message})
+
+
+@agent_router.post("/sessions/{session_id}/messages/stream")
+async def stream_message(
+    session_id: int,
+    body: AgentMessageCreate,
     service: AgentService = Depends(get_agent_service),
     current_user: dict = Depends(get_current_user),
-) -> ApiResponse[AgentTemporaryActionItem]:
-    return ApiResponse(message="确认成功", data=await service.execute_temporary_action(body, current_user))
+) -> StreamingResponse:
+    """协议 v2 流式发送消息。"""
+
+    async def event_generator():
+        try:
+            async for event in service.stream_message(session_id, body, current_user):
+                yield _format_sse(event.name, event.data)
+        except BizError as exc:
+            yield _format_error_event(exc.message, code=str(exc.code))
+        except SQLAlchemyError:
+            logger.exception("Agent 流式接口数据库异常：session_id=%s", session_id)
+            yield _format_error_event("Agent 服务暂不可用，请稍后重试")
+        except Exception:
+            logger.exception("Agent 流式接口未预期异常：session_id=%s", session_id)
+            yield _format_error_event("Agent 服务暂不可用，请稍后重试")
+            raise
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@agent_router.post("/sessions/{session_id}/forms/submit")
+async def submit_form(
+    session_id: int,
+    body: AgentFormSubmit,
+    service: AgentService = Depends(get_agent_service),
+    current_user: dict = Depends(get_current_user),
+) -> StreamingResponse:
+    """前端 FormCard 提交后触发的新 SSE 流式运行。"""
+
+    async def event_generator():
+        try:
+            async for event in service.submit_form(session_id, body, current_user):
+                yield _format_sse(event.name, event.data)
+        except BizError as exc:
+            yield _format_error_event(exc.message, code=str(exc.code))
+        except SQLAlchemyError:
+            logger.exception("Agent 表单提交接口数据库异常：session_id=%s", session_id)
+            yield _format_error_event("Agent 服务暂不可用，请稍后重试")
+        except Exception:
+            logger.exception("Agent 表单提交接口未预期异常：session_id=%s", session_id)
+            yield _format_error_event("Agent 服务暂不可用，请稍后重试")
+            raise
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@agent_router.post("/actions/execute", response_model=ApiResponse[dict])
+async def execute_action(
+    body: AgentActionExecute,
+    service: AgentService = Depends(get_agent_service),
+    current_user: dict = Depends(get_current_user),
+) -> ApiResponse[dict]:
+    """确认 ActionCard 后执行写操作。"""
+    return ApiResponse(message="执行成功", data=await service.execute_action(body, current_user))

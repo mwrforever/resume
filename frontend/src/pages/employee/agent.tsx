@@ -1,8 +1,6 @@
 ﻿import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { employeeAgentApi, employeeLlmApi } from '@/api/employee/agent';
-import { employeeJobsApi } from '@/api/employee/jobs';
-import type { IAgentJobOption } from '@/components/employee/agent/agent-composer';
 import { useAuthStore } from '@/store/auth';
 import type {
   IAgentActionStreamItem,
@@ -56,8 +54,6 @@ export default function EmployeeAgent() {
   const [enableThinking, setEnableThinking] = useState(false);
   const [input, setInput] = useState('');
   const [resumeFile, setResumeFile] = useState<File | null>(null);
-  const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
-  const [jobOptions, setJobOptions] = useState<IAgentJobOption[]>([]);
   const [sending, setSending] = useState(false);
   const [loadingSessionId, setLoadingSessionId] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
@@ -105,16 +101,6 @@ export default function EmployeeAgent() {
     const res = await employeeLlmApi.listOptions();
     setModels(res.data || []);
   }, []);
-
-  const loadJobOptions = useCallback(async () => {
-    const res = await employeeJobsApi.list({ page: 1, page_size: 100 });
-    const items = (res.data?.items || []) as Array<{ id: number; name: string }>;
-    setJobOptions(items.map((job) => ({ id: job.id, name: job.name })));
-  }, []);
-
-  useEffect(() => {
-    void loadJobOptions();
-  }, [loadJobOptions]);
 
   const clearConversation = () => {
     setMessages([]);
@@ -291,13 +277,8 @@ export default function EmployeeAgent() {
   const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
     if (!input.trim()) return;
-    if (resumeFile && selectedJobId == null) {
-      setErrorMessage('上传简历时必须选择关联岗位');
-      return;
-    }
     const content = input.trim();
     const pendingResume = resumeFile;
-    const pendingJobId = selectedJobId;
     const activeSession = currentSession || createLocalSession(selectedModelName);
     const oldSessionId = activeSession.id;
     const streamingMessageId = -Date.now();
@@ -316,8 +297,8 @@ export default function EmployeeAgent() {
         replaceSession(persistedSession, oldSessionId);
       }
       const contextRefs: Array<Record<string, unknown>> = [];
-      if (pendingResume && pendingJobId != null) {
-        const uploadRes = await employeeAgentApi.uploadSessionResume(persistedSession.id, pendingResume, pendingJobId);
+      if (pendingResume) {
+        const uploadRes = await employeeAgentApi.uploadSessionResume(persistedSession.id, pendingResume);
         contextRefs.push({
           type: 'resume',
           resume_id: uploadRes.data.resume_id,
@@ -344,16 +325,21 @@ export default function EmployeeAgent() {
    * 统一更新动作状态，同步 actions 列表与运行时 feed 中对应项的展示状态
    *
    * @param actionId  动作唯一标识
-   * @param status    目标状态码（如 4 表示已执行/已拒绝）
+   * @param status    目标状态码（如 3 表示已确认，4 表示已拒绝）
    */
   const updateActionStatus = useCallback((actionId: string, status: number) => {
     setActions((prev) => prev.map((item) => item.id === actionId ? { ...item, status } : item));
-    setRuntimeFeedItems((prev) => prev.map((item) => item.id === `action-${actionId}` && item.action ? { ...item, action: { ...item.action, status } } : item));
+    setRuntimeFeedItems((prev) => prev.map((item) => item.id === `action-${actionId}` && item.action ? { ...item, status: status === 3 ? 'success' : item.status, action: { ...item.action, status } } : item));
   }, []);
 
   const confirmAgentAction = async (action: IAgentActionStreamItem) => {
+    if (!currentSession || currentSession.isLocal) return;
+    const streamingMessageId = -Date.now();
+    setSending(true);
+    setErrorMessage('');
     try {
       const res = await employeeAgentApi.executeAction({
+        action_id: action.id,
         capability_key: action.capability_key,
         action_name: action.action_name,
         target_type: action.target_type,
@@ -361,15 +347,57 @@ export default function EmployeeAgent() {
         input_payload: action.input_payload,
         preview_payload: action.preview_payload,
       });
-      updateActionStatus(action.id, res.data.status);
+      updateActionStatus(action.id, 3);
+      await employeeAgentApi.submitForm(
+        currentSession.id,
+        {
+          request_id: action.id,
+          values: {
+            kind: 'action',
+            accepted: true,
+            action_id: action.id,
+            status: res.data.status || 'executed',
+            result: res.data,
+          },
+        },
+        (streamEvent) => handleAgentStreamEvent(streamEvent, buildStreamHandlerDeps(streamingMessageId, currentSession, currentSession.id)),
+      );
+      await loadSessions();
     } catch (err) {
       const message = err instanceof Error ? err.message : '动作执行失败，请稍后重试';
       setErrorMessage(message);
+    } finally {
+      setSending(false);
     }
   };
 
   const rejectAgentAction = async (action: IAgentActionStreamItem) => {
-    updateActionStatus(action.id, 4);
+    if (!currentSession || currentSession.isLocal) return;
+    const streamingMessageId = -Date.now();
+    setSending(true);
+    setErrorMessage('');
+    try {
+      updateActionStatus(action.id, 4);
+      await employeeAgentApi.submitForm(
+        currentSession.id,
+        {
+          request_id: action.id,
+          values: {
+            kind: 'action',
+            accepted: false,
+            action_id: action.id,
+            status: 'rejected',
+          },
+        },
+        (streamEvent) => handleAgentStreamEvent(streamEvent, buildStreamHandlerDeps(streamingMessageId, currentSession, currentSession.id)),
+      );
+      await loadSessions();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '动作拒绝失败，请稍后重试';
+      setErrorMessage(message);
+    } finally {
+      setSending(false);
+    }
   };
 
   const actionsByMessageId = useMemo(() => {
@@ -443,11 +471,8 @@ export default function EmployeeAgent() {
             input={input}
             sending={sending}
             disabled={Boolean(planReview && planReview.phase === 'pending')}
-            selectedJobId={selectedJobId}
-            jobOptions={jobOptions}
             resumeFile={resumeFile}
             onInputChange={setInput}
-            onJobIdChange={setSelectedJobId}
             onResumeFileChange={setResumeFile}
             onSubmit={sendMessage}
           />

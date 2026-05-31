@@ -213,6 +213,49 @@ class EvalRepository:
         )
         return {row.application_id: row.id for row in result.all()}
 
+    async def get_template_dimensions(self, template_id: int) -> list[dict]:
+        """获取模板维度的完整配置（含权重、提示词模板），供评估子图使用。"""
+        result = await self.db.execute(
+            select(
+                EvalTemplateDimension.dimension_id,
+                EvalDimension.dimension_name,
+                EvalTemplateDimension.weight,
+                EvalTemplateDimension.prompt_template,
+            )
+            .join(EvalDimension, EvalDimension.id == EvalTemplateDimension.dimension_id)
+            .where(
+                EvalTemplateDimension.template_id == template_id,
+                EvalDimension.is_deleted == 0,
+                EvalDimension.status == 1,
+            )
+            .order_by(EvalTemplateDimension.sort_order.asc(), EvalTemplateDimension.id.asc())
+        )
+        return [
+            {
+                "dimension_id": int(row.dimension_id),
+                "dimension_name": row.dimension_name,
+                "weight": float(row.weight),
+                "prompt_template": row.prompt_template,
+            }
+            for row in result.all()
+        ]
+
+    async def get_template_skills(self, template_id: int) -> list[dict]:
+        """获取模板技能列表，供评估子图使用。"""
+        result = await self.db.execute(
+            select(
+                EvalTemplateSkill.id,
+                EvalTemplateSkill.skill_name,
+                EvalTemplateSkill.skill_type,
+            )
+            .where(EvalTemplateSkill.template_id == template_id)
+            .order_by(EvalTemplateSkill.skill_type.asc(), EvalTemplateSkill.id.asc())
+        )
+        return [
+            {"skill_id": int(row.id), "skill": row.skill_name, "type": int(row.skill_type)}
+            for row in result.all()
+        ]
+
     async def get_template_dimensions_for_display(self, template_id: int) -> list[dict]:
         result = await self.db.execute(
             select(

@@ -69,7 +69,7 @@ class AgentResumeAttachmentItem(BaseModel):
 
     resume_id: int
     file_name: str
-    job_id: int
+    job_id: int | None = None
 
 
 class AgentMessageItem(BaseModel):
@@ -85,26 +85,6 @@ class AgentMessageItem(BaseModel):
     create_time: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class AgentTemporaryActionItem(BaseModel):
-    """Agent 临时动作项，仅存在于单次会话运行周期内，不写入持久化动作表。
-
-    id 为前端生成的临时标识（如 tmp-xxx），用于在流式会话中追踪待确认动作。
-    """
-
-    id: str
-    session_id: int
-    message_id: int | None = None
-    employee_id: int
-    capability_key: str
-    action_name: str
-    target_type: str | None = None
-    target_id: int | None = None
-    input_payload: dict[str, Any]
-    preview_payload: dict[str, Any]
-    status: int
-    error_message: str | None = None
 
 
 class AgentMemoryItem(BaseModel):
@@ -129,15 +109,5 @@ class AgentSessionDetail(BaseModel):
     memories: list[AgentMemoryItem] = Field(default_factory=list)
 
 
-class AgentReply(BaseModel):
-    user_message: AgentMessageItem
-    agent_message: AgentMessageItem
-    session: AgentSessionItem | None = None
-    memories: list[AgentMemoryItem] = Field(default_factory=list)
-
-
-class AgentStreamEvent(BaseModel):
-    """SSE 流式事件的数据载体，用于前端实时接收 token/tool_call/action_required 等事件。"""
-
-    event: str
-    data: dict[str, Any] = Field(default_factory=dict)
+# 流式事件统一走 `app.schemas.agent.stream.AgentStreamEvent`；
+# 非流式 send_message API 已下线，前端只通过 stream_message 与服务交互。

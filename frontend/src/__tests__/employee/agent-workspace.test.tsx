@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { FormEvent } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { AgentComposer } from '@/components/employee/agent/agent-composer';
 import { AgentWorkspaceHeader } from '@/components/employee/agent/agent-workspace-header';
 import { AgentSessionSidebar } from '@/components/employee/agent/agent-session-sidebar';
 import { AgentMessageList } from '@/components/employee/agent/agent-message-list';
@@ -62,7 +64,45 @@ const runtimeFeedItems: IAgentRuntimeFeedItem[] = [
   { id: 'tool-1', type: 'tool', status: 'success', title: '搜索候选人数据' },
 ];
 
+function renderComposer(props?: Partial<Parameters<typeof AgentComposer>[0]>) {
+  const onSubmit = vi.fn((event: FormEvent) => event.preventDefault());
+  const result = render(
+    <AgentComposer
+      input="分析这个文件"
+      sending={false}
+      resumeFile={null}
+      onInputChange={vi.fn()}
+      onResumeFileChange={vi.fn()}
+      onSubmit={onSubmit}
+      {...props}
+    />
+  );
+  return { ...result, onSubmit };
+}
+
 describe('Agent workspace UI', () => {
+  it('renders file upload without the job selector in the composer', () => {
+    renderComposer();
+
+    expect(screen.getByRole('button', { name: '文件上传' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '上传简历' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('关联岗位')).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('submits composer with Enter and keeps Shift Enter for line breaks', async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderComposer();
+    const textbox = screen.getByLabelText('Agent 消息输入');
+
+    await user.click(textbox);
+    await user.keyboard('{Shift>}{Enter}{/Shift}');
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await user.keyboard('{Enter}');
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
   it('renders thinking mode and preferences controls in workspace header', async () => {
     const onThinkingChange = vi.fn();
     const onToggleImmersiveMode = vi.fn();

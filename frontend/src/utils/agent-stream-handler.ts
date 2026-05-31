@@ -7,11 +7,13 @@ import type {
   IAgentMessageItem,
   IAgentReply,
   IAgentRuntimeFeedItem,
+  IAgentStreamEnvelopeV2,
   IAgentStreamEvent,
   IAgentToolStreamItem,
   IPlanReviewUiState,
 } from '@/types/agent';
 import { getUiComponentKey, parseAgentStreamEnvelopeV1, parsePlanReviewTreeData, parseRepairSuggestions } from '@/utils/agent-stream-v1';
+import { parseAgentStreamEnvelopeV2 } from '@/utils/agent-stream-v2';
 
 /** 流式事件处理所需的 React 状态更新器集合 */
 export interface AgentStreamHandlerDeps {
@@ -33,6 +35,10 @@ export interface AgentStreamHandlerDeps {
  * v1 的 stream.text_delta 优先于 legacy token，避免重复追加
  */
 export function handleAgentStreamEvent(streamEvent: IAgentStreamEvent, deps: AgentStreamHandlerDeps): void {
+  if (streamEvent.event === 'agent') {
+    handleAgentV2Event(streamEvent.data, deps);
+    return;
+  }
   if (streamEvent.event === 'agent.v1') {
     handleAgentV1Event(streamEvent.data, deps);
     return;
@@ -50,8 +56,244 @@ function getNodeDisplayName(nodeId: string): string {
     'resume_prepare': '简历预处理',
     'resume_extract': '简历提取',
     'resume_markdown': '简历转换',
+    'coordinator': '任务调度',
+    'job_agent': '岗位 Agent',
+    'application_agent': '投递 Agent',
+    'resume_agent': '简历 Agent',
+    'evaluation_agent': '评估 Agent',
+    'memory_agent': '记忆 Agent',
+    'generic_agent': '通用 Agent',
   };
   return nameMap[nodeId] || nodeId;
+}
+
+function handleAgentV2Event(data: Record<string, unknown>, deps: AgentStreamHandlerDeps): void {
+  const envelope = parseAgentStreamEnvelopeV2(data);
+  if (!envelope) return;
+
+  const { event, payload } = envelope;
+  if (event === 'message.started') {
+    const messageId = typeof payload.message_id === 'number' ? payload.message_id : deps.streamingMessageId;
+    const content = typeof payload.content === 'string' ? payload.content : '';
+    if (content) {
+      deps.setMessages((prev) => {
+        const exists = prev.some((message) => message.id === messageId);
+        if (exists) return prev;
+        const userMessage: IAgentMessageItem = {
+          id: messageId,
+          session_id: deps.persistedSession.id,
+          parent_message_id: null,
+          role: 'user',
+          message_type: 'text',
+          content: { context_refs: (payload.context_refs as Array<Record<string, unknown>>) || [], blocks: [{ type: 'text', text: content }] },
+          model_name: null,
+          token_count: null,
+          sort_order: prev.length + 1,
+          create_time: null,
+        };
+        return [...prev, userMessage];
+      });
+    }
+    return;
+  }
+
+  if (event === 'message.delta') {
+    const delta = typeof payload.delta === 'string' ? payload.delta : '';
+    if (delta) appendTokenDelta(delta, deps);
+    return;
+  }
+
+  if (event === 'message.done') {
+    const content = typeof payload.content === 'string' ? payload.content : '';
+    if (content) replaceStreamingMessageContent(content, deps);
+    return;
+  }
+
+  if (event === 'lifecycle.node.enter') {
+    const nodeId = getV2NodeId(envelope);
+    deps.setRuntimeFeedItems((prev) => upsertRuntimeFeed(prev, {
+      id: `node-${nodeId}`,
+      type: 'node',
+      status: 'running',
+      title: getNodeDisplayName(nodeId),
+    }));
+    return;
+  }
+
+  if (event === 'lifecycle.node.exit') {
+    const nodeId = getV2NodeId(envelope);
+    deps.setRuntimeFeedItems((prev) => updateRuntimeFeedStatus(prev, `node-${nodeId}`, 'success'));
+    return;
+  }
+
+  if (event === 'lifecycle.run.finished' || event === 'form.resolved') {
+    deps.setPlanReview((prev) => (prev ? { ...prev, phase: 'pending' } : prev));
+    markThinkingFeed('success', deps);
+    return;
+  }
+
+  if (event === 'lifecycle.run.failed' || event === 'error') {
+    const message = typeof payload.error_message === 'string' ? payload.error_message : typeof payload.message === 'string' ? payload.message : null;
+    deps.setPlanReview((prev) => (prev ? { ...prev, phase: 'pending' } : prev));
+    deps.setRuntimeFeedItems((prev) => prev.map((item) => (item.status === 'running' ? { ...item, status: 'failed', message } : item)));
+    return;
+  }
+
+  if (event === 'tool.started') {
+    const callId = String(payload.call_id || `tool-${Date.now()}`);
+    const toolName = String(payload.tool_name || '');
+    const displayName = String(payload.display_name || toolName || '工具调用');
+    deps.setToolEvents((prev) => [
+      ...prev,
+      { id: callId, type: 'call', tool_name: toolName, display_name: displayName, payload: (payload.input_payload as Record<string, unknown>) || {} },
+    ]);
+    deps.setRuntimeFeedItems((prev) => upsertRuntimeFeed(prev, {
+      id: `tool-${callId}`,
+      type: 'tool',
+      status: 'running',
+      title: displayName,
+    }));
+    return;
+  }
+
+  if (event === 'tool.finished') {
+    const callId = String(payload.call_id || `tool-${Date.now()}`);
+    const toolName = String(payload.tool_name || '');
+    const displayName = String(payload.display_name || toolName || '工具结果');
+    const success = payload.success !== false;
+    const errorMessage = typeof payload.error_message === 'string' ? payload.error_message : null;
+    deps.setToolEvents((prev) => [
+      ...prev,
+      {
+        id: `${callId}-result`,
+        type: 'result',
+        tool_name: toolName,
+        display_name: displayName,
+        payload: (payload.output_payload as Record<string, unknown>) || {},
+        success,
+        error_message: errorMessage,
+      },
+    ]);
+    deps.setRuntimeFeedItems((prev) => updateRuntimeFeedStatus(prev, `tool-${callId}`, success ? 'success' : 'failed', errorMessage));
+    return;
+  }
+
+  if (event === 'action.requested') {
+    const action = buildV2Action(payload, envelope);
+    deps.setActions((prev) => [action, ...prev.filter((item) => item.id !== action.id)]);
+    deps.setRuntimeFeedItems((prev) => upsertRuntimeFeed(prev, {
+      id: `action-${action.id}`,
+      type: 'action',
+      status: 'pending',
+      title: action.action_name,
+      action,
+    }));
+    return;
+  }
+
+  if (event === 'data.evaluation_report') {
+    const title = `评估报告：${String(payload.final_label || '已完成')} / ${Number(payload.final_score || 0)}`;
+    deps.setToolEvents((prev) => [
+      ...prev,
+      {
+        id: String(payload.card_id || `evaluation-${Date.now()}`),
+        type: 'result',
+        tool_name: 'evaluation_report',
+        display_name: 'AI 简历评估报告',
+        payload,
+        success: true,
+        error_message: null,
+      },
+    ]);
+    deps.setRuntimeFeedItems((prev) => upsertRuntimeFeed(prev, {
+      id: String(payload.card_id || `evaluation-${Date.now()}`),
+      type: 'tool',
+      status: 'success',
+      title,
+    }));
+    return;
+  }
+
+  if (event === 'data.card') {
+    const title = typeof payload.title === 'string' ? payload.title : '数据卡片';
+    deps.setToolEvents((prev) => [
+      ...prev,
+      {
+        id: String(payload.card_id || `data-card-${Date.now()}`),
+        type: 'result',
+        tool_name: String(payload.card_type || 'data_card'),
+        display_name: title,
+        payload,
+        success: true,
+        error_message: null,
+      },
+    ]);
+  }
+}
+
+function getV2NodeId(envelope: IAgentStreamEnvelopeV2): string {
+  const payloadNodeId = envelope.payload.node_id;
+  return String(payloadNodeId || envelope.node_id || 'coordinator');
+}
+
+function upsertRuntimeFeed(items: IAgentRuntimeFeedItem[], next: IAgentRuntimeFeedItem): IAgentRuntimeFeedItem[] {
+  if (items.some((item) => item.id === next.id)) {
+    return items.map((item) => (item.id === next.id ? { ...item, ...next } : item));
+  }
+  return [...items, next];
+}
+
+function updateRuntimeFeedStatus(
+  items: IAgentRuntimeFeedItem[],
+  id: string,
+  status: IAgentRuntimeFeedItem['status'],
+  message: string | null = null,
+): IAgentRuntimeFeedItem[] {
+  return items.map((item) => (item.id === id ? { ...item, status, message } : item));
+}
+
+function markThinkingFeed(status: IAgentRuntimeFeedItem['status'], deps: AgentStreamHandlerDeps): void {
+  if (!deps.enableThinking) return;
+  deps.setRuntimeFeedItems((prev) => prev.map((item) => (item.id === `thinking-${deps.streamingMessageId}` ? { ...item, status } : item)));
+}
+
+function replaceStreamingMessageContent(content: string, deps: AgentStreamHandlerDeps): void {
+  deps.setMessages((prev) => {
+    const existing = prev.find((message) => message.id === deps.streamingMessageId);
+    if (!existing) {
+      return [...prev, createStreamingMessage(deps.streamingMessageId, deps.persistedSession.id, content, prev.length + 1)];
+    }
+    return prev.map((message) =>
+      message.id === deps.streamingMessageId
+        ? { ...message, content: { ...message.content, blocks: [{ type: 'text', text: content }] } }
+        : message,
+    );
+  });
+}
+
+function buildV2Action(payload: Record<string, unknown>, envelope: IAgentStreamEnvelopeV2): IAgentActionStreamItem {
+  const inputPayload = (payload.input_payload as Record<string, unknown>) || {};
+  const rawPreviewPayload = (payload.preview_payload as Record<string, unknown>) || {};
+  const targetStatus = rawPreviewPayload.target_status ?? rawPreviewPayload.to_status ?? inputPayload.status;
+  const targetId = typeof payload.target_id === 'number' ? payload.target_id : Number(payload.target_id || 0) || null;
+  return {
+    id: String(payload.action_id || `action-${Date.now()}`),
+    session_id: envelope.session_id,
+    employee_id: 0,
+    capability_key: String(payload.capability_key || ''),
+    action_name: String(payload.action_name || '待确认操作'),
+    target_type: typeof payload.target_type === 'string' ? payload.target_type : null,
+    target_id: targetId,
+    input_payload: inputPayload,
+    preview_payload: {
+      ...rawPreviewPayload,
+      target_status: typeof targetStatus === 'number' ? targetStatus : Number(targetStatus || 0),
+      application: rawPreviewPayload.application || rawPreviewPayload,
+    },
+    status: 1,
+    idempotency_key: String(payload.action_id || ''),
+    isStreaming: true,
+  };
 }
 
 function handleAgentV1Event(data: Record<string, unknown>, deps: AgentStreamHandlerDeps): void {

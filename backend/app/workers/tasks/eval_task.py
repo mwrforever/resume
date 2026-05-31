@@ -15,7 +15,12 @@ from app.utils.cache_utils import (
     EVAL_PENDING_COUNT_KEY,
     EVAL_AVG_SCORE_KEY,
 )
-from app.llm.chains.chains import ResumeEvalChain
+from app.llm.graphs.evaluation_graph import (
+    EvaluationDimensionSpec,
+    EvaluationSkillSpec,
+    EvaluationState,
+    run_sync as run_evaluation_graph_sync,
+)
 from app.utils.resume_parser import extract_resume_text
 from app.workers.celery_app import celery_app
 from app.workers.db import mysql_manager_sync, redis_manager_sync
@@ -31,14 +36,6 @@ def _get_label(score: float) -> str:
     if score >= 50:
         return "一般"
     return "未达标"
-
-
-def _normalize_score(value: Any) -> float:
-    try:
-        score = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return max(0.0, min(100.0, score))
 
 
 def _get_resume(session: Session, resume_id: int) -> dict[str, Any] | None:
@@ -154,70 +151,6 @@ def _parse_resume_text(resume: dict[str, Any]) -> str:
         raise NotFoundError("简历文件不存在")
     raw_text = extract_resume_text(file_path)
     return raw_text
-
-
-def _build_dimension_results(
-    dimensions: list[dict[str, Any]],
-    ai_dimensions: list[Any],
-) -> list[dict[str, Any]]:
-    result_by_name = {
-        str(item.get("dimension_name", "")).strip(): item
-        for item in ai_dimensions
-        if isinstance(item, dict)
-    }
-    dimension_results = []
-
-    for index, dim in enumerate(dimensions):
-        item = result_by_name.get(str(dim["dimension_name"]).strip())
-        if item is None and index < len(ai_dimensions) and isinstance(ai_dimensions[index], dict):
-            item = ai_dimensions[index]
-
-        if item is None:
-            error_message = "AI评估结果缺少该维度"
-            dimension_results.append({
-                "dimension_id": dim["dimension_id"],
-                "dimension_name": dim["dimension_name"],
-                "score": 0.0,
-                "advantage": "",
-                "disadvantage": "",
-                "is_completed": False,
-                "error_message": error_message,
-            })
-            continue
-
-        score = _normalize_score(item.get("score"))
-        advantage = str(item.get("advantage") or "")
-        disadvantage = str(item.get("disadvantage") or "")
-        dimension_results.append({
-            "dimension_id": dim["dimension_id"],
-            "dimension_name": dim["dimension_name"],
-            "score": score,
-            "advantage": advantage,
-            "disadvantage": disadvantage,
-            "is_completed": True,
-        })
-
-    return dimension_results
-
-
-def _build_skill_hits(skills: list[dict[str, Any]], ai_hits: list[Any]) -> list[dict[str, Any]]:
-    hit_by_name = {
-        str(item.get("skill", "")).strip(): item
-        for item in ai_hits
-        if isinstance(item, dict)
-    }
-    skill_hits = []
-
-    for skill in skills:
-        item = hit_by_name.get(str(skill["skill"]).strip())
-        is_hit = bool(item and item.get("is_hit"))
-        hit_context = str(item.get("hit_context") or "") if item else ""
-        skill_hits.append({
-            "skill_id": skill["skill_id"],
-            "is_hit": 1 if is_hit else 0,
-            "hit_context": hit_context,
-        })
-    return skill_hits
 
 
 def _save_evaluation_results(
@@ -349,6 +282,14 @@ def _load_evaluation_context(session: Session, application_id: int) -> dict[str,
 
 
 def _evaluate_application(context: dict[str, Any]) -> dict[str, Any]:
+    """
+    调用评估 LangGraph 子图完成一次投递评估。
+
+    与 Agent 链路同源复用 ``app.llm.graphs.evaluation_graph``，本函数只负责：
+    1. 准备简历原文（不存在则即时解析）
+    2. 构造 ``EvaluationState`` 触发子图
+    3. 把子图结果落回 Celery 原有的写入结构
+    """
     application_id = int(context["application_id"])
     resume_id = int(context["resume_id"])
     job_id = int(context["job_id"])
@@ -366,47 +307,67 @@ def _evaluate_application(context: dict[str, Any]) -> dict[str, Any]:
     if not resume_text:
         raise NotFoundError("简历不存在或未解析")
 
-    eval_result = ResumeEvalChain().evaluate(
-        resume_text,
-        str(job["name"]),
-        str(job.get("description") or ""),
-        [
-            {
-                "dimension_name": dim["dimension_name"],
-                "weight": dim["weight"],
-                "prompt_template": dim["prompt_template"],
-            }
+    state = EvaluationState(
+        application_id=application_id,
+        resume_id=resume_id,
+        job_id=job_id,
+        job_name=str(job.get("name") or ""),
+        job_description=str(job.get("description") or ""),
+        resume_text=resume_text,
+        dimensions=[
+            EvaluationDimensionSpec(
+                dimension_id=int(dim["dimension_id"]),
+                dimension_name=str(dim["dimension_name"]),
+                weight=float(dim["weight"]),
+                prompt_template=str(dim.get("prompt_template") or ""),
+            )
             for dim in dimensions
         ],
-        [{"skill": skill["skill"], "type": skill["type"]} for skill in skills],
+        skills=[
+            EvaluationSkillSpec(
+                skill_id=int(skill["skill_id"]),
+                skill=str(skill["skill"]),
+                type=int(skill["type"]),
+            )
+            for skill in skills
+        ],
     )
 
-    dimension_results = _build_dimension_results(
-        dimensions,
-        eval_result.get("dimensions", []),
-    )
-
-    completed_results = [item for item in dimension_results if item["is_completed"]]
-    if not completed_results:
+    eval_result = run_evaluation_graph_sync(state)
+    completed = [item for item in eval_result.dimensions if item.is_completed]
+    if not completed:
         raise ValidationError("AI评估结果缺少有效维度")
 
-    final_score = _normalize_score(eval_result.get("final_score"))
-    final_label = str(eval_result.get("final_label") or "") or _get_label(final_score)
-    advantage_comment = str(eval_result.get("advantage_comment") or "")
-    disadvantage_comment = str(eval_result.get("disadvantage_comment") or "")
-
-    skill_hits = _build_skill_hits(skills, eval_result.get("skill_hits", []))
+    final_label = eval_result.final_label or _get_label(eval_result.final_score)
     return {
         "application_id": application_id,
         "resume_id": resume_id,
         "job_id": job_id,
         "parsed_resume_text": parsed_resume_text,
-        "final_score": final_score,
+        "final_score": eval_result.final_score,
         "final_label": final_label,
-        "dimensions": dimension_results,
-        "skill_hits": skill_hits,
-        "advantage_comment": advantage_comment,
-        "disadvantage_comment": disadvantage_comment,
+        "dimensions": [
+            {
+                "dimension_id": item.dimension_id,
+                "dimension_name": item.dimension_name,
+                "score": item.score,
+                "advantage": item.advantage,
+                "disadvantage": item.disadvantage,
+                "is_completed": item.is_completed,
+                "error_message": item.error_message,
+            }
+            for item in eval_result.dimensions
+        ],
+        "skill_hits": [
+            {
+                "skill_id": item.skill_id,
+                "is_hit": 1 if item.is_hit else 0,
+                "hit_context": item.hit_context,
+            }
+            for item in eval_result.skill_hits
+        ],
+        "advantage_comment": eval_result.advantage_comment,
+        "disadvantage_comment": eval_result.disadvantage_comment,
     }
 
 
