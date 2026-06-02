@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 MAX_LLM_TIMEOUT_SECONDS = 120
 MAX_LLM_MAX_RETRIES = 2
+AgentWorkflowType = Literal["interview_questions", "resume_evaluation"]
 
 
 class AgentRuntimeOptions(BaseModel):
@@ -73,6 +74,7 @@ class AgentModelSelect(BaseModel):
 
 class AgentMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
+    workflow_type: AgentWorkflowType = "interview_questions"
     context_refs: list[dict[str, Any]] = Field(default_factory=list)
     runtime_options: AgentRuntimeOptions | None = None
 

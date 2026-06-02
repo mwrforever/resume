@@ -2,8 +2,8 @@ import client from '@/api/client';
 import { useAuthStore } from '@/store/auth';
 import type {
   IAgentFormSubmitRequest,
+  IAgentMessageCreatePayload,
   IAgentRunResumeRequest,
-  IAgentRuntimeOptions,
   IAgentSessionDetail,
   IAgentStreamEvent,
   IAgentTemporaryActionExecute,
@@ -91,7 +91,7 @@ async function consumeSseResponse(response: Response, onEvent: (event: IAgentStr
 
 async function streamAgentMessage(
   id: number,
-  data: { content: string; context_refs?: Array<Record<string, unknown>>; runtime_options?: IAgentRuntimeOptions },
+  data: IAgentMessageCreatePayload,
   onEvent: (event: IAgentStreamEvent) => void,
 ) {
   const response = await fetchStreamWithAuth(`/api/v1/employee/agent/sessions/${id}/messages/stream`, JSON.stringify(data));

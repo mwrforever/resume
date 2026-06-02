@@ -152,6 +152,13 @@ export interface IAgentRuntimeOptions {
   enable_thinking?: boolean;
 }
 
+export interface IAgentMessageCreatePayload {
+  content: string;
+  workflow_type?: TAgentWorkflowType;
+  context_refs?: Array<Record<string, unknown>>;
+  runtime_options?: IAgentRuntimeOptions;
+}
+
 export interface IAgentTemporaryActionExecute {
   action_id: string;
   capability_key: string;
