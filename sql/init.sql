@@ -313,13 +313,16 @@ CREATE TABLE IF NOT EXISTS `agent_message`
     `parent_message_id` BIGINT               DEFAULT NULL COMMENT '父消息ID',
     `role`              VARCHAR(20) NOT NULL COMMENT '消息角色',
     `message_type`      VARCHAR(30) NOT NULL COMMENT '消息类型',
+    `workflow_type`     VARCHAR(50)          DEFAULT NULL COMMENT 'Agent工作流类型',
+    `run_id`            VARCHAR(80)          DEFAULT NULL COMMENT 'Agent运行ID',
     `content`           JSON        NOT NULL COMMENT '消息内容',
     `model_name`        VARCHAR(100)         DEFAULT NULL COMMENT '模型名称',
     `token_count`       INT                  DEFAULT NULL COMMENT 'Token数量',
     `sort_order`        INT         NOT NULL DEFAULT 0 COMMENT '排序号',
     `create_time`       DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     KEY `idx_session_order` (`session_id`, `sort_order`, `id`),
-    KEY `idx_parent` (`parent_message_id`)
+    KEY `idx_parent` (`parent_message_id`),
+    KEY `idx_agent_message_workflow_run` (`workflow_type`, `run_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent消息表';
 
 CREATE TABLE IF NOT EXISTS `agent_memory`

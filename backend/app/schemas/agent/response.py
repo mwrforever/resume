@@ -78,6 +78,8 @@ class AgentMessageItem(BaseModel):
     parent_message_id: int | None = None
     role: str
     message_type: str
+    workflow_type: str | None = None
+    run_id: str | None = None
     content: dict[str, Any]
     model_name: str | None = None
     token_count: int | None = None

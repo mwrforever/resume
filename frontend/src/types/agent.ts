@@ -75,6 +75,7 @@ export interface IAgentStreamEnvelopeV1 {
 }
 
 export type TAgentStreamProtocolVersionV2 = '2.0';
+export type TAgentWorkflowType = 'interview_questions' | 'resume_evaluation';
 
 export type TAgentEventTypeV2 =
   | 'lifecycle.run.started'
@@ -270,6 +271,8 @@ export interface IAgentMessageItem {
   parent_message_id?: number | null;
   role: 'user' | 'agent' | 'system' | 'tool' | 'summary';
   message_type: string;
+  workflow_type?: TAgentWorkflowType | null;
+  run_id?: string | null;
   content: {
     context_refs?: Array<Record<string, unknown>>;
     blocks: Array<Record<string, unknown>>;
