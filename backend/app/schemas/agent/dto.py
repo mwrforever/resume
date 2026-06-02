@@ -86,3 +86,64 @@ class ResumeAnalyseState(BaseModel):
     tool_results: list[AgentToolResultDTO] = Field(default_factory=list)
     result: LLMResultDTO | None = None
     error_message: str | None = None
+
+
+class InterviewDimensionDTO(BaseModel):
+    """AI 提议的面试维度。"""
+
+    name: str
+    reason: str
+    source: str = "ai"
+
+
+class InterviewQuestionPlanItemDTO(BaseModel):
+    """面试题计划中的单个维度配置。"""
+
+    dimension: str
+    question_count: int
+    difficulty: str
+    focus: str
+
+
+class InterviewQuestionPlanDTO(BaseModel):
+    """面试题生成计划。"""
+
+    total_questions: int
+    items: list[InterviewQuestionPlanItemDTO]
+    summary: str
+
+
+class InterviewQuestionItemDTO(BaseModel):
+    """单道结构化面试题。"""
+
+    question: str
+    dimension: str
+    difficulty: str
+    evaluation_points: list[str] = Field(default_factory=list)
+    follow_up_suggestions: list[str] = Field(default_factory=list)
+    excellent_signals: list[str] = Field(default_factory=list)
+    average_signals: list[str] = Field(default_factory=list)
+    risk_signals: list[str] = Field(default_factory=list)
+
+
+class InterviewQuestionSetDTO(BaseModel):
+    """最终面试题清单。"""
+
+    title: str = "面试题清单"
+    total_questions: int
+    dimensions: list[str]
+    questions: list[InterviewQuestionItemDTO]
+
+
+class ResumeEvaluationReportDTO(BaseModel):
+    """简历评估报告结构化数据。"""
+
+    final_score: float
+    final_label: str
+    decision: str
+    summary: str
+    match_overview: dict[str, Any] = Field(default_factory=dict)
+    resume_structure: dict[str, Any] = Field(default_factory=dict)
+    experience_timeline: list[dict[str, Any]] = Field(default_factory=list)
+    skill_dimensions: list[dict[str, Any]] = Field(default_factory=list)
+    job_gaps: list[dict[str, Any]] = Field(default_factory=list)
