@@ -94,6 +94,14 @@ export type TAgentEventTypeV2 =
   | 'action.resolved'
   | 'data.card'
   | 'data.evaluation_report'
+  | 'thinking_status'
+  | 'thinking_stream'
+  | 'text_stream'
+  | 'execution_status'
+  | 'planning'
+  | 'interaction_request'
+  | 'interaction_result'
+  | 'completed'
   | 'error';
 
 export interface IAgentStreamEnvelopeV2 {
@@ -101,8 +109,10 @@ export interface IAgentStreamEnvelopeV2 {
   seq: number;
   run_id: string;
   session_id: number;
+  workflow_type?: TAgentWorkflowType | null;
   node_id: string;
   agent_id?: string | null;
+  display_name?: string | null;
   event: TAgentEventTypeV2 | string;
   payload: Record<string, unknown>;
   ts: number;

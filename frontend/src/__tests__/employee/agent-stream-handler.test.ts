@@ -161,6 +161,23 @@ describe('agent-stream-v2', () => {
     expect(result?.event).toBe('message.delta');
   });
 
+  it('should parse workflow metadata and display name from v2 envelope', () => {
+    const result = parseAgentStreamEnvelopeV2({
+      schema_version: '2.0',
+      seq: 1,
+      run_id: 'run-1',
+      session_id: 1,
+      workflow_type: 'interview_questions',
+      node_id: 'dimension_selection',
+      display_name: '选择面试维度',
+      event: 'interaction_request',
+      payload: { request_id: 'req-1', interaction_type: 'dimension_selection', title: '选择面试维度', prompt: '', data: {} },
+      ts: 1,
+    });
+
+    expect(result?.workflow_type).toBe('interview_questions');
+    expect(result?.display_name).toBe('选择面试维度');
+  });
   it('should append v2 message delta into the streaming message', () => {
     const { deps, messages } = createHandlerDeps();
 

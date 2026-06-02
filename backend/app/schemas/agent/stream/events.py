@@ -33,6 +33,11 @@ class AgentNodeId(StrEnum):
     FORM_REQUEST = "form_request"
     ACTION_PROPOSER = "action_proposer"
     FINALIZE = "finalize"
+    INTERVIEW_QUESTIONS = "interview_questions"
+    RESUME_EVALUATION = "resume_evaluation"
+    DIMENSION_SELECTION = "dimension_selection"
+    PLAN_APPROVAL = "plan_approval"
+    JOB_SELECTION = "job_selection"
 
     # 子 Agent
     JOB_AGENT = "job_agent"
@@ -74,6 +79,16 @@ class AgentStreamEventType(StrEnum):
     # data cards
     DATA_CARD = "data.card"
     DATA_EVALUATION_REPORT = "data.evaluation_report"
+
+    # workflow
+    THINKING_STATUS = "thinking_status"
+    THINKING_STREAM = "thinking_stream"
+    TEXT_STREAM = "text_stream"
+    EXECUTION_STATUS = "execution_status"
+    PLANNING = "planning"
+    INTERACTION_REQUEST = "interaction_request"
+    INTERACTION_RESULT = "interaction_result"
+    COMPLETED = "completed"
 
     # error
     ERROR = "error"
@@ -307,6 +322,82 @@ class DataEvaluationReportPayload(BaseModel):
     disadvantage_comment: str = ""
     dimensions: list[DataEvaluationDimension] = Field(default_factory=list)
     skill_hits: list[DataEvaluationSkill] = Field(default_factory=list)
+
+
+# ====== workflow payloads ======
+
+
+class ThinkingStatusPayload(BaseModel):
+    """思考过程状态事件 payload。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["started", "streaming", "completed", "unavailable"]
+    summary: str | None = None
+
+
+class ThinkingStreamPayload(BaseModel):
+    """思考过程增量事件 payload。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: str
+    delta: str
+
+
+class ExecutionStatusPayload(BaseModel):
+    """轻量执行状态事件 payload。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["running", "success", "failed", "waiting"]
+    title: str
+    detail: str | None = None
+
+
+class PlanningPayload(BaseModel):
+    """规划事件 payload。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plan_id: str
+    title: str
+    summary: str
+    body: dict[str, Any] = Field(default_factory=dict)
+
+
+class InteractionRequestPayload(BaseModel):
+    """内联交互请求 payload。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    interaction_type: Literal["dimension_selection", "plan_approval", "job_selection"]
+    title: str
+    prompt: str
+    data: dict[str, Any] = Field(default_factory=dict)
+    submit_label: str = "提交"
+    cancel_label: str | None = None
+
+
+class InteractionResultPayload(BaseModel):
+    """内联交互完成 payload。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    interaction_type: Literal["dimension_selection", "plan_approval", "job_selection"]
+    accepted: bool
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class CompletedPayload(BaseModel):
+    """工作流完成事件 payload。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = "已完成"
+    blocks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ====== error ======

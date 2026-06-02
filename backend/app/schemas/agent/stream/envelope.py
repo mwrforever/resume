@@ -21,8 +21,10 @@ class AgentStreamEnvelope(BaseModel):
         seq: 同一 run 内递增的序号，前端按此排序
         run_id: 本次用户消息触发的运行 ID
         session_id: 会话 ID（与 agent_session.id 一致）
+        workflow_type: 本次运行所属业务工作流
         node_id: 触发事件的节点/Agent 标识
         agent_id: 子 Agent 标识（若由子 Agent 触发）
+        display_name: 前端展示名称
         event: 事件类型枚举值（见 `AgentStreamEventType`）
         payload: 事件具体载荷，结构因 event 不同而不同
         ts: 服务器时间戳（毫秒）
@@ -35,8 +37,10 @@ class AgentStreamEnvelope(BaseModel):
     seq: int
     run_id: str
     session_id: int
+    workflow_type: str | None = None
     node_id: str
     agent_id: str | None = None
+    display_name: str | None = None
     event: str
     payload: dict[str, Any] = Field(default_factory=dict)
     ts: int
