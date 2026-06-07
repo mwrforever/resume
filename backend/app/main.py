@@ -18,6 +18,7 @@ from app.db.redis import redis_manager
 from app.core.exceptions import BizError
 from app.api.v1.router import api_router
 from app.services.cache_service import CacheService
+from app.llm.graphs.workflows import build_interview_question_graph, build_resume_evaluation_graph
 
 settings = get_settings()
 configure_logging(settings)
@@ -40,6 +41,10 @@ async def lifespan(app: FastAPI):
     app.state.mysql = mysql_manager.engine
 
     app.state.cache = CacheService(app.state.redis)
+    app.state.agent_workflow_graphs = {
+        "interview_questions": build_interview_question_graph(),
+        "resume_evaluation": build_resume_evaluation_graph(),
+    }
 
     try:
         yield
