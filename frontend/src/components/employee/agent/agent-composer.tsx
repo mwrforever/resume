@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, KeyboardEvent, useRef } from 'react';
 import { FileUp, Send, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import type { TAgentWorkflowType } from '@/types/agent';
 
 interface AgentComposerProps {
   input: string;
@@ -9,6 +10,8 @@ interface AgentComposerProps {
   /** 规划审批待处理时禁用输入 */
   disabled?: boolean;
   resumeFile: File | null;
+  workflowType: TAgentWorkflowType;
+  onWorkflowChange: (workflowType: TAgentWorkflowType) => void;
   onInputChange: (value: string) => void;
   onResumeFileChange: (file: File | null) => void;
   onSubmit: (event: FormEvent) => void;
@@ -25,6 +28,8 @@ export function AgentComposer({
   sending,
   disabled = false,
   resumeFile,
+  workflowType,
+  onWorkflowChange,
   onInputChange,
   onResumeFileChange,
   onSubmit,
@@ -34,6 +39,8 @@ export function AgentComposer({
   const inputLocked = sending || disabled;
   const hasResume = Boolean(resumeFile);
   const canSend = input.trim().length > 0 && !inputLocked;
+  const selectedClass = 'rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 shadow-sm';
+  const idleClass = 'rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-white/70';
 
   const handleFilePick = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -55,6 +62,22 @@ export function AgentComposer({
       ) : null}
       <div className="mx-auto max-w-4xl rounded-[1.7rem] border border-slate-200 bg-white p-2 shadow-sm shadow-slate-200/60 transition-[border-color,box-shadow] duration-200 focus-within:border-sky-400 focus-within:shadow-md focus-within:shadow-sky-100">
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-2 pb-2">
+          <div className="flex items-center gap-1 rounded-2xl bg-slate-100 p-1" aria-label="Agent 工作流选择">
+            <button
+              type="button"
+              className={workflowType === 'interview_questions' ? selectedClass : idleClass}
+              onClick={() => onWorkflowChange('interview_questions')}
+            >
+              简历问答
+            </button>
+            <button
+              type="button"
+              className={workflowType === 'resume_evaluation' ? selectedClass : idleClass}
+              onClick={() => onWorkflowChange('resume_evaluation')}
+            >
+              简历评估
+            </button>
+          </div>
           <input ref={fileInputRef} type="file" accept={ACCEPT_RESUME} className="hidden" onChange={handleFilePick} />
           <Button
             type="button"

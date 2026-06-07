@@ -71,6 +71,8 @@ function renderComposer(props?: Partial<Parameters<typeof AgentComposer>[0]>) {
       input="分析这个文件"
       sending={false}
       resumeFile={null}
+      workflowType="interview_questions"
+      onWorkflowChange={vi.fn()}
       onInputChange={vi.fn()}
       onResumeFileChange={vi.fn()}
       onSubmit={onSubmit}

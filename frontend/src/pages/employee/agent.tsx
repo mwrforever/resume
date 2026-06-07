@@ -10,6 +10,7 @@ import type {
   IAgentToolStreamItem,
   ILlmModelOption,
   IPlanReviewUiState,
+  TAgentWorkflowType,
   TPlanReviewDecision,
 } from '@/types/agent';
 import { handleAgentStreamEvent, type AgentStreamHandlerDeps } from '@/utils/agent-stream-handler';
@@ -54,6 +55,7 @@ export default function EmployeeAgent() {
   const [enableThinking, setEnableThinking] = useState(false);
   const [input, setInput] = useState('');
   const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [workflowType, setWorkflowType] = useState<TAgentWorkflowType>('interview_questions');
   const [sending, setSending] = useState(false);
   const [loadingSessionId, setLoadingSessionId] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
@@ -308,7 +310,7 @@ export default function EmployeeAgent() {
       }
       await employeeAgentApi.streamMessage(
         persistedSession.id,
-        { content, context_refs: contextRefs, runtime_options: { enable_thinking: enableThinking } },
+        { content, workflow_type: workflowType, context_refs: contextRefs, runtime_options: { enable_thinking: enableThinking } },
         (streamEvent) => handleAgentStreamEvent(streamEvent, buildStreamHandlerDeps(streamingMessageId, persistedSession, oldSessionId)),
       );
       await loadSessions();
@@ -472,6 +474,8 @@ export default function EmployeeAgent() {
             sending={sending}
             disabled={Boolean(planReview && planReview.phase === 'pending')}
             resumeFile={resumeFile}
+            workflowType={workflowType}
+            onWorkflowChange={setWorkflowType}
             onInputChange={setInput}
             onResumeFileChange={setResumeFile}
             onSubmit={sendMessage}
