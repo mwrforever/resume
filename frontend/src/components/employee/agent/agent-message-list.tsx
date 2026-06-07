@@ -1,32 +1,27 @@
 import { AlertCircle, Bot, Brain, CheckCircle2, Loader2, UserRound, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import type { IAgentActionStreamItem, IAgentMessageItem, IAgentRuntimeFeedItem, IPlanReviewUiState } from '@/types/agent';
+import type { IAgentActionStreamItem, IAgentInteractionRequestItem, IAgentMessageItem, IAgentRuntimeFeedItem, IAgentThinkingStreamItem, IPlanReviewUiState } from '@/types/agent';
 import { AgentActionCard } from './agent-action-card';
 import { AgentMarkdownContent } from './agent-markdown-content';
-import { AgentStatusTimeline } from './agent-status-timeline';
+import { AgentInteractionCard } from './agent-interaction-card';
+import { AgentRunCompactTimeline } from './agent-run-compact-timeline';
+import { AgentThinkingPanel } from './agent-thinking-panel';
 import { PlanReviewTree } from './plan-review-tree';
 import { hiddenScrollClass, messageText } from './agent-ui-utils';
-
-function AgentStatusTimelineRenderer({
-  runtimeFeedItems,
-}: {
-  runtimeFeedItems: IAgentRuntimeFeedItem[];
-}) {
-  const nodeItems = runtimeFeedItems.filter((item) => item.type === 'node');
-  if (nodeItems.length === 0) return null;
-  return <AgentStatusTimeline activeNodes={nodeItems} />;
-}
 
 interface AgentMessageListProps {
   messages: IAgentMessageItem[];
   actionsByMessageId: Map<number, IAgentActionStreamItem[]>;
   runtimeFeedItems: IAgentRuntimeFeedItem[];
+  thinkingItems?: IAgentThinkingStreamItem[];
+  interactionRequests?: IAgentInteractionRequestItem[];
   planReview: IPlanReviewUiState | null;
   sending: boolean;
   errorMessage: string;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
   onConfirmAction: (action: IAgentActionStreamItem) => void;
   onRejectAction: (action: IAgentActionStreamItem) => void;
+  onSubmitInteraction?: (requestId: string, values: Record<string, unknown>) => void;
   onPlanReviewFeedbackChange: (value: string) => void;
   onPlanReviewTaskInstructionChange: (taskId: string, instruction: string) => void;
   onPlanReviewApprove: () => void;
@@ -73,12 +68,15 @@ export function AgentMessageList({
   messages,
   actionsByMessageId,
   runtimeFeedItems,
+  thinkingItems = [],
+  interactionRequests = [],
   planReview,
   sending,
   errorMessage,
   messagesEndRef,
   onConfirmAction,
   onRejectAction,
+  onSubmitInteraction,
   onPlanReviewFeedbackChange,
   onPlanReviewTaskInstructionChange,
   onPlanReviewApprove,
@@ -128,13 +126,18 @@ export function AgentMessageList({
                     </div>
                   )}
                 </div>
-                {index === insertRuntimeFeedAfterIndex && (
-                  <AgentStatusTimelineRenderer runtimeFeedItems={runtimeFeedItems} />
-                )}
+                {index === insertRuntimeFeedAfterIndex && <AgentRunCompactTimeline items={runtimeFeedItems} />}
+                {index === insertRuntimeFeedAfterIndex && thinkingItems.map((item) => <AgentThinkingPanel key={item.id} item={item} />)}
                 {index === insertRuntimeFeedAfterIndex &&
-                  runtimeFeedItems.map((item) => (
-                    <RuntimeFeedRow key={item.id} item={item} onConfirmAction={onConfirmAction} onRejectAction={onRejectAction} />
+                  interactionRequests.map((item) => (
+                    <AgentInteractionCard key={item.id} item={item} onSubmit={onSubmitInteraction || (() => undefined)} />
                   ))}
+                {index === insertRuntimeFeedAfterIndex &&
+                  runtimeFeedItems
+                    .filter((item) => item.type === 'action' && item.action)
+                    .map((item) => (
+                      <RuntimeFeedRow key={item.id} item={item} onConfirmAction={onConfirmAction} onRejectAction={onRejectAction} />
+                    ))}
               </div>
               {(actionsByMessageId.get(message.id) || []).map((action) => (
                 <AgentActionCard key={action.id} action={action} onConfirm={onConfirmAction} onReject={onRejectAction} />

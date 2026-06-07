@@ -192,7 +192,7 @@ describe('Agent workspace UI', () => {
     expect(screen.queryByRole('button', { name: /展开事件详情/ })).not.toBeInTheDocument();
   });
 
-  it('interleaves runtime feed items before the agent reply instead of appending all events below the result', () => {
+  it('interleaves compact runtime timeline before the agent reply instead of appending all events below the result', () => {
     const { container } = render(
       <AgentMessageList
         messages={[userMessage, agentMessage]}
@@ -212,8 +212,7 @@ describe('Agent workspace UI', () => {
     );
 
     const text = container.textContent || '';
-    expect(text.indexOf('帮我筛选 React 候选人')).toBeLessThan(text.indexOf('Agent 正在思考'));
-    expect(text.indexOf('Agent 正在思考')).toBeLessThan(text.indexOf('搜索候选人数据'));
-    expect(text.indexOf('搜索候选人数据')).toBeLessThan(text.indexOf('已完成候选人筛选。'));
+    expect(text.indexOf('帮我筛选 React 候选人')).toBeLessThan(text.indexOf('运行过程 · 已完成 1 步'));
+    expect(text.indexOf('运行过程 · 已完成 1 步')).toBeLessThan(text.indexOf('已完成候选人筛选。'));
   });
 });

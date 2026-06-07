@@ -4,9 +4,12 @@ import { employeeAgentApi, employeeLlmApi } from '@/api/employee/agent';
 import { useAuthStore } from '@/store/auth';
 import type {
   IAgentActionStreamItem,
+  IAgentBusinessCardItem,
+  IAgentInteractionRequestItem,
   IAgentMemoryItem,
   IAgentMessageItem,
   IAgentRuntimeFeedItem,
+  IAgentThinkingStreamItem,
   IAgentToolStreamItem,
   ILlmModelOption,
   IPlanReviewUiState,
@@ -47,6 +50,9 @@ export default function EmployeeAgent() {
   const [memories, setMemories] = useState<IAgentMemoryItem[]>([]);
   const [toolEvents, setToolEvents] = useState<IAgentToolStreamItem[]>([]);
   const [runtimeFeedItems, setRuntimeFeedItems] = useState<IAgentRuntimeFeedItem[]>([]);
+  const [thinkingItems, setThinkingItems] = useState<IAgentThinkingStreamItem[]>([]);
+  const [interactionRequests, setInteractionRequests] = useState<IAgentInteractionRequestItem[]>([]);
+  const [businessCards, setBusinessCards] = useState<IAgentBusinessCardItem[]>([]);
   const [actions, setActions] = useState<IAgentActionStreamItem[]>([]);
   /** 规划审批 interrupt 对应的 UI 状态（PlanReviewTree） */
   const [planReview, setPlanReview] = useState<IPlanReviewUiState | null>(null);
@@ -74,7 +80,7 @@ export default function EmployeeAgent() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages.length, actions.length, runtimeFeedItems.length, planReview, sending]);
+  }, [messages.length, actions.length, runtimeFeedItems.length, thinkingItems.length, interactionRequests.length, businessCards.length, planReview, sending]);
 
   useEffect(() => {
     localStorage.setItem(AGENT_IMMERSIVE_STORAGE_KEY, String(immersiveMode));
@@ -109,6 +115,9 @@ export default function EmployeeAgent() {
     setMemories([]);
     setToolEvents([]);
     setRuntimeFeedItems([]);
+    setThinkingItems([]);
+    setInteractionRequests([]);
+    setBusinessCards([]);
     setActions([]);
     setPlanReview(null);
     setInput('');
@@ -166,6 +175,9 @@ export default function EmployeeAgent() {
       setMemories(detail.data.memories || []);
       setToolEvents([]);
       setRuntimeFeedItems([]);
+      setThinkingItems([]);
+      setInteractionRequests([]);
+      setBusinessCards([]);
       setActions([]);
       setPlanReview(null);
     } finally {
@@ -239,6 +251,9 @@ export default function EmployeeAgent() {
       setMessages,
       setToolEvents,
       setRuntimeFeedItems,
+      setThinkingItems,
+      setInteractionRequests,
+      setBusinessCards,
       setActions,
       setPlanReview,
       replaceSession,
@@ -402,6 +417,28 @@ export default function EmployeeAgent() {
     }
   };
 
+  const submitInteractionRequest = async (requestId: string, values: Record<string, unknown>) => {
+    if (!currentSession || currentSession.isLocal) return;
+    const streamingMessageId = -Date.now();
+    setSending(true);
+    setErrorMessage('');
+    setInteractionRequests((prev) => prev.map((item) => (item.id === requestId ? { ...item, status: 'submitted' } : item)));
+    try {
+      await employeeAgentApi.submitForm(
+        currentSession.id,
+        { request_id: requestId, values },
+        (streamEvent) => handleAgentStreamEvent(streamEvent, buildStreamHandlerDeps(streamingMessageId, currentSession, currentSession.id)),
+      );
+      await loadSessions();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '交互提交失败，请稍后重试';
+      setErrorMessage(message);
+      setInteractionRequests((prev) => prev.map((item) => (item.id === requestId ? { ...item, status: 'pending' } : item)));
+    } finally {
+      setSending(false);
+    }
+  };
+
   const actionsByMessageId = useMemo(() => {
     const runtimeActionIds = new Set(runtimeFeedItems.filter((item) => item.type === 'action' && item.action).map((item) => item.action?.id));
     const agentReplyByParentId = new Map<number, number>();
@@ -454,12 +491,15 @@ export default function EmployeeAgent() {
             messages={messages}
             actionsByMessageId={actionsByMessageId}
             runtimeFeedItems={runtimeFeedItems}
+            thinkingItems={thinkingItems}
+            interactionRequests={interactionRequests}
             planReview={planReview}
             sending={sending}
             errorMessage={errorMessage}
             messagesEndRef={messagesEndRef}
             onConfirmAction={confirmAgentAction}
             onRejectAction={rejectAgentAction}
+            onSubmitInteraction={submitInteractionRequest}
             onPlanReviewFeedbackChange={(value) => setPlanReview((prev) => (prev ? { ...prev, feedbackDraft: value } : prev))}
             onPlanReviewTaskInstructionChange={(taskId, instruction) =>
               setPlanReview((prev) =>
