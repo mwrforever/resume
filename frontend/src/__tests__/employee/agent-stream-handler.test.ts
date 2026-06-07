@@ -5,7 +5,9 @@ import type {
   IAgentActionStreamItem,
   IAgentMemoryItem,
   IAgentMessageItem,
+  IAgentInteractionRequestItem,
   IAgentRuntimeFeedItem,
+  IAgentThinkingStreamItem,
   IAgentToolStreamItem,
   IPlanReviewUiState,
 } from '@/types/agent';
@@ -236,5 +238,65 @@ describe('agent-stream-v2', () => {
     expect(actions.value[0].id).toBe('action-1');
     expect(actions.value[0].status).toBe(1);
     expect(actions.value[0].preview_payload.target_status).toBe(3);
+  });
+});
+
+
+describe('agent compact workflow events', () => {
+  it('keeps thinking_stream separate from message text', () => {
+    const { deps, messages } = createHandlerDeps();
+    const thinkingItems: StateBox<IAgentThinkingStreamItem[]> = { value: [] };
+    deps.setThinkingItems = createSetter(thinkingItems);
+
+    handleAgentStreamEvent({
+      event: 'agent',
+      data: {
+        schema_version: '2.0',
+        seq: 1,
+        run_id: 'run-1',
+        session_id: 1,
+        node_id: 'interview_questions',
+        event: 'thinking_stream',
+        payload: { message_id: 'think-1', delta: '内部思考' },
+        ts: 1,
+      },
+    }, deps);
+
+    expect(messages.value).toHaveLength(0);
+    expect(thinkingItems.value[0].content).toBe('内部思考');
+  });
+
+  it('stores interaction_request as a pending interaction item', () => {
+    const { deps } = createHandlerDeps();
+    const interactionRequests: StateBox<IAgentInteractionRequestItem[]> = { value: [] };
+    deps.setInteractionRequests = createSetter(interactionRequests);
+
+    handleAgentStreamEvent({
+      event: 'agent',
+      data: {
+        schema_version: '2.0',
+        seq: 1,
+        run_id: 'run-1',
+        session_id: 1,
+        node_id: 'dimension_selection',
+        event: 'interaction_request',
+        payload: {
+          request_id: 'req-1',
+          interaction_type: 'dimension_selection',
+          title: '请选择面试重点',
+          prompt: '选择维度',
+          data: { dimensions: [{ name: '项目深度' }] },
+          submit_label: '确认选择',
+        },
+        ts: 1,
+      },
+    }, deps);
+
+    expect(interactionRequests.value[0]).toMatchObject({
+      id: 'req-1',
+      run_id: 'run-1',
+      interaction_type: 'dimension_selection',
+      status: 'pending',
+    });
   });
 });

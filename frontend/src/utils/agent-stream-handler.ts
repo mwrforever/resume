@@ -3,12 +3,15 @@ import type { WorkspaceSession } from '@/components/employee/agent/agent-session
 import { blockText, createStreamingMessage } from '@/components/employee/agent/agent-ui-utils';
 import type {
   IAgentActionStreamItem,
+  IAgentBusinessCardItem,
+  IAgentInteractionRequestItem,
   IAgentMemoryItem,
   IAgentMessageItem,
   IAgentReply,
   IAgentRuntimeFeedItem,
   IAgentStreamEnvelopeV2,
   IAgentStreamEvent,
+  IAgentThinkingStreamItem,
   IAgentToolStreamItem,
   IPlanReviewUiState,
 } from '@/types/agent';
@@ -26,6 +29,9 @@ export interface AgentStreamHandlerDeps {
   setRuntimeFeedItems: Dispatch<SetStateAction<IAgentRuntimeFeedItem[]>>;
   setActions: Dispatch<SetStateAction<IAgentActionStreamItem[]>>;
   setPlanReview: Dispatch<SetStateAction<IPlanReviewUiState | null>>;
+  setThinkingItems?: Dispatch<SetStateAction<IAgentThinkingStreamItem[]>>;
+  setInteractionRequests?: Dispatch<SetStateAction<IAgentInteractionRequestItem[]>>;
+  setBusinessCards?: Dispatch<SetStateAction<IAgentBusinessCardItem[]>>;
   replaceSession: (session: WorkspaceSession, oldId: number) => void;
   setMemories: Dispatch<SetStateAction<IAgentMemoryItem[]>>;
 }
@@ -97,9 +103,39 @@ function handleAgentV2Event(data: Record<string, unknown>, deps: AgentStreamHand
     return;
   }
 
-  if (event === 'message.delta') {
+  if (event === 'message.delta' || event === 'text_stream') {
     const delta = typeof payload.delta === 'string' ? payload.delta : '';
     if (delta) appendTokenDelta(delta, deps);
+    return;
+  }
+
+  if (event === 'thinking_status') {
+    upsertThinkingStatus(envelope, payload, deps);
+    return;
+  }
+
+  if (event === 'thinking_stream') {
+    appendThinkingStream(envelope, payload, deps);
+    return;
+  }
+
+  if (event === 'execution_status') {
+    upsertExecutionStatus(envelope, payload, deps);
+    return;
+  }
+
+  if (event === 'interaction_request') {
+    upsertInteractionRequest(envelope, payload, deps);
+    return;
+  }
+
+  if (event === 'interaction_result') {
+    markInteractionResult(payload, deps);
+    return;
+  }
+
+  if (event === 'completed') {
+    deps.setRuntimeFeedItems((prev) => prev.map((item) => (item.status === 'running' ? { ...item, status: 'success' } : item)));
     return;
   }
 
@@ -215,6 +251,7 @@ function handleAgentV2Event(data: Record<string, unknown>, deps: AgentStreamHand
   }
 
   if (event === 'data.card') {
+    appendBusinessCard(envelope, payload, deps);
     const title = typeof payload.title === 'string' ? payload.title : '数据卡片';
     deps.setToolEvents((prev) => [
       ...prev,
@@ -229,6 +266,129 @@ function handleAgentV2Event(data: Record<string, unknown>, deps: AgentStreamHand
       },
     ]);
   }
+}
+
+
+function compactEventId(envelope: IAgentStreamEnvelopeV2, prefix: string): string {
+  return `${prefix}-${envelope.run_id}-${envelope.node_id}`;
+}
+
+function coerceThinkingStatus(status: unknown): IAgentThinkingStreamItem['status'] {
+  return status === 'started' || status === 'streaming' || status === 'completed' || status === 'unavailable' ? status : 'streaming';
+}
+
+function coerceFeedStatus(status: unknown): IAgentRuntimeFeedItem['status'] {
+  if (status === 'success') return 'success';
+  if (status === 'failed') return 'failed';
+  if (status === 'waiting') return 'pending';
+  return 'running';
+}
+
+function coerceInteractionType(value: unknown): IAgentInteractionRequestItem['interaction_type'] {
+  if (value === 'dimension_selection' || value === 'plan_approval' || value === 'job_selection') return value;
+  return 'dimension_selection';
+}
+
+function coerceBusinessCardType(value: unknown): IAgentBusinessCardItem['type'] | null {
+  if (value === 'interview_question_set' || value === 'resume_evaluation_report') return value;
+  return null;
+}
+
+function upsertThinkingStatus(
+  envelope: IAgentStreamEnvelopeV2,
+  payload: Record<string, unknown>,
+  deps: AgentStreamHandlerDeps,
+): void {
+  if (!deps.setThinkingItems) return;
+  const id = String(payload.message_id || compactEventId(envelope, 'thinking'));
+  const content = typeof payload.content === 'string' ? payload.content : '';
+  const status = coerceThinkingStatus(payload.status);
+  deps.setThinkingItems((prev) => {
+    if (prev.some((item) => item.id === id)) {
+      return prev.map((item) => (item.id === id ? { ...item, status, content: content || item.content } : item));
+    }
+    return [...prev, { id, run_id: envelope.run_id, status, content }];
+  });
+}
+
+function appendThinkingStream(
+  envelope: IAgentStreamEnvelopeV2,
+  payload: Record<string, unknown>,
+  deps: AgentStreamHandlerDeps,
+): void {
+  if (!deps.setThinkingItems) return;
+  const delta = typeof payload.delta === 'string' ? payload.delta : '';
+  if (!delta) return;
+  const id = String(payload.message_id || compactEventId(envelope, 'thinking'));
+  deps.setThinkingItems((prev) => {
+    if (prev.some((item) => item.id === id)) {
+      return prev.map((item) => (item.id === id ? { ...item, status: 'streaming', content: `${item.content}${delta}` } : item));
+    }
+    return [...prev, { id, run_id: envelope.run_id, status: 'streaming', content: delta }];
+  });
+}
+
+function upsertExecutionStatus(
+  envelope: IAgentStreamEnvelopeV2,
+  payload: Record<string, unknown>,
+  deps: AgentStreamHandlerDeps,
+): void {
+  const title = typeof payload.title === 'string' ? payload.title : envelope.display_name || getNodeDisplayName(envelope.node_id);
+  const detail = typeof payload.detail === 'string' ? payload.detail : null;
+  deps.setRuntimeFeedItems((prev) => upsertRuntimeFeed(prev, {
+    id: compactEventId(envelope, 'execution'),
+    type: 'node',
+    status: coerceFeedStatus(payload.status),
+    title,
+    message: detail,
+  }));
+}
+
+function upsertInteractionRequest(
+  envelope: IAgentStreamEnvelopeV2,
+  payload: Record<string, unknown>,
+  deps: AgentStreamHandlerDeps,
+): void {
+  const requestId = String(payload.request_id || compactEventId(envelope, 'interaction'));
+  const item: IAgentInteractionRequestItem = {
+    id: requestId,
+    run_id: envelope.run_id,
+    interaction_type: coerceInteractionType(payload.interaction_type),
+    title: String(payload.title || '请确认'),
+    prompt: String(payload.prompt || ''),
+    data: (payload.data as Record<string, unknown>) || {},
+    submit_label: String(payload.submit_label || '提交'),
+    status: 'pending',
+  };
+  deps.setInteractionRequests?.((prev) => [item, ...prev.filter((current) => current.id !== item.id)]);
+  deps.setRuntimeFeedItems((prev) => upsertRuntimeFeed(prev, {
+    id: `interaction-${requestId}`,
+    type: 'action',
+    status: 'pending',
+    title: item.title,
+    message: item.prompt || null,
+  }));
+}
+
+function markInteractionResult(payload: Record<string, unknown>, deps: AgentStreamHandlerDeps): void {
+  const requestId = String(payload.request_id || '');
+  if (!requestId) return;
+  deps.setInteractionRequests?.((prev) => prev.map((item) => (item.id === requestId ? { ...item, status: 'submitted' } : item)));
+  deps.setRuntimeFeedItems((prev) => updateRuntimeFeedStatus(prev, `interaction-${requestId}`, 'success'));
+}
+
+function appendBusinessCard(
+  envelope: IAgentStreamEnvelopeV2,
+  payload: Record<string, unknown>,
+  deps: AgentStreamHandlerDeps,
+): void {
+  const cardType = coerceBusinessCardType(payload.card_type || payload.type);
+  if (!cardType || !deps.setBusinessCards) return;
+  const id = String(payload.card_id || `${cardType}-${envelope.run_id}-${envelope.seq}`);
+  deps.setBusinessCards((prev) => [
+    { id, run_id: envelope.run_id, type: cardType, payload },
+    ...prev.filter((item) => item.id !== id),
+  ]);
 }
 
 function getV2NodeId(envelope: IAgentStreamEnvelopeV2): string {

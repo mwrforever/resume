@@ -427,6 +427,31 @@ export interface IAgentActionStreamItem extends Omit<IAgentActionItem, 'id'> {
   isStreaming?: boolean;
 }
 
+export interface IAgentThinkingStreamItem {
+  id: string;
+  run_id: string;
+  status: 'started' | 'streaming' | 'completed' | 'unavailable';
+  content: string;
+}
+
+export interface IAgentInteractionRequestItem {
+  id: string;
+  run_id: string;
+  interaction_type: 'dimension_selection' | 'plan_approval' | 'job_selection';
+  title: string;
+  prompt: string;
+  data: Record<string, unknown>;
+  submit_label: string;
+  status: 'pending' | 'submitted' | 'expired';
+}
+
+export interface IAgentBusinessCardItem {
+  id: string;
+  run_id: string;
+  type: 'interview_question_set' | 'resume_evaluation_report';
+  payload: Record<string, unknown>;
+}
+
 /** 消息列表下方的运行时动态条目（思考、工具、待确认动作） */
 export interface IAgentRuntimeFeedItem {
   id: string;
