@@ -175,7 +175,7 @@ class AgentWorkflowRunner:
             return None
         return emitter.emit(
             event=AgentStreamEventType.INTERACTION_REQUEST,
-            node_id=AgentNodeId.INTERACTION_REQUEST,
+            node_id=self._interaction_node_id(str(value.get("interaction_type") or "")),
             payload=InteractionRequestPayload(
                 request_id=str(value.get("request_id") or ""),
                 interaction_type=str(value.get("interaction_type") or ""),

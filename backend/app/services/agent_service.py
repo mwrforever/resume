@@ -13,6 +13,7 @@ LLM/Agent 编排逻辑全部下沉到 `app.llm.graphs.coordinator` + `app.llm.gr
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 import uuid
@@ -31,6 +32,7 @@ from app.llm.graphs.coordinator import (
     get_default_checkpointer,
 )
 from app.llm.graphs.coordinator.chat_model import build_chat_model
+from app.llm.graphs.workflows import AgentWorkflowRunner
 from app.llm.model_router import LLMModelRouter, get_default_model_router
 from app.llm.streaming.emitter import AgentStreamEmitter
 from app.repositories.agent_repository import AgentRepository
@@ -63,7 +65,11 @@ from app.schemas.agent.stream import (
 )
 from app.services.agent_context_service import AgentContextService
 from app.services.agent_resume_pipeline_service import AgentResumePipelineService
+from app.services.agent_stream_buffer_service import AgentStreamBufferService
+from app.services.cache_service import CacheService
+from app.services.interview_question_service import InterviewQuestionService
 from app.services.llm_config_service import LlmConfigService
+from app.services.resume_evaluation_workflow_service import ResumeEvaluationWorkflowService
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +88,8 @@ class AgentService:
         app_repo: ApplicationRepository | None = None,
         eval_repo: EvalRepository | None = None,
         resume_repo: ResumeRepository | None = None,
+        cache: CacheService | None = None,
+        workflow_graphs: dict[str, Any] | None = None,
     ) -> None:
         """
         初始化 Agent 服务。
@@ -92,6 +100,8 @@ class AgentService:
             context_service: 长期记忆（可选）
             model_router: 兼容路由器，仅供需要直接调用 LLM 的工具使用（默认走全局实例）
             job_repo / app_repo / eval_repo / resume_repo: 业务快照与子 Agent 数据源
+            cache: Redis 缓存服务，用于流事件缓冲
+            workflow_graphs: FastAPI lifespan 注册的业务工作流编译图
         """
         self._agent_repo = agent_repo
         self._llm_service = llm_service
@@ -101,10 +111,27 @@ class AgentService:
         self._app_repo = app_repo
         self._eval_repo = eval_repo
         self._resume_repo = resume_repo
+        self._cache = cache
+        self._stream_buffer = AgentStreamBufferService(cache.client) if cache else None
+        self._workflow_graphs = workflow_graphs or {}
 
         self._resume_pipeline: AgentResumePipelineService | None = None
         if resume_repo and job_repo:
             self._resume_pipeline = AgentResumePipelineService(resume_repo, job_repo)
+        self._interview_question_service = (
+            InterviewQuestionService(model_router=self._model_router, resume_pipeline=self._resume_pipeline)
+            if self._resume_pipeline
+            else None
+        )
+        self._resume_evaluation_service = (
+            ResumeEvaluationWorkflowService(
+                model_router=self._model_router,
+                resume_pipeline=self._resume_pipeline,
+                job_repo=job_repo,
+            )
+            if self._resume_pipeline and job_repo
+            else None
+        )
 
         self._checkpointer = get_default_checkpointer()
 
@@ -233,32 +260,44 @@ class AgentService:
                 session.employee_id, session.id, body.content
             )
 
-        user_message = await self._create_user_message(session, body)
+        workflow_type = body.workflow_type
+        emitter = AgentStreamEmitter(session_id=session.id, session_key=session.session_key, workflow_type=workflow_type)
+        run_id = emitter.run_id
+        user_message = await self._create_user_message(session, body, workflow_type=workflow_type, run_id=run_id)
         resume_ref = self._parse_resume_ref(body.context_refs)
         tool_context = await self._build_tool_context(session.employee_id)
 
-        emitter = AgentStreamEmitter(session_id=session.id, session_key=session.session_key)
         # 立即发射用户消息事件，让前端立刻渲染用户输入内容
-        yield emitter.emit(
-            event=AgentStreamEventType.MESSAGE_STARTED,
-            node_id=AgentNodeId.COORDINATOR,
-            payload=MessageStartedPayload(
-                message_id=user_message.id,
-                role="user",
-                content=body.content,
-                context_refs=body.context_refs or [],
+        yield await self._yield_buffered_event(
+            event=emitter.emit(
+                event=AgentStreamEventType.MESSAGE_STARTED,
+                node_id=AgentNodeId.COORDINATOR,
+                payload=MessageStartedPayload(
+                    message_id=user_message.id,
+                    role="user",
+                    content=body.content,
+                    context_refs=body.context_refs or [],
+                ),
             ),
+            session_id=session.id,
+            run_id=run_id,
         )
-        runner = self._build_runner(runtime_config)
+        runner = self._build_workflow_runner(workflow_type, runtime_config)
         graph_input = {
             "messages": [HumanMessage(content=body.content)],
+            "workflow_type": workflow_type,
             "employee_id": session.employee_id,
             "session_id": session.id,
             "session_key": session.session_key,
+            "user_message_id": user_message.id,
+            "run_id": run_id,
             "tool_context": tool_context,
             "resume_ref": resume_ref or {},
             "runtime_config": runtime_config.model_dump(mode="python"),
+            "service_context": self._build_workflow_service_context(),
             "final_message": "",
+            "final_text": "",
+            "final_blocks": [],
         }
 
         async for event in self._run_graph_stream(
@@ -268,6 +307,8 @@ class AgentService:
             graph_input=graph_input,
             emitter=emitter,
             runtime_config=runtime_config,
+            workflow_type=workflow_type,
+            run_id=run_id,
         ):
             yield event
 
@@ -285,13 +326,19 @@ class AgentService:
             raise ValidationError("未找到关联用户消息")
 
         runtime_config = await self._build_runtime_config(current_user, session.selected_model_name)
-        emitter = AgentStreamEmitter(session_id=session.id, session_key=session.session_key)
-        runner = self._build_runner(runtime_config)
+        workflow_type = self._resolve_resume_workflow_type(messages)
+        emitter = AgentStreamEmitter(session_id=session.id, session_key=session.session_key, workflow_type=workflow_type)
+        run_id = emitter.run_id
+        runner = self._build_workflow_runner(workflow_type, runtime_config)
         # 先回执 form.resolved 让前端立即关闭表单
-        yield emitter.emit(
-            event=AgentStreamEventType.FORM_RESOLVED,
-            node_id=AgentNodeId.FORM_REQUEST,
-            payload=FormResolvedPayload(request_id=body.request_id, accepted=True, values=body.values),
+        yield await self._yield_buffered_event(
+            event=emitter.emit(
+                event=AgentStreamEventType.FORM_RESOLVED,
+                node_id=AgentNodeId.FORM_REQUEST,
+                payload=FormResolvedPayload(request_id=body.request_id, accepted=True, values=body.values),
+            ),
+            session_id=session.id,
+            run_id=run_id,
         )
         # 用 Command(resume=values) 让被 interrupt() 阻塞的工具继续执行
         async for event in self._run_graph_stream(
@@ -301,28 +348,39 @@ class AgentService:
             graph_input=Command(resume=body.values),
             emitter=emitter,
             runtime_config=runtime_config,
+            workflow_type=workflow_type,
+            run_id=run_id,
         ):
             yield event
 
     async def _run_graph_stream(
         self,
         *,
-        runner: CoordinatorRunner,
+        runner: CoordinatorRunner | AgentWorkflowRunner,
         session,
         user_message_id: int,
         graph_input: dict[str, Any] | Command,
         emitter: AgentStreamEmitter,
         runtime_config: LLMRuntimeConfigDTO,
+        workflow_type: str = "interview_questions",
+        run_id: str | None = None,
     ) -> AsyncIterator[AgentStreamEvent]:
         """通用流式包装：lifecycle.run.* + 节点流 + finalize 持久化。"""
         started_at = time.perf_counter()
-        yield emitter.emit(
-            event=AgentStreamEventType.RUN_STARTED,
-            node_id=AgentNodeId.COORDINATOR,
-            payload=LifecycleRunPayload(
-                session_key=session.session_key,
-                message_id=user_message_id,
+        active_run_id = run_id or emitter.run_id
+        buffered_events: list[dict[str, Any]] = []
+        yield await self._yield_buffered_event(
+            event=emitter.emit(
+                event=AgentStreamEventType.RUN_STARTED,
+                node_id=AgentNodeId.COORDINATOR,
+                payload=LifecycleRunPayload(
+                    session_key=session.session_key,
+                    message_id=user_message_id,
+                ),
             ),
+            session_id=session.id,
+            run_id=active_run_id,
+            fallback_events=buffered_events,
         )
 
         try:
@@ -331,56 +389,90 @@ class AgentService:
                 graph_input=graph_input,
                 emitter=emitter,
             ):
-                yield event
+                buffered = await self._yield_buffered_event(
+                    event=event,
+                    session_id=session.id,
+                    run_id=active_run_id,
+                    fallback_events=buffered_events,
+                )
+                yield buffered
         except (SQLAlchemyError, RuntimeError, ValueError) as exc:
             logger.exception("协调器执行异常：session_id=%s", session.id)
-            yield emitter.emit(
-                event=AgentStreamEventType.RUN_FAILED,
-                node_id=AgentNodeId.COORDINATOR,
-                payload=LifecycleRunPayload(
-                    session_key=session.session_key,
-                    message_id=user_message_id,
-                    error_code="coordinator_error",
-                    error_message=str(exc),
+            yield await self._yield_buffered_event(
+                event=emitter.emit(
+                    event=AgentStreamEventType.RUN_FAILED,
+                    node_id=AgentNodeId.COORDINATOR,
+                    payload=LifecycleRunPayload(
+                        session_key=session.session_key,
+                        message_id=user_message_id,
+                        error_code="coordinator_error",
+                        error_message=str(exc),
+                    ),
                 ),
+                session_id=session.id,
+                run_id=active_run_id,
+                fallback_events=buffered_events,
             )
-            yield emitter.emit(
-                event=AgentStreamEventType.ERROR,
-                node_id=AgentNodeId.COORDINATOR,
-                payload=ErrorPayload(code="coordinator_error", message=str(exc)),
+            yield await self._yield_buffered_event(
+                event=emitter.emit(
+                    event=AgentStreamEventType.ERROR,
+                    node_id=AgentNodeId.COORDINATOR,
+                    payload=ErrorPayload(code="coordinator_error", message=str(exc)),
+                ),
+                session_id=session.id,
+                run_id=active_run_id,
+                fallback_events=buffered_events,
             )
             return
 
         # 取最终回复并落库
-        final_message = await runner.get_final_message(session.session_key)
+        final_message = await self._resolve_runner_value(runner.get_final_message(session.session_key))
+        final_blocks = []
+        if hasattr(runner, "get_final_blocks"):
+            final_blocks = await self._resolve_runner_value(runner.get_final_blocks(session.session_key))
+        stream_events = await self._read_buffered_events(session.id, active_run_id, buffered_events)
         try:
             await self._persist_agent_message(
                 session,
                 user_message_id=user_message_id,
                 final_message=final_message,
                 runtime_config=runtime_config,
+                workflow_type=workflow_type,
+                run_id=active_run_id,
+                final_blocks=final_blocks or [],
+                stream_events=stream_events,
             )
         except SQLAlchemyError:
             logger.exception("Agent 消息落库失败：session_id=%s", session.id)
             await self._agent_repo.rollback()
 
         if final_message:
-            yield emitter.emit(
-                event=AgentStreamEventType.MESSAGE_DONE,
-                node_id=AgentNodeId.FINALIZE,
-                payload=MessageDonePayload(
-                    message_id=f"final-{user_message_id}",
-                    content=final_message,
+            yield await self._yield_buffered_event(
+                event=emitter.emit(
+                    event=AgentStreamEventType.MESSAGE_DONE,
+                    node_id=AgentNodeId.FINALIZE,
+                    payload=MessageDonePayload(
+                        message_id=f"final-{user_message_id}",
+                        content=final_message,
+                    ),
                 ),
+                session_id=session.id,
+                run_id=active_run_id,
+                fallback_events=buffered_events,
             )
 
-        yield emitter.emit(
-            event=AgentStreamEventType.RUN_FINISHED,
-            node_id=AgentNodeId.FINALIZE,
-            payload=LifecycleRunPayload(
-                session_key=session.session_key,
-                message_id=user_message_id,
+        yield await self._yield_buffered_event(
+            event=emitter.emit(
+                event=AgentStreamEventType.RUN_FINISHED,
+                node_id=AgentNodeId.FINALIZE,
+                payload=LifecycleRunPayload(
+                    session_key=session.session_key,
+                    message_id=user_message_id,
+                ),
             ),
+            session_id=session.id,
+            run_id=active_run_id,
+            fallback_events=buffered_events,
         )
         logger.info(
             "Agent run 结束：session_id=%s elapsed_ms=%s",
@@ -456,12 +548,14 @@ class AgentService:
     # 持久化辅助
     # ------------------------------------------------------------------
 
-    async def _create_user_message(self, session, body: AgentMessageCreate):
+    async def _create_user_message(self, session, body: AgentMessageCreate, *, workflow_type: str, run_id: str):
         """落库用户消息。"""
         return await self._agent_repo.create_message(
             session_id=session.id,
             role="user",
             message_type="text",
+            workflow_type=workflow_type,
+            run_id=run_id,
             content={
                 "context_refs": body.context_refs,
                 "blocks": [{"type": "text", "text": body.content}],
@@ -476,16 +570,25 @@ class AgentService:
         user_message_id: int,
         final_message: str,
         runtime_config: LLMRuntimeConfigDTO,
+        workflow_type: str = "interview_questions",
+        run_id: str | None = None,
+        final_blocks: list[dict[str, Any]] | None = None,
+        stream_events: list[dict[str, Any]] | None = None,
     ) -> None:
-        """把 supervisor 最终回复落库。"""
+        """把 Agent 最终回复与结构化 blocks 落库。"""
+        blocks = [{"type": "text", "text": final_message or ""}]
+        blocks.append({"type": "stream_events", "schema_version": "2.0", "events": stream_events or []})
+        blocks.extend(final_blocks or [])
         agent_message = await self._agent_repo.create_message(
             session_id=session.id,
             parent_message_id=user_message_id,
             role="agent",
             message_type="text",
+            workflow_type=workflow_type,
+            run_id=run_id,
             content={
                 "context_refs": [],
-                "blocks": [{"type": "text", "text": final_message or ""}],
+                "blocks": blocks,
             },
             model_name=runtime_config.model_name,
             token_count=None,
@@ -498,6 +601,46 @@ class AgentService:
         )
         await self._agent_repo.commit()
         logger.debug("Agent 消息已落库：session_id=%s message_id=%s", session.id, agent_message.id)
+
+    async def _yield_buffered_event(
+        self,
+        *,
+        event: AgentStreamEvent,
+        session_id: int,
+        run_id: str,
+        fallback_events: list[dict[str, Any]] | None = None,
+    ) -> AgentStreamEvent:
+        """写入 Redis stream buffer 后返回事件。"""
+        if fallback_events is not None:
+            fallback_events.append(event.data)
+        if self._stream_buffer:
+            await self._stream_buffer.append_event(session_id=session_id, run_id=run_id, envelope=event.data)
+        return event
+
+    async def _read_buffered_events(
+        self,
+        session_id: int,
+        run_id: str,
+        fallback_events: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """读取当前 run 已缓冲的事件。"""
+        if self._stream_buffer:
+            return await self._stream_buffer.read_events(session_id=session_id, run_id=run_id)
+        return list(fallback_events)
+
+    async def _resolve_runner_value(self, value):
+        """兼容同步和异步 runner 取值。"""
+        if inspect.isawaitable(value):
+            return await value
+        return value
+
+    def _resolve_resume_workflow_type(self, messages: list[Any]) -> str:
+        """从历史消息推断中断恢复所属工作流。"""
+        for message in reversed(messages):
+            workflow_type = getattr(message, "workflow_type", None)
+            if workflow_type:
+                return str(workflow_type)
+        return "interview_questions"
 
     # ------------------------------------------------------------------
     # 业务快照 / 简历附件解析
@@ -594,6 +737,24 @@ class AgentService:
     # ------------------------------------------------------------------
     # 协调器图工厂
     # ------------------------------------------------------------------
+
+    def _build_workflow_service_context(self) -> dict[str, Any]:
+        """构建业务工作流运行时服务上下文。"""
+        return {
+            "interview_question_service": self._interview_question_service,
+            "resume_evaluation_service": self._resume_evaluation_service,
+        }
+
+    def _build_workflow_runner(
+        self,
+        workflow_type: str,
+        runtime_config: LLMRuntimeConfigDTO,
+    ) -> CoordinatorRunner | AgentWorkflowRunner:
+        """根据 workflow_type 构建业务工作流 runner，缺省回退旧协调器。"""
+        compiled = self._workflow_graphs.get(workflow_type)
+        if compiled is not None:
+            return AgentWorkflowRunner(compiled)
+        return self._build_runner(runtime_config)
 
     def _build_runner(self, runtime_config: LLMRuntimeConfigDTO) -> CoordinatorRunner:
         """根据当前运行时配置实时构造 supervisor 图（共享进程级 checkpointer）。"""

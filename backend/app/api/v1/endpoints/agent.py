@@ -3,7 +3,7 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
@@ -58,7 +58,9 @@ def get_llm_service(
 
 
 def get_agent_service(
-    db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    cache: CacheService = Depends(get_cache),
 ) -> AgentService:
     """依赖注入：Agent 服务（含子 Agent 绑定）。"""
     llm_service = LlmConfigService(
@@ -73,6 +75,8 @@ def get_agent_service(
         app_repo=ApplicationRepository(db),
         eval_repo=EvalRepository(db),
         resume_repo=ResumeRepository(db),
+        cache=cache,
+        workflow_graphs=getattr(request.app.state, "agent_workflow_graphs", {}),
     )
 
 
