@@ -46,11 +46,8 @@ def _state() -> EvaluationState:
     )
 
 
-def _fake_llm_response(prompt: str, max_retries: int = 2, timeout: int = 60) -> str:
-    """根据提示词的关键标记返回不同的 JSON 输出，模拟三类节点 LLM 行为。
-
-    使用各提示词模板独有的中文角色描述作为路由依据，互相之间无重叠。
-    """
+async def _fake_async_llm_complete(prompt: str, **kwargs) -> str:
+    """根据提示词中的关键标记返回不同的 JSON 输出，模拟三类节点 LLM 行为。"""
     if "高级简历综合评估专家" in prompt:
         return json.dumps(
             {
@@ -86,8 +83,8 @@ def _fake_llm_response(prompt: str, max_retries: int = 2, timeout: int = 60) -> 
 
 @contextmanager
 def _patch_llm() -> Iterator[None]:
-    """patch evaluation_graph 内部的 llm_complete。"""
-    with patch.object(evaluation_graph, "llm_complete", side_effect=_fake_llm_response):
+    """patch evaluation_graph 内部的 async_llm_complete。"""
+    with patch.object(evaluation_graph, "async_llm_complete", side_effect=_fake_async_llm_complete):
         yield
 
 

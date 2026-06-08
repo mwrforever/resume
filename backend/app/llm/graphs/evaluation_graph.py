@@ -1,16 +1,16 @@
-"""
-评估 LangGraph 子图。
+"""评估 LangGraph 子图。
 
-将原 `ResumeEvalChain` 拆解为可观测、可串可并的 LangGraph 子图：
-``load_context → match_skills → fan_out_dimensions(并行) → reduce_dimensions → comprehensive → finalize``。
+将原 ResumeEvalChain 拆解为可观测、可串可并的 LangGraph 子图：
+`load_context → match_skills → fan_out_dimensions(并行) → reduce_dimensions → comprehensive → finalize`。
 
-Celery 任务通过 ``run_sync`` 同步调用；Agent EvaluationAgent 通过 ``arun`` 异步调用。
+Celery 任务通过 `run_sync` 同步调用；Agent EvaluationAgent 通过 `arun` 异步调用。
 两者复用同一份编排逻辑，保证业务一致。
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
@@ -23,7 +23,7 @@ from langgraph.types import Send
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.exceptions import ValidationError
-from app.llm.clients.client import llm_complete
+from app.llm.clients.client import async_llm_complete
 from app.llm.prompts.manager import prompt_manager
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class EvaluationSkillHit(BaseModel):
 class EvaluationState(BaseModel):
     """评估子图共享 State。"""
 
-    # 注意：LangGraph 内部可能传入额外控制字段（如 __pregel_finish__），允许 ignore
+    # LangGraph 内部可能传入额外控制字段（如 __pregel_finish__），允许 ignore
     model_config = ConfigDict(extra="ignore")
 
     application_id: int
@@ -108,7 +108,7 @@ class EvaluationState(BaseModel):
 
 
 class EvaluationResult(BaseModel):
-    """子图最终输出（向 Celery / Agent 暴露）。"""
+    """子图最终输出（供 Celery / Agent 暴露）。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -154,7 +154,7 @@ def _parse_object(raw: str) -> dict[str, Any]:
 
 
 def _normalize_score(value: Any) -> float:
-    """把任意值归一为 0-100 之间的 float。"""
+    """把任意值归一化到 0-100 之间的 float。"""
     try:
         score = float(value)
     except (TypeError, ValueError):
@@ -162,13 +162,13 @@ def _normalize_score(value: Any) -> float:
     return max(0.0, min(100.0, score))
 
 
-def _call_llm_json(prompt: str, timeout: int) -> dict[str, Any]:
-    """调用 LLM 并解析 JSON 输出。"""
-    raw = llm_complete(prompt, max_retries=2, timeout=timeout)
+async def _async_call_llm_json(prompt: str, timeout: int) -> dict[str, Any]:
+    """异步调用 LLM 并解析 JSON 输出。"""
+    raw = await async_llm_complete(prompt, max_retries=2, timeout=timeout)
     return _parse_object(raw)
 
 
-def _match_skills_node(state: EvaluationState) -> dict[str, Any]:
+async def _match_skills_node(state: EvaluationState) -> dict[str, Any]:
     """技能命中节点：调用 LLM 判断每个技能在简历中的命中情况。"""
     if not state.skills:
         logger.info("评估子图技能命中跳过：无技能项 application_id=%s", state.application_id)
@@ -184,7 +184,7 @@ def _match_skills_node(state: EvaluationState) -> dict[str, Any]:
         ),
         resume_text=state.resume_text,
     )
-    result = _call_llm_json(prompt, timeout=90)
+    result = await _async_call_llm_json(prompt, timeout=90)
     raw_hits = result.get("skill_hits") or []
     hit_map = {
         str(item.get("skill") or "").strip(): item
@@ -215,7 +215,7 @@ def _match_skills_node(state: EvaluationState) -> dict[str, Any]:
 
 
 def _normalize_dimension_template(prompt_template: str) -> str:
-    """把数据库历史模板中的 ``{var}`` 占位符兼容为 Jinja2 ``{{ var }}``。"""
+    """把数据库历史模板中的 `{var}` 占位符兼容为 Jinja2 `{{ var }}`。"""
     normalized = prompt_template
     for key, value in _DIMENSION_PLACEHOLDERS.items():
         normalized = re.sub(rf"(?<!{{){{{key}}}(?!}})", value, normalized)
@@ -248,12 +248,12 @@ def _render_dimension_template(
         return prompt_template
 
 
-def _dimension_eval_node(payload: dict[str, Any]) -> dict[str, Any]:
+async def _dimension_eval_node(payload: dict[str, Any]) -> dict[str, Any]:
     """
     单维度评估节点（fan-out 后由 LangGraph Send 投递）。
 
     payload 必须包含：dimension（dict）、resume_text、job_name、job_description、skill_hits、application_id。
-    返回的 ``dimension_buffer`` 会被附带 reducer 累加，``dimension_reduce`` 节点再做最终聚合。
+    返回的 `dimension_buffer` 会被附带 reducer 累加，`dimension_reduce` 节点再做最终聚合。
     """
     dimension = EvaluationDimensionSpec.model_validate(payload["dimension"])
     skill_hits_raw = payload.get("skill_hits") or []
@@ -286,7 +286,7 @@ def _dimension_eval_node(payload: dict[str, Any]) -> dict[str, Any]:
         resume_text=resume_text,
     )
 
-    result = _call_llm_json(prompt, timeout=120)
+    result = await _async_call_llm_json(prompt, timeout=120)
     score = _normalize_score(result.get("score"))
     advantage = str(result.get("advantage") or "")
     disadvantage = str(result.get("disadvantage") or "")
@@ -303,7 +303,7 @@ def _dimension_eval_node(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _fanout_dimensions(state: EvaluationState) -> list[Send]:
-    """LangGraph 条件边：将每个维度作为独立任务派发给 `dimension_eval` 节点。"""
+    """LangGraph 条件边：将每个维度作为独立任务派发给 dimension_eval 节点。"""
     if not state.dimensions:
         return []
     return [
@@ -341,7 +341,7 @@ def _dimension_reduce_node(state: EvaluationState) -> dict[str, Any]:
                 )
             )
         else:
-            # 维度匹配上后用模板里的 dimension_id（确保最终落库一致）
+            # 维度匹配后用模板里的 dimension_id（确保最终落库一致）
             merged.append(item.model_copy(update={"dimension_id": dimension.dimension_id}))
 
     completed = [item for item in merged if item.is_completed]
@@ -377,7 +377,7 @@ def _label_for_score(score: float) -> str:
     return "未达标"
 
 
-def _comprehensive_node(state: EvaluationState) -> dict[str, Any]:
+async def _comprehensive_node(state: EvaluationState) -> dict[str, Any]:
     """综合评估节点：让 LLM 输出最终分、标签、优劣势总评。"""
     prompt = prompt_manager.render(
         "comprehensive_eval",
@@ -401,7 +401,7 @@ def _comprehensive_node(state: EvaluationState) -> dict[str, Any]:
         ),
         weighted_score=round(state.weighted_score, 2),
     )
-    result = _call_llm_json(prompt, timeout=120)
+    result = await _async_call_llm_json(prompt, timeout=120)
     if result.get("final_score") is None:
         raise ValidationError("AI综合评估结果缺少最终分数")
     final_score = _normalize_score(result.get("final_score"))
@@ -438,7 +438,7 @@ def _reduce_dimension_buffer(
     current: list[EvaluationDimensionResult] | None,
     incoming: list[EvaluationDimensionResult] | dict,
 ) -> list[EvaluationDimensionResult]:
-    """LangGraph 字段级 reducer：追加 `dimension_eval` 节点返回的单维度结果到 buffer。"""
+    """LangGraph 字段级 reducer：追加 dimension_eval 节点返回的单维度结果到 buffer。"""
     base = list(current or [])
     if isinstance(incoming, dict):
         items = incoming.get("dimension_buffer") or []
@@ -478,11 +478,13 @@ class _GraphStateDict(TypedDict, total=False):
 
 
 def _wrap_node(fn):
-    """适配 BaseModel 节点函数到 TypedDict 状态。"""
+    """适配 async BaseModel 节点函数到 TypedDict 状态。"""
 
-    def _inner(state: _GraphStateDict) -> dict[str, Any]:
+    async def _inner(state: _GraphStateDict) -> dict[str, Any]:
         typed = EvaluationState.model_validate(state)
         result = fn(typed)
+        if inspect.isawaitable(result):
+            result = await result
         if not isinstance(result, dict):
             return {}
         # 把 Pydantic 输出转为 dict 兼容形态
@@ -559,7 +561,7 @@ async def arun(state: EvaluationState) -> EvaluationResult:
 
 
 def run_sync(state: EvaluationState) -> EvaluationResult:
-    """同步入口（Celery / 单测用），内部跑独立事件循环。"""
+    """同步入口（Celery / 单测），内部跑独立事件循环。"""
     try:
         asyncio.get_running_loop()
     except RuntimeError:

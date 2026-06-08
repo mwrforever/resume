@@ -1,4 +1,4 @@
-# ── verification ──────────────────────────────────────────────────────────
+﻿# ── verification ──────────────────────────────────────────────────────────
 
 VERIFY_COUNT_TTL = 60
 VERIFY_COUNT_LIMIT = 5
@@ -94,3 +94,11 @@ AGENT_PROMPT_PREFIX_TTL = 21600
 
 AGENT_TOOL_CACHE_KEY = "agent:tool:{tool}:{cache_hash}"
 AGENT_TOOL_CACHE_TTL = 1800
+
+# -- agent session resume --
+
+AGENT_SESSION_RESUME_REF_KEY = "agent:session:{session_id}:resume_ref"
+AGENT_SESSION_RESUME_REF_TTL = 86400
+
+AGENT_RESUME_TEXT_KEY = "agent:resume_text:{resume_id}"
+AGENT_RESUME_TEXT_TTL = 7200

@@ -420,13 +420,14 @@ export default function EmployeeAgent() {
   const submitInteractionRequest = async (requestId: string, values: Record<string, unknown>) => {
     if (!currentSession || currentSession.isLocal) return;
     const streamingMessageId = -Date.now();
+    const interactionType = interactionRequests.find((item) => item.id === requestId)?.interaction_type || 'dimension_selection';
     setSending(true);
     setErrorMessage('');
     setInteractionRequests((prev) => prev.map((item) => (item.id === requestId ? { ...item, status: 'submitted' } : item)));
     try {
       await employeeAgentApi.submitForm(
         currentSession.id,
-        { request_id: requestId, values },
+        { request_id: requestId, values: { interaction_type: interactionType, ...values } },
         (streamEvent) => handleAgentStreamEvent(streamEvent, buildStreamHandlerDeps(streamingMessageId, currentSession, currentSession.id)),
       );
       await loadSessions();

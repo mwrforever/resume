@@ -30,6 +30,7 @@ async function refreshStreamAccessToken() {
   const nextRefreshToken = payload?.data?.refresh_token;
 
   if (!accessToken || !nextRefreshToken) {
+    // logout 内部已包含跳转到登录页的逻辑
     logout();
     return null;
   }
@@ -46,7 +47,10 @@ async function fetchStreamWithAuth(url: string, body: string) {
   let response = await fetch(url, { method: 'POST', headers: buildHeaders(firstToken), body });
   if (response.status !== 401) return response;
   const refreshedToken = await refreshStreamAccessToken();
-  if (!refreshedToken) return response;
+  if (!refreshedToken) {
+    // refreshStreamAccessToken 内部已处理跳转，此处返回原始 401 响应供上层判断
+    return response;
+  }
   response = await fetch(url, { method: 'POST', headers: buildHeaders(refreshedToken), body });
   return response;
 }

@@ -1,4 +1,9 @@
-"""双业务 Agent 工作流共享状态定义。"""
+"""双业务 Agent 工作流共享状态定义。
+
+所有字段必须为 msgpack 可序列化类型（dict / list / str / int / float / bool / None），
+因为 LangGraph checkpoint 使用 msgpack 编码。
+业务服务实例通过 _ctx.py 的 ContextVar 传递，不进入 State。
+"""
 
 from __future__ import annotations
 
@@ -17,7 +22,6 @@ class AgentWorkflowState(TypedDict, total=False):
     resume_ref: dict[str, Any]
     runtime_config: dict[str, Any]
     interaction_payload: dict[str, Any]
-    service_context: Any
     final_text: str
     final_blocks: list[dict[str, Any]]
     error_message: str

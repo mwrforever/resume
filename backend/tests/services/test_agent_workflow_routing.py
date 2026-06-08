@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from app.schemas.agent.dto import LLMRuntimeConfigDTO
-from app.schemas.agent.request import AgentMessageCreate
+from app.schemas.agent.request import AgentFormSubmit, AgentMessageCreate
 from app.schemas.agent.stream import AgentNodeId, AgentStreamEventType, CompletedPayload
 from app.services.agent_service import AgentService
 
@@ -21,6 +21,10 @@ class _Repo:
     async def get_session(self, session_id: int, employee_id: int):
         """返回测试会话。"""
         return SimpleNamespace(id=session_id, session_key="session-key", employee_id=employee_id, selected_model_name=None)
+
+    async def list_messages(self, session_id: int):
+        """返回测试消息列表。"""
+        return [SimpleNamespace(id=1, role="user", workflow_type="interview_questions")]
 
     async def next_message_order(self, session_id: int) -> int:
         """返回排序。"""
@@ -55,7 +59,7 @@ class _LlmService:
 class _WorkflowRunner:
     """测试用工作流 runner。"""
 
-    def __init__(self, compiled_graph: Any) -> None:
+    def __init__(self, compiled_graph: Any, **kwargs: Any) -> None:
         """记录编译图。"""
         self._compiled_graph = compiled_graph
         self._final_blocks = [{"type": "resume_evaluation_report", "report": {"decision": "建议面试"}}]
@@ -98,3 +102,18 @@ async def test_stream_message_routes_to_requested_workflow_and_persists_blocks(m
     block_types = [block["type"] for block in agent_message["content"]["blocks"]]
     assert "stream_events" in block_types
     assert "resume_evaluation_report" in block_types
+
+
+@pytest.mark.asyncio
+async def test_submit_form_emits_interaction_result_before_resuming_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    """交互提交必须发出 interaction_result，便于历史恢复过滤已提交卡片。"""
+    repo = _Repo()
+    graph = SimpleNamespace()
+    monkeypatch.setattr("app.services.agent_service.AgentWorkflowRunner", _WorkflowRunner, raising=False)
+    service = AgentService(repo, _LlmService(), model_router=object(), workflow_graphs={"interview_questions": graph})
+    body = AgentFormSubmit(request_id="req-1", values={"selected_dimensions": ["项目经验"]})
+
+    events = [event async for event in service.submit_form(1, body, {"user_type": "employee", "sub": "1"})]
+
+    assert events[0].data["event"] == "interaction_result"
+    assert events[0].data["payload"]["request_id"] == "req-1"

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { CheckCircle2, ClipboardCheck, Send } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, MessageSquareText, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { IAgentInteractionRequestItem } from '@/types/agent';
 
@@ -19,6 +19,7 @@ function labelOf(item: Record<string, unknown>) {
 function DimensionSelection({ item, onSubmit }: AgentInteractionCardProps) {
   const dimensions = useMemo(() => asRecordArray(item.data.dimensions), [item.data.dimensions]);
   const [selected, setSelected] = useState<string[]>([]);
+  const [customInput, setCustomInput] = useState('');
   const [error, setError] = useState('');
 
   const toggle = (name: string) => {
@@ -31,7 +32,11 @@ function DimensionSelection({ item, onSubmit }: AgentInteractionCardProps) {
       setError('请至少选择一个维度');
       return;
     }
-    onSubmit(item.id, { selected_dimensions: selected });
+    const values: Record<string, unknown> = { selected_dimensions: selected };
+    if (customInput.trim()) {
+      values.custom_input = customInput.trim();
+    }
+    onSubmit(item.id, values);
   };
 
   return (
@@ -50,6 +55,18 @@ function DimensionSelection({ item, onSubmit }: AgentInteractionCardProps) {
         })}
       </div>
       {error && <div role="alert" className="mt-3 text-xs text-red-600">{error}</div>}
+      <label className="mt-3 block text-xs font-medium text-slate-600">
+        <span className="inline-flex items-center gap-1">
+          <MessageSquareText size={12} aria-hidden="true" />
+          补充说明（可选）
+        </span>
+        <input
+          className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+          placeholder="可输入对维度的补充要求或关注重点"
+          value={customInput}
+          onChange={(event) => setCustomInput(event.target.value)}
+        />
+      </label>
       <Button type="button" size="sm" className="mt-4" onClick={submit} disabled={item.status !== 'pending'}>
         <Send size={14} className="mr-1" aria-hidden="true" />
         {item.submit_label}
@@ -59,14 +76,43 @@ function DimensionSelection({ item, onSubmit }: AgentInteractionCardProps) {
 }
 
 function PlanApproval({ item, onSubmit }: AgentInteractionCardProps) {
+  const [feedback, setFeedback] = useState('');
+
+  const approve = () => {
+    const values: Record<string, unknown> = { approved: true };
+    if (feedback.trim()) {
+      values.feedback = feedback.trim();
+    }
+    onSubmit(item.id, values);
+  };
+
+  const reject = () => {
+    const values: Record<string, unknown> = { approved: false, feedback: feedback.trim() || '请调整计划' };
+    onSubmit(item.id, values);
+  };
+
   return (
-    <div className="mt-3 flex flex-wrap gap-2">
-      <Button type="button" size="sm" onClick={() => onSubmit(item.id, { approved: true })} disabled={item.status !== 'pending'}>
-        批准计划
-      </Button>
-      <Button type="button" size="sm" variant="outline" onClick={() => onSubmit(item.id, { approved: false })} disabled={item.status !== 'pending'}>
-        退回调整
-      </Button>
+    <div className="mt-3 space-y-3">
+      <label className="block text-xs font-medium text-slate-600">
+        <span className="inline-flex items-center gap-1">
+          <MessageSquareText size={12} aria-hidden="true" />
+          审批意见（可选）
+        </span>
+        <input
+          className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+          placeholder="可输入对计划的修改建议或关注点"
+          value={feedback}
+          onChange={(event) => setFeedback(event.target.value)}
+        />
+      </label>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" size="sm" onClick={approve} disabled={item.status !== 'pending'}>
+          批准计划
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={reject} disabled={item.status !== 'pending'}>
+          退回调整
+        </Button>
+      </div>
     </div>
   );
 }

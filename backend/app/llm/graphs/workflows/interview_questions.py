@@ -10,25 +10,23 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
-from app.llm.graphs.coordinator.checkpointer import get_default_checkpointer
+from app.utils.cache_utils import AGENT_RESUME_TEXT_KEY, AGENT_RESUME_TEXT_TTL
+
+from app.llm.graphs.workflows._checkpointer import get_default_checkpointer
 from app.llm.graphs.workflows.state import InterviewQuestionState
 from app.schemas.agent.dto import InterviewQuestionItemDTO, InterviewQuestionPlanDTO, InterviewQuestionPlanItemDTO, LLMRuntimeConfigDTO
 
 
 def _get_service(state: InterviewQuestionState) -> Any:
-    """
-    获取面试题工作流业务服务。
+    """从 ContextVar 读取面试题业务服务实例（不经过 State 序列化）。"""
+    from app.llm.graphs.workflows._ctx import get_service as _ctx_get
+    return _ctx_get("interview_question_service")
 
-    Args:
-        state: LangGraph state
 
-    Returns:
-        Any: 注入的业务服务
-    """
-    service_context = state.get("service_context") or {}
-    if isinstance(service_context, dict):
-        return service_context.get("interview_question_service")
-    return getattr(service_context, "interview_question_service", None)
+def _get_context_value(key: str) -> Any:
+    """从 ContextVar 读取指定 key 的运行时对象（如 cache_service）。"""
+    from app.llm.graphs.workflows._ctx import get_service as _ctx_get
+    return _ctx_get(key)
 
 
 def _runtime_config(state: InterviewQuestionState) -> LLMRuntimeConfigDTO:
@@ -54,10 +52,26 @@ async def _load_resume_node(state: InterviewQuestionState) -> dict[str, Any]:
     Returns:
         dict[str, Any]: state 更新
     """
+    # 优先从 Redis 缓存获取已解析的简历文本，避免每次中断恢复后重新加载和解析
+    resume_ref = state.get("resume_ref") or {}
+    resume_id = int(resume_ref.get("resume_id") or 0)
+    cache_svc = _get_context_value("cache_service")
+    if cache_svc and resume_id > 0:
+        cached_text = await cache_svc.get(AGENT_RESUME_TEXT_KEY.format(resume_id=resume_id))
+        if cached_text:
+            return {"resume_text": cached_text}
+
+    # 缓存未命中，走正常加载流程
     service = _get_service(state)
     if service is None:
         return {"resume_text": ""}
     resume_text = await service.load_resume_text(employee_id=int(state.get("employee_id") or 0), resume_ref=state.get("resume_ref") or {})
+
+    # 加载成功后写入缓存，后续中断恢复时可直接复用
+    if cache_svc and resume_id > 0 and resume_text.strip():
+        await cache_svc.set(
+            AGENT_RESUME_TEXT_KEY.format(resume_id=resume_id), resume_text, AGENT_RESUME_TEXT_TTL)
+
     return {"resume_text": resume_text}
 
 

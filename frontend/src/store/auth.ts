@@ -20,7 +20,10 @@ export const useAuthStore = create<AuthState>()(
       userId: null,
       setTokens: (access, refresh) => set({ accessToken: access, refreshToken: refresh }),
       setUserInfo: (userType, userId) => set({ userType, userId }),
-      logout: () => set({ accessToken: null, refreshToken: null, userType: null, userId: null }),
+      logout: () => {
+        set({ accessToken: null, refreshToken: null, userType: null, userId: null });
+        window.location.href = '/auth';
+      },
     }),
     {
       name: 'auth-storage',

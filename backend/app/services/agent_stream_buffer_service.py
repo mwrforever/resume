@@ -12,6 +12,8 @@ from redis.exceptions import RedisError
 logger = logging.getLogger(__name__)
 
 STREAM_BUFFER_TTL_SECONDS = 1800
+# 内存回退最大条目数，防止长时间运行导致内存泄漏
+_MEMORY_FALLBACK_MAX_KEYS = 256
 
 
 class AgentStreamBufferService:
@@ -59,6 +61,8 @@ class AgentStreamBufferService:
             await self._redis.expire(key, self._ttl_seconds)
         except (RedisError, RuntimeError, TimeoutError, ConnectionError):
             logger.warning("Agent stream buffer append failed and used memory fallback: key=%s", key, exc_info=True)
+            # 内存回退时淘汰最旧的 key，防止内存泄漏
+            self._evict_memory_if_needed()
 
     async def read_events(self, *, session_id: int, run_id: str) -> list[dict[str, Any]]:
         """
@@ -95,3 +99,9 @@ class AgentStreamBufferService:
             await self._redis.delete(key)
         except (RedisError, RuntimeError, TimeoutError, ConnectionError):
             logger.warning("Agent stream buffer clear failed: key=%s", key, exc_info=True)
+
+    def _evict_memory_if_needed(self) -> None:
+        """当内存回退字典超过上限时淘汰最早写入的 key，防止内存泄漏。"""
+        while len(self._memory_events) > _MEMORY_FALLBACK_MAX_KEYS:
+            oldest_key = next(iter(self._memory_events))
+            self._memory_events.pop(oldest_key)

@@ -8,6 +8,7 @@ from typing import Any
 
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, Interrupt
+from app.llm.graphs.workflows._ctx import workflow_service_context
 
 from app.llm.streaming.emitter import AgentStreamEmitter
 from app.schemas.agent.stream import (
@@ -43,14 +44,16 @@ NODE_DISPLAY_NAMES = {
 class AgentWorkflowRunner:
     """双业务工作流图运行器。"""
 
-    def __init__(self, compiled_graph: CompiledStateGraph) -> None:
+    def __init__(self, compiled_graph: CompiledStateGraph, *, service_context: dict[str, Any] | None = None) -> None:
         """
         初始化运行器。
 
         Args:
             compiled_graph: 已编译工作流图
+            service_context: 业务服务实例字典，通过 ContextVar 传递给节点函数
         """
         self._graph = compiled_graph
+        self._service_context = service_context or {}
         self._final_messages: dict[str, str] = {}
         self._final_blocks: dict[str, list[dict[str, Any]]] = {}
 
@@ -73,11 +76,12 @@ class AgentWorkflowRunner:
             AgentStreamEvent: 标准化流事件
         """
         config = {"configurable": {"thread_id": thread_id}}
-        async for mode, payload in self._graph.astream(graph_input, config=config, stream_mode=["updates"]):
-            if mode != "updates":
-                continue
-            async for event in self._handle_updates(thread_id=thread_id, payload=payload, emitter=emitter):
-                yield event
+        with workflow_service_context(self._service_context):
+            async for mode, payload in self._graph.astream(graph_input, config=config, stream_mode=["updates"]):
+                if mode != "updates":
+                    continue
+                async for event in self._handle_updates(thread_id=thread_id, payload=payload, emitter=emitter):
+                    yield event
 
     def get_final_message(self, thread_id: str) -> str:
         """
@@ -199,20 +203,38 @@ class AgentWorkflowRunner:
             AgentNodeId: 协议节点 ID
         """
         mapping = {
-            "load_resume": AgentNodeId.WORKFLOW_LOAD_RESUME,
-            "suggest_dimensions": AgentNodeId.INTERVIEW_DIMENSION_SUGGEST,
-            "request_dimension_selection": AgentNodeId.INTERACTION_REQUEST,
-            "build_question_plan": AgentNodeId.INTERVIEW_PLAN,
-            "request_plan_approval": AgentNodeId.INTERACTION_REQUEST,
-            "fanout_generate_questions": AgentNodeId.INTERVIEW_QUESTION_GENERATE,
-            "reduce_questions": AgentNodeId.INTERVIEW_QUESTION_GENERATE,
-            "finalize_question_set": AgentNodeId.WORKFLOW_FINALIZE,
-            "analyze_resume_profile": AgentNodeId.RESUME_PROFILE_ANALYZE,
+            "load_resume": AgentNodeId.RESUME_AGENT,
+            "suggest_dimensions": AgentNodeId.DIMENSION_SELECTION,
+            "request_dimension_selection": AgentNodeId.DIMENSION_SELECTION,
+            "build_question_plan": AgentNodeId.PLAN_APPROVAL,
+            "request_plan_approval": AgentNodeId.PLAN_APPROVAL,
+            "fanout_generate_questions": AgentNodeId.INTERVIEW_QUESTIONS,
+            "reduce_questions": AgentNodeId.INTERVIEW_QUESTIONS,
+            "finalize_question_set": AgentNodeId.FINALIZE,
+            "analyze_resume_profile": AgentNodeId.RESUME_AGENT,
             "load_job_candidates": AgentNodeId.JOB_SELECTION,
-            "request_job_selection": AgentNodeId.INTERACTION_REQUEST,
+            "request_job_selection": AgentNodeId.JOB_SELECTION,
             "validate_job_full_name": AgentNodeId.JOB_SELECTION,
-            "run_evaluation_subgraph": AgentNodeId.RESUME_EVALUATION_RUN,
-            "build_visualization_report": AgentNodeId.RESUME_EVALUATION_REPORT,
-            "finalize_evaluation_report": AgentNodeId.WORKFLOW_FINALIZE,
+            "run_evaluation_subgraph": AgentNodeId.RESUME_EVALUATION,
+            "build_visualization_report": AgentNodeId.RESUME_EVALUATION,
+            "finalize_evaluation_report": AgentNodeId.FINALIZE,
         }
         return mapping.get(node_name, AgentNodeId.COORDINATOR)
+
+    @staticmethod
+    def _interaction_node_id(interaction_type: str) -> AgentNodeId:
+        """
+        将交互类型转换为协议节点 ID。
+
+        Args:
+            interaction_type: LangGraph interrupt 交互类型
+
+        Returns:
+            AgentNodeId: 协议节点 ID
+        """
+        mapping = {
+            "dimension_selection": AgentNodeId.DIMENSION_SELECTION,
+            "plan_approval": AgentNodeId.PLAN_APPROVAL,
+            "job_selection": AgentNodeId.JOB_SELECTION,
+        }
+        return mapping.get(interaction_type, AgentNodeId.FORM_REQUEST)

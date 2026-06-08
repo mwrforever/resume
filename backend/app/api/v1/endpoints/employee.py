@@ -108,27 +108,35 @@ async def refresh_token(
     req: RefreshTokenRequest,
     service: AuthService = Depends(get_auth_service)
 ) -> ApiResponse[RefreshTokenResponse]:
+    # 单独捕获 decode_token 的 ValueError，避免吞掉业务异常
     try:
         payload = decode_token(req.refresh_token)
-        if payload.get("type") != "refresh":
-            raise HTTPException(status_code=401, detail="无效的refresh token")
-
-        user_id = int(payload["sub"])
-        user_type = payload.get("user_type", "employee")
-
-        employee = await service.get_employee_by_id(user_id)
-        if not employee or employee.status != 1:
-            raise HTTPException(status_code=401, detail="员工已禁用")
-
-        new_access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": user_type})
-        new_refresh_token = create_refresh_token({"sub": str(user_id), "type": "refresh", "user_type": user_type})
-
-        return ApiResponse(data=RefreshTokenResponse(
-            access_token=new_access_token,
-            refresh_token=new_refresh_token
-        ))
     except ValueError:
         raise HTTPException(status_code=401, detail="无效的token")
+    # 以下逻辑中抛出的 HTTPException 由 FastAPI 统一处理，无需额外 try/except
+    if payload.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="无效的refresh token")
+
+    # 校验 token 归属：员工端接口只接受 user_type=employee 的 refresh token
+    if payload.get("user_type") != "employee":
+        raise HTTPException(status_code=401, detail="非员工类型的token")
+
+    user_id = int(payload["sub"])
+    user_type = payload.get("user_type", "employee")
+
+    employee = await service.get_employee_by_id(user_id)
+    if not employee or employee.status != 1:
+        raise HTTPException(status_code=401, detail="员工已禁用")
+
+    new_access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": user_type})
+    new_refresh_token = create_refresh_token({"sub": str(user_id), "type": "refresh", "user_type": user_type})
+
+    return ApiResponse(data=RefreshTokenResponse(
+        access_token=new_access_token,
+        refresh_token=new_refresh_token,
+        user_type=user_type,
+        user_id=user_id
+    ))
 
 
 # ── employee management endpoints ──

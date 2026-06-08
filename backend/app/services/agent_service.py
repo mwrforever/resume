@@ -1,13 +1,13 @@
-"""
-Agent 服务层 — 中心调度（langgraph-supervisor）入口。
+﻿"""
+Agent 服务层 — 工作流模式入口（简历评估 + 简历问答）。
 
 职责：
 - Agent 会话生命周期（CRUD）
-- 用户消息 → langgraph-supervisor 编译图 → SSE v2 事件流
+- 用户消息 → 业务工作流图（interview_questions / resume_evaluation）→ SSE v2 事件流
 - 表单提交 → `Command(resume=values)` 恢复中断
-- 写操作（ActionCard）确认 → 持久化变更，并通过 `Command(resume=...)` 通知图
+- 写操作（ActionCard）确认 → 持久化变更
 
-LLM/Agent 编排逻辑全部下沉到 `app.llm.graphs.coordinator` + `app.llm.graphs.sub_agents`，
+LLM/Agent 编排逻辑全部下沉到 `app.llm.graphs.workflows`，
 本服务只做：会话权限、运行时配置、业务快照构建、写操作事务、消息落库。
 """
 
@@ -26,12 +26,6 @@ from langgraph.types import Command
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
-from app.llm.graphs.coordinator import (
-    CoordinatorRunner,
-    build_coordinator_graph,
-    get_default_checkpointer,
-)
-from app.llm.graphs.coordinator.chat_model import build_chat_model
 from app.llm.graphs.workflows import AgentWorkflowRunner
 from app.llm.model_router import LLMModelRouter, get_default_model_router
 from app.llm.streaming.emitter import AgentStreamEmitter
@@ -40,6 +34,12 @@ from app.repositories.application_repository import ApplicationRepository
 from app.repositories.evaluation_repository import EvalRepository
 from app.repositories.job_repository import JobRepository
 from app.repositories.resume_repository import ResumeRepository
+from app.utils.cache_utils import (
+    AGENT_RESUME_TEXT_KEY,
+    AGENT_RESUME_TEXT_TTL,
+    AGENT_SESSION_RESUME_REF_KEY,
+    AGENT_SESSION_RESUME_REF_TTL,
+)
 from app.schemas.agent.dto import LLMRuntimeConfigDTO
 from app.schemas.agent.request import (
     AgentActionExecute,
@@ -58,7 +58,7 @@ from app.schemas.agent.stream import (
     AgentStreamEvent,
     AgentStreamEventType,
     ErrorPayload,
-    FormResolvedPayload,
+    InteractionResultPayload,
     LifecycleRunPayload,
     MessageDonePayload,
     MessageStartedPayload,
@@ -75,7 +75,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentService:
-    """中心调度 Agent 服务（与协议 v2 一一对应）。"""
+    """业务工作流 Agent 服务（简历评估 + 简历问答）。"""
 
     def __init__(
         self,
@@ -99,7 +99,7 @@ class AgentService:
             llm_service: LLM 运行时配置服务
             context_service: 长期记忆（可选）
             model_router: 兼容路由器，仅供需要直接调用 LLM 的工具使用（默认走全局实例）
-            job_repo / app_repo / eval_repo / resume_repo: 业务快照与子 Agent 数据源
+            job_repo / app_repo / eval_repo / resume_repo: 业务快照数据源
             cache: Redis 缓存服务，用于流事件缓冲
             workflow_graphs: FastAPI lifespan 注册的业务工作流编译图
         """
@@ -132,8 +132,6 @@ class AgentService:
             if self._resume_pipeline and job_repo
             else None
         )
-
-        self._checkpointer = get_default_checkpointer()
 
     # ------------------------------------------------------------------
     # 会话 CRUD
@@ -237,10 +235,13 @@ class AgentService:
             uploaded.get("resume_id"),
             job_id,
         )
+        # 将简历引用缓存到 Redis，后续消息可自动恢复
+        await self._cache_session_resume_ref(session.id, uploaded)
+
         return uploaded
 
     # ------------------------------------------------------------------
-    # 流式核心：用户消息 → supervisor 图
+    # 流式核心：用户消息 → 业务工作流图
     # ------------------------------------------------------------------
 
     async def stream_message(
@@ -265,6 +266,9 @@ class AgentService:
         run_id = emitter.run_id
         user_message = await self._create_user_message(session, body, workflow_type=workflow_type, run_id=run_id)
         resume_ref = self._parse_resume_ref(body.context_refs)
+        # 如果当前消息未附带简历附件，从会话级 Redis 缓存恢复
+        if resume_ref is None:
+            resume_ref = await self._get_session_resume_ref(session.id)
         tool_context = await self._build_tool_context(session.employee_id)
 
         # 立即发射用户消息事件，让前端立刻渲染用户输入内容
@@ -294,7 +298,6 @@ class AgentService:
             "tool_context": tool_context,
             "resume_ref": resume_ref or {},
             "runtime_config": runtime_config.model_dump(mode="python"),
-            "service_context": self._build_workflow_service_context(),
             "final_message": "",
             "final_text": "",
             "final_blocks": [],
@@ -330,12 +333,17 @@ class AgentService:
         emitter = AgentStreamEmitter(session_id=session.id, session_key=session.session_key, workflow_type=workflow_type)
         run_id = emitter.run_id
         runner = self._build_workflow_runner(workflow_type, runtime_config)
-        # 先回执 form.resolved 让前端立即关闭表单
+        # 先回执 interaction_result 让前端立即关闭表单
         yield await self._yield_buffered_event(
             event=emitter.emit(
-                event=AgentStreamEventType.FORM_RESOLVED,
+                event=AgentStreamEventType.INTERACTION_RESULT,
                 node_id=AgentNodeId.FORM_REQUEST,
-                payload=FormResolvedPayload(request_id=body.request_id, accepted=True, values=body.values),
+                payload=InteractionResultPayload(
+                    request_id=body.request_id,
+                    interaction_type=str(body.values.get("interaction_type") or "dimension_selection"),
+                    accepted=True,
+                    values=body.values,
+                ),
             ),
             session_id=session.id,
             run_id=run_id,
@@ -356,7 +364,7 @@ class AgentService:
     async def _run_graph_stream(
         self,
         *,
-        runner: CoordinatorRunner | AgentWorkflowRunner,
+        runner: AgentWorkflowRunner,
         session,
         user_message_id: int,
         graph_input: dict[str, Any] | Command,
@@ -661,6 +669,77 @@ class AgentService:
             }
         return None
 
+    async def _cache_session_resume_ref(self, session_id: int, resume_data: dict[str, Any]) -> None:
+        """将简历引用缓存到 Redis（绑定会话），后续消息可自动恢复，避免重复上传。
+
+        Args:
+            session_id: 会话 ID
+            resume_data: 上传接口返回的简历数据（含 resume_id、file_name、job_id）
+        """
+        if not self._cache:
+            return
+        cache_key = AGENT_SESSION_RESUME_REF_KEY.format(session_id=session_id)
+        ref = {
+            "resume_id": int(resume_data.get("resume_id") or 0),
+            "job_id": resume_data.get("job_id"),
+            "file_name": str(resume_data.get("file_name") or ""),
+        }
+        await self._cache.set_json(cache_key, ref, AGENT_SESSION_RESUME_REF_TTL)
+        logger.info("会话简历引用已缓存：session_id=%s resume_id=%s", session_id, ref.get("resume_id"))
+
+    async def _get_session_resume_ref(self, session_id: int) -> dict[str, Any] | None:
+        """从 Redis 缓存读取会话的简历引用。
+
+        优先于从历史消息恢复（更快更可靠），避免用户发「继续」时简历丢失。
+
+        Args:
+            session_id: 会话 ID
+
+        Returns:
+            dict[str, Any] | None: 简历引用字典，未找到时返回 None
+        """
+        if not self._cache:
+            return None
+        cache_key = AGENT_SESSION_RESUME_REF_KEY.format(session_id=session_id)
+        cached = await self._cache.get_json(cache_key)
+        if cached and isinstance(cached, dict) and cached.get("resume_id"):
+            logger.info(
+                "从缓存恢复简历引用：session_id=%s resume_id=%s",
+                session_id,
+                cached.get("resume_id"),
+            )
+            return cached
+        return None
+
+    async def _cache_resume_text(self, resume_id: int, resume_text: str) -> None:
+        """将已加载的简历文本缓存到 Redis，后续同一简历直接复用。
+
+        Args:
+            resume_id: 简历 ID
+            resume_text: 已解析的简历文本
+        """
+        if not self._cache or not resume_text.strip():
+            return
+        cache_key = AGENT_RESUME_TEXT_KEY.format(resume_id=resume_id)
+        await self._cache.set(cache_key, resume_text, AGENT_RESUME_TEXT_TTL)
+
+    async def _get_cached_resume_text(self, resume_id: int) -> str | None:
+        """从 Redis 缓存读取已解析的简历文本。
+
+        Args:
+            resume_id: 简历 ID
+
+        Returns:
+            str | None: 缓存的简历文本，未命中时返回 None
+        """
+        if not self._cache:
+            return None
+        cache_key = AGENT_RESUME_TEXT_KEY.format(resume_id=resume_id)
+        cached = await self._cache.get(cache_key)
+        return cached if cached else None
+
+
+
     async def _build_tool_context(self, employee_id: int) -> dict[str, Any]:
         """构建子 Agent 工具共享的业务快照。"""
         business = await self._build_business_snapshot(employee_id)
@@ -735,7 +814,7 @@ class AgentService:
         return snapshot
 
     # ------------------------------------------------------------------
-    # 协调器图工厂
+    # 工作流 Runner 工厂
     # ------------------------------------------------------------------
 
     def _build_workflow_service_context(self) -> dict[str, Any]:
@@ -743,34 +822,23 @@ class AgentService:
         return {
             "interview_question_service": self._interview_question_service,
             "resume_evaluation_service": self._resume_evaluation_service,
+            "cache_service": self._cache,
         }
 
     def _build_workflow_runner(
         self,
         workflow_type: str,
         runtime_config: LLMRuntimeConfigDTO,
-    ) -> CoordinatorRunner | AgentWorkflowRunner:
-        """根据 workflow_type 构建业务工作流 runner，缺省回退旧协调器。"""
-        compiled = self._workflow_graphs.get(workflow_type)
-        if compiled is not None:
-            return AgentWorkflowRunner(compiled)
-        return self._build_runner(runtime_config)
+    ) -> AgentWorkflowRunner:
+        """根据 workflow_type 构建业务工作流 runner。
 
-    def _build_runner(self, runtime_config: LLMRuntimeConfigDTO) -> CoordinatorRunner:
-        """根据当前运行时配置实时构造 supervisor 图（共享进程级 checkpointer）。"""
-        chat_model = build_chat_model(runtime_config)
-        compiled = build_coordinator_graph(
-            chat_model=chat_model,
-            model_router=self._model_router,
-            job_repo=self._job_repo,
-            app_repo=self._app_repo,
-            eval_repo=self._eval_repo,
-            resume_repo=self._resume_repo,
-            context_service=self._context_service,
-            resume_pipeline=self._resume_pipeline,
-            checkpointer=self._checkpointer,
-        )
-        return CoordinatorRunner(compiled)
+        仅支持 interview_questions（简历问答）和 resume_evaluation（简历评估）两种模式。
+        若 workflow_type 无对应编译图，直接抛出校验异常。
+        """
+        compiled = self._workflow_graphs.get(workflow_type)
+        if compiled is None:
+            raise ValidationError(f"不支持的工作流类型: {workflow_type}")
+        return AgentWorkflowRunner(compiled, service_context=self._build_workflow_service_context())
 
     # ------------------------------------------------------------------
     # 工具方法

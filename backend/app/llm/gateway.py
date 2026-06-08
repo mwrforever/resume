@@ -1,3 +1,4 @@
+import logging
 import re
 from collections.abc import AsyncIterator
 
@@ -7,6 +8,7 @@ from openai import OpenAIError
 from app.core.config import get_settings
 from app.schemas.agent.dto import LLMResultDTO, LLMRuntimeConfigDTO, LLMStreamChunkDTO
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 LLM_GATEWAY_ERRORS = (OpenAIError, TimeoutError, ValueError)
 
@@ -16,11 +18,28 @@ class LLMGatewayError(RuntimeError):
 
 
 class OpenAICompatibleGateway:
+    """OpenAI 协议网关：封装 ChatOpenAI 调用，负责协议适配与响应归一化。"""
+
     protocol = "openai"
+    _chat_model_cache: dict[str, ChatOpenAI] = {}
+    _chat_model_max_cache: int = 16
+
+    def _get_or_create_chat_model(self, runtime_config: LLMRuntimeConfigDTO) -> ChatOpenAI:
+        """获取或缓存 ChatOpenAI 实例，复用 HTTP 连接池以减少延迟。"""
+        kwargs = self._chat_kwargs(runtime_config)
+        cache_key = f"{kwargs['model']}:{kwargs['base_url']}:{kwargs.get('api_key', '')}"
+        cached = self._chat_model_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        instance = ChatOpenAI(**kwargs)
+        if len(self._chat_model_cache) >= self._chat_model_max_cache:
+            self._chat_model_cache.pop(next(iter(self._chat_model_cache)))
+        self._chat_model_cache[cache_key] = instance
+        return instance
 
     async def complete_once(self, prompt: str, runtime_config: LLMRuntimeConfigDTO) -> LLMResultDTO:
         try:
-            response = await ChatOpenAI(**self._chat_kwargs(runtime_config)).ainvoke(prompt)
+            response = await self._get_or_create_chat_model(runtime_config).ainvoke(prompt)
         except LLM_GATEWAY_ERRORS as exc:
             raise LLMGatewayError(str(exc)) from exc
         return self._extract_result(response, runtime_config.model_name)
@@ -30,7 +49,7 @@ class OpenAICompatibleGateway:
         usage_metadata: dict = {}
         response_metadata: dict = {}
         try:
-            async for chunk in ChatOpenAI(**self._chat_kwargs(runtime_config)).astream(prompt):
+            async for chunk in self._get_or_create_chat_model(runtime_config).astream(prompt):
                 raw_delta = chunk.content
                 delta = raw_delta if isinstance(raw_delta, str) else str(raw_delta or "")
                 if delta:
@@ -77,7 +96,7 @@ class OpenAICompatibleGateway:
         }
 
     def _strip_thinking(self, text: str) -> str:
-        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        return re.sub(r"<think.*?</think\s*>", "", text, flags=re.DOTALL).strip()
 
     def _extract_result(self, response, model_name: str) -> LLMResultDTO:
         raw_content = response.content
