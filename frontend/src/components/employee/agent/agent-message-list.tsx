@@ -1,18 +1,143 @@
 import { AlertCircle, Bot, Brain, CheckCircle2, Loader2, UserRound, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import type { IAgentActionStreamItem, IAgentInteractionRequestItem, IAgentMessageItem, IAgentRuntimeFeedItem, IAgentThinkingStreamItem, IPlanReviewUiState } from '@/types/agent';
+import type { IAgentActionStreamItem, IAgentBusinessCardItem, IAgentInteractionRequestItem, IAgentMessageItem, IAgentRuntimeFeedItem, IAgentThinkingStreamItem, IPlanReviewUiState } from '@/types/agent';
 import { AgentActionCard } from './agent-action-card';
 import { AgentMarkdownContent } from './agent-markdown-content';
 import { AgentInteractionCard } from './agent-interaction-card';
 import { AgentRunCompactTimeline } from './agent-run-compact-timeline';
 import { AgentThinkingPanel } from './agent-thinking-panel';
+import { InterviewQuestionSetCard } from './interview-question-set-card';
 import { PlanReviewTree } from './plan-review-tree';
+import { ResumeEvaluationReportCard } from './resume-evaluation-report-card';
 import { hiddenScrollClass, messageText } from './agent-ui-utils';
+
+
+interface RestoredMessageBlocks {
+  runtimeFeedItems: IAgentRuntimeFeedItem[];
+  thinkingItems: IAgentThinkingStreamItem[];
+  interactionRequests: IAgentInteractionRequestItem[];
+  businessCards: IAgentBusinessCardItem[];
+}
+
+/**
+ * 将未知 block 载荷收窄为普通对象。
+ *
+ * @param value 历史消息 block 或事件载荷。
+ * @return Record<string, unknown> | null 可安全读取的对象，非法结构返回空。
+ */
+function coerceBlockRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+/**
+ * 提取可作为正文渲染的消息块。
+ *
+ * @param blocks 消息中的全部内容块。
+ * @return Array<Record<string, unknown>> 文本或 HTML 内容块。
+ */
+function textBlocks(blocks: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return blocks.filter((block) => block.type === 'text' || typeof block.text === 'string' || typeof block.html === 'string');
+}
+
+/**
+ * 从历史消息快照恢复前端紧凑渲染状态。
+ *
+ * @param blocks `agent_message.content.blocks` 历史快照。
+ * @return RestoredMessageBlocks 可直接渲染的时间线、思考、交互和业务卡片。
+ */
+function restoreMessageBlocks(blocks: Array<Record<string, unknown>>): RestoredMessageBlocks {
+  const restored: RestoredMessageBlocks = { runtimeFeedItems: [], thinkingItems: [], interactionRequests: [], businessCards: [] };
+  const interactionResults = new Set<string>();
+
+  blocks.forEach((block, blockIndex) => {
+    if (block.type === 'interview_question_set') {
+      const payload = coerceBlockRecord(block.question_set);
+      if (payload) restored.businessCards.push({ id: `history-question-set-${blockIndex}`, run_id: 'history', type: 'interview_question_set', payload });
+      return;
+    }
+    if (block.type === 'resume_evaluation_report') {
+      const payload = coerceBlockRecord(block.report);
+      if (payload) restored.businessCards.push({ id: `history-evaluation-report-${blockIndex}`, run_id: 'history', type: 'resume_evaluation_report', payload });
+      return;
+    }
+    if (block.type !== 'stream_events' || !Array.isArray(block.events)) return;
+
+    block.events.forEach((eventValue, eventIndex) => {
+      const event = coerceBlockRecord(eventValue);
+      const payload = coerceBlockRecord(event?.payload);
+      if (!event || !payload) return;
+      const eventName = String(event.event || '');
+      const runId = String(event.run_id || 'history');
+      const nodeId = String(event.node_id || eventIndex);
+
+      if (eventName === 'execution_status') {
+        restored.runtimeFeedItems.push({
+          id: `history-execution-${runId}-${nodeId}-${eventIndex}`,
+          type: 'node',
+          status: payload.status === 'success' ? 'success' : payload.status === 'failed' ? 'failed' : payload.status === 'waiting' ? 'pending' : 'running',
+          title: String(payload.title || nodeId),
+          message: typeof payload.detail === 'string' ? payload.detail : null,
+        });
+        return;
+      }
+
+      if (eventName === 'thinking_status' || eventName === 'thinking_stream') {
+        const id = String(payload.message_id || `history-thinking-${runId}-${nodeId}`);
+        const delta = eventName === 'thinking_stream' && typeof payload.delta === 'string' ? payload.delta : '';
+        const content = typeof payload.content === 'string' ? payload.content : delta;
+        const existing = restored.thinkingItems.find((item) => item.id === id);
+        if (existing) {
+          existing.status = payload.status === 'completed' ? 'completed' : payload.status === 'unavailable' ? 'unavailable' : 'streaming';
+          existing.content = `${existing.content}${delta || content}`;
+        } else {
+          restored.thinkingItems.push({ id, run_id: runId, status: payload.status === 'completed' ? 'completed' : payload.status === 'unavailable' ? 'unavailable' : 'streaming', content });
+        }
+        return;
+      }
+
+      if (eventName === 'interaction_request') {
+        restored.interactionRequests.push({
+          id: String(payload.request_id || `history-interaction-${runId}-${eventIndex}`),
+          run_id: runId,
+          interaction_type: payload.interaction_type === 'plan_approval' ? 'plan_approval' : payload.interaction_type === 'job_selection' ? 'job_selection' : 'dimension_selection',
+          title: String(payload.title || '请确认'),
+          prompt: String(payload.prompt || ''),
+          data: coerceBlockRecord(payload.data) || {},
+          submit_label: String(payload.submit_label || '提交'),
+          status: 'pending',
+        });
+        return;
+      }
+
+      if (eventName === 'interaction_result') {
+        const requestId = String(payload.request_id || '');
+        if (requestId) interactionResults.add(requestId);
+      }
+    });
+  });
+
+  // 历史消息只恢复未完成 interrupt，避免刷新后重复展示已提交表单。
+  restored.interactionRequests = restored.interactionRequests.filter((request) => !interactionResults.has(request.id));
+  return restored;
+}
+
+/**
+ * 按业务卡片类型分发到具体展示组件。
+ *
+ * @param props 业务卡片渲染项。
+ * @return React.ReactElement 业务卡片组件。
+ */
+function BusinessCardRenderer({ item }: { item: IAgentBusinessCardItem }) {
+  if (item.type === 'interview_question_set') return <InterviewQuestionSetCard questionSet={item.payload} />;
+  return <ResumeEvaluationReportCard report={item.payload} />;
+}
 
 interface AgentMessageListProps {
   messages: IAgentMessageItem[];
   actionsByMessageId: Map<number, IAgentActionStreamItem[]>;
   runtimeFeedItems: IAgentRuntimeFeedItem[];
+  businessCards?: IAgentBusinessCardItem[];
   thinkingItems?: IAgentThinkingStreamItem[];
   interactionRequests?: IAgentInteractionRequestItem[];
   planReview: IPlanReviewUiState | null;
@@ -68,6 +193,7 @@ export function AgentMessageList({
   messages,
   actionsByMessageId,
   runtimeFeedItems,
+  businessCards = [],
   thinkingItems = [],
   interactionRequests = [],
   planReview,
@@ -99,7 +225,9 @@ export function AgentMessageList({
       <div className="mx-auto flex max-w-4xl flex-col gap-5">
         {messages.map((message, index) => {
           const isUser = message.role === 'user';
-          const text = messageText(message.content.blocks || []);
+          const blocks = message.content.blocks || [];
+          const restoredBlocks = !isUser ? restoreMessageBlocks(blocks) : null;
+          const text = messageText(textBlocks(blocks));
           return (
             <div key={message.id} className="space-y-3">
               <div className="space-y-3">
@@ -126,12 +254,19 @@ export function AgentMessageList({
                     </div>
                   )}
                 </div>
+                {restoredBlocks && <AgentRunCompactTimeline items={restoredBlocks.runtimeFeedItems} />}
+                {restoredBlocks?.thinkingItems.map((item) => <AgentThinkingPanel key={item.id} item={item} />)}
+                {restoredBlocks?.interactionRequests.map((item) => (
+                  <AgentInteractionCard key={item.id} item={{ ...item, status: 'expired' }} onSubmit={() => undefined} />
+                ))}
+                {restoredBlocks?.businessCards.map((item) => <BusinessCardRenderer key={item.id} item={item} />)}
                 {index === insertRuntimeFeedAfterIndex && <AgentRunCompactTimeline items={runtimeFeedItems} />}
                 {index === insertRuntimeFeedAfterIndex && thinkingItems.map((item) => <AgentThinkingPanel key={item.id} item={item} />)}
                 {index === insertRuntimeFeedAfterIndex &&
                   interactionRequests.map((item) => (
                     <AgentInteractionCard key={item.id} item={item} onSubmit={onSubmitInteraction || (() => undefined)} />
                   ))}
+                {index === insertRuntimeFeedAfterIndex && businessCards.map((item) => <BusinessCardRenderer key={item.id} item={item} />)}
                 {index === insertRuntimeFeedAfterIndex &&
                   runtimeFeedItems
                     .filter((item) => item.type === 'action' && item.action)

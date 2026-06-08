@@ -3,6 +3,7 @@ import type { SetStateAction } from 'react';
 import type { WorkspaceSession } from '@/components/employee/agent/agent-session-sidebar';
 import type {
   IAgentActionStreamItem,
+  IAgentBusinessCardItem,
   IAgentMemoryItem,
   IAgentMessageItem,
   IAgentInteractionRequestItem,
@@ -298,5 +299,37 @@ describe('agent compact workflow events', () => {
       interaction_type: 'dimension_selection',
       status: 'pending',
     });
+  });
+});
+
+
+it('stores completed workflow blocks as business cards', () => {
+  const { deps } = createHandlerDeps();
+  const businessCards: StateBox<IAgentBusinessCardItem[]> = { value: [] };
+  deps.setBusinessCards = createSetter(businessCards);
+
+  handleAgentStreamEvent({
+    event: 'agent',
+    data: {
+      schema_version: '2.0',
+      seq: 1,
+      run_id: 'run-1',
+      session_id: 1,
+      node_id: 'finalize',
+      event: 'completed',
+      payload: {
+        message: '已完成',
+        blocks: [
+          { type: 'resume_evaluation_report', report: { decision: '建议进入面试' } },
+        ],
+      },
+      ts: 1,
+    },
+  }, deps);
+
+  expect(businessCards.value[0]).toMatchObject({
+    run_id: 'run-1',
+    type: 'resume_evaluation_report',
+    payload: { decision: '建议进入面试' },
   });
 });

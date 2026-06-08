@@ -136,6 +136,7 @@ function handleAgentV2Event(data: Record<string, unknown>, deps: AgentStreamHand
 
   if (event === 'completed') {
     deps.setRuntimeFeedItems((prev) => prev.map((item) => (item.status === 'running' ? { ...item, status: 'success' } : item)));
+    appendCompletedBusinessCards(envelope, payload, deps);
     return;
   }
 
@@ -375,6 +376,31 @@ function markInteractionResult(payload: Record<string, unknown>, deps: AgentStre
   if (!requestId) return;
   deps.setInteractionRequests?.((prev) => prev.map((item) => (item.id === requestId ? { ...item, status: 'submitted' } : item)));
   deps.setRuntimeFeedItems((prev) => updateRuntimeFeedStatus(prev, `interaction-${requestId}`, 'success'));
+}
+
+/**
+ * 将 workflow completed 事件中的最终业务 blocks 写入实时业务卡片状态。
+ *
+ * @param envelope v2 流式事件信封。
+ * @param payload completed 事件载荷。
+ * @param deps React 状态更新依赖。
+ * @return void
+ */
+function appendCompletedBusinessCards(envelope: IAgentStreamEnvelopeV2, payload: Record<string, unknown>, deps: AgentStreamHandlerDeps): void {
+  if (!Array.isArray(payload.blocks) || !deps.setBusinessCards) return;
+  payload.blocks.forEach((block, index) => {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) return;
+    const blockRecord = block as Record<string, unknown>;
+    const cardType = coerceBusinessCardType(blockRecord.type);
+    if (!cardType) return;
+    const cardPayload = cardType === 'interview_question_set' ? blockRecord.question_set : blockRecord.report;
+    if (!cardPayload || typeof cardPayload !== 'object' || Array.isArray(cardPayload)) return;
+    const id = `${cardType}-${envelope.run_id}-${index}`;
+    deps.setBusinessCards?.((prev) => [
+      { id, run_id: envelope.run_id, type: cardType, payload: cardPayload as Record<string, unknown> },
+      ...prev.filter((item) => item.id !== id),
+    ]);
+  });
 }
 
 function appendBusinessCard(

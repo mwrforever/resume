@@ -491,6 +491,7 @@ export default function EmployeeAgent() {
             messages={messages}
             actionsByMessageId={actionsByMessageId}
             runtimeFeedItems={runtimeFeedItems}
+            businessCards={businessCards}
             thinkingItems={thinkingItems}
             interactionRequests={interactionRequests}
             planReview={planReview}
