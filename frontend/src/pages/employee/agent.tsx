@@ -301,6 +301,15 @@ export default function EmployeeAgent() {
     const streamingMessageId = -Date.now();
     setErrorMessage('');
     setPlanReview(null);
+    /* 乐观更新：在 API 调用前立即将用户消息添加到列表，避免等待后端响应才展示 */
+    const optimisticMessage: IAgentMessageItem = {
+      id: -Date.now(),
+      role: 'user',
+      content: { context_refs: [], blocks: [{ type: 'text', text: content }] },
+      token_count: 0,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimisticMessage]);
     setSending(true);
     setToolEvents([]);
     setRuntimeFeedItems(enableThinking ? [{ id: `thinking-${streamingMessageId}`, type: 'thinking', status: 'running', title: 'Agent 正在思考' }] : []);

@@ -1,17 +1,17 @@
-import { Activity, Brain, Cpu, X } from 'lucide-react';
+import { Activity, Brain, X } from 'lucide-react';
 import { useState } from 'react';
-import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import type { IAgentMemoryItem, IAgentToolStreamItem } from '@/types/agent';
+import type { IAgentMemoryItem } from '@/types/agent';
 import { cn } from '@/lib/utils';
-import { getToolEventLabel, getToolEventVariant, hiddenScrollClass } from './agent-ui-utils';
+import { hiddenScrollClass } from './agent-ui-utils';
 
-type PreferenceTab = 'metrics' | 'memories' | 'trace';
+type PreferenceTab = 'metrics' | 'memories';
 
 interface AgentPreferencesDialogProps {
   open: boolean;
   memories: IAgentMemoryItem[];
-  toolEvents: IAgentToolStreamItem[];
+  /** 保留 prop 以兼容父组件调用，Trace 模块已移除 */
+  toolEvents?: unknown[];
   totalTokens: number;
   messageCount: number;
   actionCount: number;
@@ -21,7 +21,6 @@ interface AgentPreferencesDialogProps {
 const preferenceTabs = [
   { type: 'metrics' as const, icon: Activity, label: '运行指标', description: '会话消耗概览' },
   { type: 'memories' as const, icon: Brain, label: '长期记忆', description: '当前用户记忆' },
-  { type: 'trace' as const, icon: Cpu, label: 'Trace', description: '实时工具事件' },
 ];
 
 function MetricCard({ label, value }: { label: string; value: string | number }) {
@@ -42,7 +41,7 @@ export function AgentPreferencesDialog({ open, memories, toolEvents, totalTokens
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div>
             <DialogTitle className="mb-0">Agent 可观测信息</DialogTitle>
-            <p className="mt-1 text-sm text-slate-500">运行指标、长期记忆与 Trace 信息用于排查当前会话执行过程。</p>
+            <p className="mt-1 text-sm text-slate-500">运行指标与长期记忆信息，用于排查当前会话执行过程。</p>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭" className="cursor-pointer rounded-xl p-2 text-slate-400 transition-colors duration-200 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X size={18} /></button>
         </div>
@@ -77,21 +76,6 @@ export function AgentPreferencesDialog({ open, memories, toolEvents, totalTokens
                   </div>
                 ))}
                 {memories.length === 0 && <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-6 text-sm text-slate-600">暂无记忆。</div>}
-              </div>
-            )}
-            {activeTab === 'trace' && (
-              <div className="space-y-3">
-                {toolEvents.map((item) => (
-                  <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-600 shadow-sm shadow-slate-100">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="font-semibold text-slate-950">{item.display_name}</span>
-                      <Badge variant={getToolEventVariant(item)}>{getToolEventLabel(item.type)}</Badge>
-                    </div>
-                    <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-slate-50 p-3">{JSON.stringify(item.payload, null, 2)}</pre>
-                    {item.error_message && <div className="mt-2 text-red-600">{item.error_message}</div>}
-                  </div>
-                ))}
-                {toolEvents.length === 0 && <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-6 text-sm text-slate-600">暂无实时工具事件。</div>}
               </div>
             )}
           </section>

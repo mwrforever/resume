@@ -30,6 +30,7 @@ dependencies = [
     "httpx==0.28.1",
     "bcrypt==5.0.0",
     "cryptography==46.0.7",
+    "docling>=2.0.0",
 ]
 
 [project.optional-dependencies]
