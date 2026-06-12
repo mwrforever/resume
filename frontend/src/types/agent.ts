@@ -1,183 +1,16 @@
-/** Agent 流式协议 v1 与规划审批相关类型（与后端 schemas/agent 对齐） */
+/**
+ * Agent 模块类型定义（重构中精简版）。
+ *
+ * 旧的 v1/v2 协议类型已删除，将在 Stage 8 用新协议类型重写。
+ * 当前仅保留 LLM 配置相关类型和最简的 Agent session/message 类型。
+ */
 
-export type TAgentStreamProtocolVersion = '1.0';
+// ====== Workflow ======
 
-/** 与后端 AgentNodeId 一致 */
-export type TAgentNodeId =
-  | 'input'
-  | 'analyst'
-  | 'human_feedback'
-  | 'planner'
-  | 'supervisor'
-  | 'serial_route'
-  | 'fan_out'
-  | 'domain_agent'
-  | 'result_merger'
-  | 'legacy_executor'
-  | 'evaluator'
-  | 'compressor'
-  | 'reporter';
-
-/** 与后端 AgentEventTypeV1 一致 */
-export type TAgentEventTypeV1 =
-  | 'lifecycle.run_started'
-  | 'lifecycle.run_finished'
-  | 'lifecycle.run_failed'
-  | 'lifecycle.node_enter'
-  | 'lifecycle.node_exit'
-  | 'lifecycle.node_error'
-  | 'lifecycle.interrupt'
-  | 'lifecycle.resume_ack'
-  | 'stream.text_delta'
-  | 'stream.text_done'
-  | 'stream.thought_delta'
-  | 'stream.thought_done'
-  | 'ui.render'
-  | 'ui.patch'
-  | 'ui.dismiss'
-  | 'plan.revision_started'
-  | 'plan.revision_rejected'
-  | 'plan.repair_suggestions'
-  | 'plan.approved'
-  | 'tool.call_start'
-  | 'tool.call_log'
-  | 'tool.call_end';
-
-export type TUiComponentKey = 'PlanReviewTree' | 'PlanRepairHints' | 'ActionConfirmCard' | 'AgentStatusTimeline' | 'ToolExecutionCard' | 'ThinkingRenderer' | 'RepairSuggestionsPanel';
-
-export type TPlanReviewDecision = 'approved' | 'rejected';
-
-export type TAgentDomain = 'job' | 'application' | 'evaluation' | 'memory' | 'generic';
-
-/** 规划子任务（对应后端 SubTaskDTO） */
-export interface IPlanSubTask {
-  task_id: string;
-  domain: TAgentDomain;
-  title: string;
-  instruction: string;
-  depends_on?: string[];
-  status?: string;
-  result_summary?: string | null;
-}
-
-/** SSE agent.v1 信封 */
-export interface IAgentStreamEnvelopeV1 {
-  protocol_version: TAgentStreamProtocolVersion;
-  seq: number;
-  run_id: string;
-  stream_id: string;
-  session_id: number;
-  node_id: TAgentNodeId;
-  event_type: TAgentEventTypeV1;
-  timestamp: number;
-  payload: Record<string, unknown>;
-  branch_id?: string | null;
-}
-
-export type TAgentStreamProtocolVersionV2 = '2.0';
+/** 工作流类型 */
 export type TAgentWorkflowType = 'interview_questions' | 'resume_evaluation';
 
-export type TAgentEventTypeV2 =
-  | 'lifecycle.run.started'
-  | 'lifecycle.run.finished'
-  | 'lifecycle.run.failed'
-  | 'lifecycle.node.enter'
-  | 'lifecycle.node.exit'
-  | 'lifecycle.node.error'
-  | 'message.delta'
-  | 'message.done'
-  | 'tool.started'
-  | 'tool.finished'
-  | 'form.requested'
-  | 'form.resolved'
-  | 'action.requested'
-  | 'action.resolved'
-  | 'data.card'
-  | 'data.evaluation_report'
-  | 'thinking_status'
-  | 'thinking_stream'
-  | 'text_stream'
-  | 'execution_status'
-  | 'planning'
-  | 'interaction_request'
-  | 'interaction_result'
-  | 'completed'
-  | 'error';
-
-export interface IAgentStreamEnvelopeV2 {
-  schema_version: TAgentStreamProtocolVersionV2;
-  seq: number;
-  run_id: string;
-  session_id: number;
-  workflow_type?: TAgentWorkflowType | null;
-  node_id: string;
-  agent_id?: string | null;
-  display_name?: string | null;
-  event: TAgentEventTypeV2 | string;
-  payload: Record<string, unknown>;
-  ts: number;
-  extensions?: Record<string, unknown> | null;
-}
-
-/** ui.render · PlanReviewTree 载荷 */
-export interface IPlanReviewTreeRenderData {
-  plan_id?: string;
-  revision: number;
-  max_revisions?: number;
-  tasks: IPlanSubTask[];
-  editable?: boolean;
-}
-
-/** 前端规划审批 UI 状态 */
-export interface IPlanReviewUiState {
-  instanceId: string;
-  revision: number;
-  maxRevisions: number;
-  tasks: IPlanSubTask[];
-  editable: boolean;
-  repairSuggestions: string[];
-  feedbackDraft: string;
-  /** pending=待审批 submitting=已提交 resume 请求 */
-  phase: 'pending' | 'submitting';
-}
-
-/** 恢复 interrupt 请求体（对应 PlanReviewResumePayload） */
-export interface IPlanReviewResumePayload {
-  decision: TPlanReviewDecision;
-  tasks?: IPlanSubTask[] | null;
-  feedback?: string | null;
-}
-
-export interface IAgentRunResumeRequest {
-  interrupt_kind: 'plan_review';
-  payload: IPlanReviewResumePayload;
-}
-
-export interface IAgentFormSubmitRequest {
-  request_id: string;
-  values: Record<string, unknown>;
-}
-
-export interface IAgentRuntimeOptions {
-  enable_thinking?: boolean;
-}
-
-export interface IAgentMessageCreatePayload {
-  content: string;
-  workflow_type?: TAgentWorkflowType;
-  context_refs?: Array<Record<string, unknown>>;
-  runtime_options?: IAgentRuntimeOptions;
-}
-
-export interface IAgentTemporaryActionExecute {
-  action_id: string;
-  capability_key: string;
-  action_name: string;
-  target_type?: string | null;
-  target_id?: number | null;
-  input_payload: Record<string, unknown>;
-  preview_payload: Record<string, unknown>;
-}
+// ====== LLM 配置 ======
 
 export interface ILlmConfigItem {
   id: number;
@@ -244,28 +77,7 @@ export interface ILlmModelOption {
   base_url: string;
 }
 
-export interface IAgentRuntimeConfig {
-  id?: number | null;
-  employee_id: number;
-  model_name: string;
-  model_source: 'employee' | 'dept' | 'env';
-  llm_config_id?: number | null;
-  enable_thinking: boolean;
-  enable_tools: boolean;
-  enable_prompt_cache: boolean;
-  enable_memory: boolean;
-  temperature: number;
-  top_p: number;
-  max_tokens: number;
-  presence_penalty: number;
-  frequency_penalty: number;
-  extra_body?: Record<string, unknown> | null;
-  last_used_at?: string | null;
-  create_time?: string | null;
-  update_time?: string | null;
-}
-
-export type IAgentRuntimeConfigPayload = Pick<IAgentRuntimeConfig, 'enable_thinking' | 'enable_tools' | 'enable_prompt_cache' | 'enable_memory' | 'temperature' | 'top_p' | 'max_tokens' | 'presence_penalty' | 'frequency_penalty' | 'extra_body'>;
+// ====== Agent 会话/消息（最简版，Stage 8 重写） ======
 
 export interface IAgentSessionItem {
   id: number;
@@ -274,10 +86,7 @@ export interface IAgentSessionItem {
   title: string;
   status: number;
   selected_model_name?: string | null;
-  selected_model_source?: string | null;
-  context_summary?: string | null;
   last_message_time?: string | null;
-  version: number;
   create_time?: string | null;
   update_time?: string | null;
 }
@@ -286,12 +95,10 @@ export interface IAgentMessageItem {
   id: number;
   session_id: number;
   parent_message_id?: number | null;
-  role: 'user' | 'agent' | 'system' | 'tool' | 'summary';
-  message_type: string;
+  role: 'user' | 'agent';
   workflow_type?: TAgentWorkflowType | null;
   run_id?: string | null;
   content: {
-    context_refs?: Array<Record<string, unknown>>;
     blocks: Array<Record<string, unknown>>;
   };
   model_name?: string | null;
@@ -300,184 +107,25 @@ export interface IAgentMessageItem {
   create_time?: string | null;
 }
 
-export interface IAgentRunItem {
-  id: number;
-  trace_id: string;
-  parent_run_id?: number | null;
-  session_id: number;
-  message_id?: number | null;
-  run_type: string;
-  status: number;
-  model_name?: string | null;
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-  latency_ms?: number | null;
-  input_payload?: Record<string, unknown> | null;
-  output_payload?: Record<string, unknown> | null;
-  error_message?: string | null;
-  create_time?: string | null;
-  update_time?: string | null;
-}
-
-export interface IAgentActionItem {
-  id: number;
-  session_id: number;
-  message_id?: number | null;
-  run_id?: number | null;
-  employee_id: number;
-  capability_key: string;
-  action_name: string;
-  target_type?: string | null;
-  target_id?: number | null;
-  input_payload: Record<string, unknown>;
-  preview_payload: Record<string, unknown>;
-  status: number;
-  idempotency_key: string;
-  error_message?: string | null;
-  create_time?: string | null;
-  update_time?: string | null;
-  confirmed_at?: string | null;
-  rejected_at?: string | null;
-  executed_at?: string | null;
-}
-
-export interface IAgentMemoryItem {
-  id: number;
-  employee_id: number;
-  memory_type: string;
-  memory_key: string;
-  content: string;
-  importance_score: number;
-  confidence_score: number;
-  source_session_id?: number | null;
-  last_access_time?: string | null;
-  create_time?: string | null;
-  update_time?: string | null;
-}
-
-export interface IAgentContextSnapshotItem {
-  id: number;
-  session_id: number;
-  snapshot_version: number;
-  summary_text: string;
-  covered_message_start_id: number;
-  covered_message_end_id: number;
-  message_count: number;
-  token_count: number;
-  model_name?: string | null;
-  create_time?: string | null;
-}
-
-export interface IAgentSessionWindowItem {
-  snapshot?: IAgentContextSnapshotItem | null;
-  recent_messages: IAgentMessageItem[];
-  token_count: number;
-  prompt_prefix_hash?: string | null;
-}
-
 export interface IAgentSessionDetail {
   session: IAgentSessionItem;
   messages: IAgentMessageItem[];
-  memories: IAgentMemoryItem[];
-  snapshots: IAgentContextSnapshotItem[];
-  session_window?: IAgentSessionWindowItem | null;
 }
 
-export interface IAgentReply {
-  user_message: IAgentMessageItem;
-  agent_message: IAgentMessageItem;
-  run: IAgentRunItem;
-  session?: IAgentSessionItem | null;
-  snapshot?: IAgentContextSnapshotItem | null;
-  memories: IAgentMemoryItem[];
-  session_window?: IAgentSessionWindowItem | null;
+// ====== Agent 请求（最简版） ======
+
+export interface IAgentRuntimeOptions {
+  enable_thinking?: boolean;
 }
 
-export type AgentStreamEventName =
-  | 'user_message'
-  | 'run_started'
-  | 'context_ready'
-  | 'token'
-  | 'final'
-  | 'error'
-  | 'tool_call'
-  | 'tool_result'
-  | 'action_required'
-  | 'agent'
-  | 'agent.v1';
-
-export interface IAgentStreamEvent {
-  event: AgentStreamEventName | string;
-  data: Record<string, unknown>;
-}
-
-export interface IAgentToolStreamItem {
-  id: string;
-  type: 'call' | 'result';
-  tool_name: string;
-  display_name: string;
-  payload: Record<string, unknown>;
-  success?: boolean;
-  error_message?: string | null;
-}
-
-export interface IAgentActionStreamItem extends Omit<IAgentActionItem, 'id'> {
-  id: string;
-  isStreaming?: boolean;
-}
-
-export interface IAgentThinkingStreamItem {
-  id: string;
-  run_id: string;
-  status: 'started' | 'streaming' | 'completed' | 'unavailable';
+export interface IAgentMessageCreatePayload {
   content: string;
-  /** 出现/更新顺序号，用于消息时间线穿插渲染，单调递增 */
-  seq?: number;
+  workflow_type?: TAgentWorkflowType;
+  context_refs?: Array<Record<string, unknown>>;
+  runtime_options?: IAgentRuntimeOptions;
 }
 
-export interface IAgentInteractionRequestItem {
-  id: string;
-  run_id: string;
-  interaction_type: 'dimension_selection' | 'plan_approval' | 'job_selection' | 'question_review';
-  title: string;
-  prompt: string;
-  data: Record<string, unknown>;
-  submit_label: string;
-  status: 'pending' | 'submitted' | 'expired';
-  /** 出现顺序号，用于消息时间线穿插渲染，单调递增 */
-  seq?: number;
-}
-
-export interface IAgentBusinessCardItem {
-  id: string;
-  run_id: string;
-  type: 'interview_question_set' | 'resume_evaluation_report';
-  payload: Record<string, unknown>;
-  /** 出现顺序号，用于消息时间线穿插渲染，单调递增 */
-  seq?: number;
-}
-
-/** 消息列表下方的运行时动态条目（思考、工具、待确认动作） */
-export interface IAgentRuntimeFeedItem {
-  id: string;
-  type: 'thinking' | 'tool' | 'action' | 'node';
-  status: 'running' | 'success' | 'failed' | 'pending';
-  title: string;
-  message?: string | null;
-  action?: IAgentActionStreamItem;
-  /** 出现顺序号，用于消息时间线穿插渲染，单调递增 */
-  seq?: number;
-}
-
-/** RepairSuggestionsPanel 组件 Props */
-export interface IRepairSuggestionsPanelProps {
-  suggestions: string[];
-  selectionMode: 'single' | 'multiple';
-  customInputFirst: boolean;
-  customInput: string;
-  onSuggestionToggle: (index: number) => void;
-  onCustomInputChange: (value: string) => void;
-  onSubmit: (selectedSuggestions: string[], customInput: string) => void;
-  submitting: boolean;
+export interface IAgentFormSubmitRequest {
+  request_id: string;
+  values: Record<string, unknown>;
 }

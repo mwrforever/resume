@@ -22,7 +22,14 @@
       "Bash(python scripts/search.py \"professional dashboard blue trust SaaS enterprise\" --domain color -n 4)",
       "Bash(git add *)",
       "Bash(git commit -m 'docs\\(agent\\): add agent runtime & rendering refactor design *)",
-      "Bash(git commit -m 'docs\\(agent\\): add agent runtime refactor implementation plan *)"
+      "Bash(git commit -m 'docs\\(agent\\): add agent runtime refactor implementation plan *)",
+      "Bash(git commit *)",
+      "Bash(git rm *)",
+      "Bash(python -c \"from app.main import app; print\\('ok'\\)\")",
+      "Bash(pip list *)",
+      "Bash(ls -d .venv venv env)",
+      "Bash(which python *)",
+      "Bash(npx tsc *)"
     ]
   }
 }

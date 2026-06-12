@@ -286,24 +286,24 @@ CREATE TABLE IF NOT EXISTS `llm_model_config`
     KEY `idx_model_name` (`model_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM模型配置表';
 
+DROP TABLE IF EXISTS agent_message;
+DROP TABLE IF EXISTS agent_memory;
+DROP TABLE IF EXISTS agent_session;
+
 CREATE TABLE IF NOT EXISTS `agent_session`
 (
     `id`                    BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '会话ID',
     `session_key`           VARCHAR(64)  NOT NULL COMMENT '会话唯一标识',
     `employee_id`           BIGINT       NOT NULL COMMENT '员工ID',
-    `title`                 VARCHAR(100) NOT NULL COMMENT '会话标题',
-    `status`                SMALLINT     NOT NULL DEFAULT 1 COMMENT '状态',
-    `is_deleted`            SMALLINT     NOT NULL DEFAULT 0 COMMENT '是否删除：0否，1是',
-    `selected_model_name`   VARCHAR(100)          DEFAULT NULL COMMENT '选中模型名称',
-    `selected_model_source` VARCHAR(20)           DEFAULT NULL COMMENT '选中模型来源',
-    `context_summary`       VARCHAR(1000)         DEFAULT NULL COMMENT '上下文摘要',
+    `title`                 VARCHAR(80)           DEFAULT NULL COMMENT '会话标题',
+    `selected_model_name`   VARCHAR(80)           DEFAULT NULL COMMENT '选中模型名称',
+    `enable_thinking`       TINYINT      NOT NULL DEFAULT 0 COMMENT '是否开启思考模式：0否，1是',
+    `status`                TINYINT      NOT NULL DEFAULT 1 COMMENT '状态：1正常，0删除',
     `last_message_time`     DATETIME              DEFAULT NULL COMMENT '最近消息时间',
-    `version`               INT          NOT NULL DEFAULT 0 COMMENT '版本号',
     `create_time`           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY `uk_session_key` (`session_key`, `is_deleted`),
-    KEY `idx_employee_time` (`employee_id`, `create_time`),
-    KEY `idx_status` (`status`, `is_deleted`)
+    UNIQUE KEY `uk_session_key` (`session_key`),
+    KEY `idx_employee` (`employee_id`, `status`, `last_message_time` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent会话表';
 
 CREATE TABLE IF NOT EXISTS `agent_message`
@@ -311,34 +311,13 @@ CREATE TABLE IF NOT EXISTS `agent_message`
     `id`                BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '消息ID',
     `session_id`        BIGINT      NOT NULL COMMENT '会话ID',
     `parent_message_id` BIGINT               DEFAULT NULL COMMENT '父消息ID',
-    `role`              VARCHAR(20) NOT NULL COMMENT '消息角色',
-    `message_type`      VARCHAR(30) NOT NULL COMMENT '消息类型',
-    `workflow_type`     VARCHAR(50)          DEFAULT NULL COMMENT 'Agent工作流类型',
-    `run_id`            VARCHAR(80)          DEFAULT NULL COMMENT 'Agent运行ID',
-    `content`           JSON        NOT NULL COMMENT '消息内容',
-    `model_name`        VARCHAR(100)         DEFAULT NULL COMMENT '模型名称',
+    `role`              VARCHAR(16) NOT NULL COMMENT '消息角色：user | agent',
+    `workflow_type`     VARCHAR(32) NOT NULL COMMENT '工作流类型：interview_questions | resume_evaluation',
+    `run_id`            VARCHAR(64)          DEFAULT NULL COMMENT 'Agent运行ID',
+    `content`           JSON        NOT NULL COMMENT '消息内容（blocks结构）',
+    `model_name`        VARCHAR(80)          DEFAULT NULL COMMENT '模型名称',
     `token_count`       INT                  DEFAULT NULL COMMENT 'Token数量',
     `sort_order`        INT         NOT NULL DEFAULT 0 COMMENT '排序号',
     `create_time`       DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    KEY `idx_session_order` (`session_id`, `sort_order`, `id`),
-    KEY `idx_parent` (`parent_message_id`),
-    KEY `idx_agent_message_workflow_run` (`workflow_type`, `run_id`)
+    KEY `idx_session_order` (`session_id`, `sort_order`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent消息表';
-
-CREATE TABLE IF NOT EXISTS `agent_memory`
-(
-    `id`               BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '记忆ID',
-    `employee_id`      BIGINT        NOT NULL COMMENT '员工ID',
-    `memory_type`      VARCHAR(30)   NOT NULL COMMENT '记忆类型',
-    `memory_key`       VARCHAR(100)  NOT NULL COMMENT '记忆唯一键',
-    `content`          TEXT          NOT NULL COMMENT '记忆内容',
-    `importance_score` DECIMAL(5, 2) NOT NULL DEFAULT 0 COMMENT '重要性评分',
-    `confidence_score` DECIMAL(5, 2) NOT NULL DEFAULT 0 COMMENT '置信度评分',
-    `source_session_id` BIGINT                DEFAULT NULL COMMENT '来源会话ID',
-    `last_access_time` DATETIME               DEFAULT NULL COMMENT '最近访问时间',
-    `create_time`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `update_time`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY `uk_agent_memory_key` (`employee_id`, `memory_type`, `memory_key`),
-    KEY `idx_employee` (`employee_id`),
-    KEY `idx_type` (`employee_id`, `memory_type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent长期记忆表';
