@@ -102,6 +102,12 @@ class AgentRepository:
         )
         return result.scalars().all()
 
+    async def update_message_content(self, message_id: int, content: dict) -> None:
+        """更新 agent_message.content（跨消息回写 interaction 状态用）。"""
+        stmt = update(AgentMessage).where(AgentMessage.id == message_id).values(content=content)
+        await self._db.execute(stmt)
+        await self._db.flush()
+
     async def commit(self) -> None:
         """提交事务。"""
         await self._db.commit()

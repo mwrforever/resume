@@ -1,10 +1,20 @@
+"""
+Agent 响应体 schema（与重构后 DDL 对齐）。
+
+删除 AgentMemoryItem（memory 表已 drop）；
+AgentSessionItem 增加 enable_thinking，删除不存在的旧字段；
+AgentMessageItem 删除不存在的 message_type，workflow_type/run_id 改为必填。
+"""
+
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class LlmConfigItem(BaseModel):
+    """LLM 模型配置详情。"""
+
     id: int
     biz_type: str
     biz_id: int
@@ -38,6 +48,8 @@ class LlmConfigItem(BaseModel):
 
 
 class LlmModelOption(BaseModel):
+    """LLM 模型选项（用于前端下拉选择）。"""
+
     model_name: str
     source: str
     config_id: int | None = None
@@ -48,16 +60,16 @@ class LlmModelOption(BaseModel):
 
 
 class AgentSessionItem(BaseModel):
+    """Agent 会话列表项（与新 DDL 对齐）。"""
+
     id: int
     session_key: str
     employee_id: int
-    title: str
+    title: str | None = None
     status: int
     selected_model_name: str | None = None
-    selected_model_source: str | None = None
-    context_summary: str | None = None
+    enable_thinking: bool = False
     last_message_time: datetime | None = None
-    version: int
     create_time: datetime | None = None
     update_time: datetime | None = None
 
@@ -73,12 +85,13 @@ class AgentResumeAttachmentItem(BaseModel):
 
 
 class AgentMessageItem(BaseModel):
+    """Agent 消息项（与新 DDL 对齐）。"""
+
     id: int
     session_id: int
     parent_message_id: int | None = None
     role: str
-    message_type: str
-    workflow_type: str | None = None
+    workflow_type: str
     run_id: str | None = None
     content: dict[str, Any]
     model_name: str | None = None
@@ -89,27 +102,12 @@ class AgentMessageItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class AgentMemoryItem(BaseModel):
-    id: int
-    employee_id: int
-    memory_type: str
-    memory_key: str
-    content: str
-    importance_score: float
-    confidence_score: float
-    source_session_id: int | None = None
-    last_access_time: datetime | None = None
-    create_time: datetime | None = None
-    update_time: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class AgentSessionDetail(BaseModel):
+    """Agent 会话详情（含消息列表）。"""
+
     session: AgentSessionItem
     messages: list[AgentMessageItem]
-    memories: list[AgentMemoryItem] = Field(default_factory=list)
 
 
-# 流式事件统一走 `app.schemas.agent.stream.AgentStreamEvent`；
+# 流式事件统一走 `app.schemas.agent.stream.AgentStreamEnvelope`；
 # 非流式 send_message API 已下线，前端只通过 stream_message 与服务交互。
