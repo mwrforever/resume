@@ -3,7 +3,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { AgentSessionSidebar } from './agent-session-sidebar';
+import { AgentSidebarDrawer } from './layout/agent-sidebar-drawer';
 import { AgentMessageList } from './agent-message-list';
 import { AgentComposer } from './agent-composer';
 import { useAgentRun } from '@/hooks/use-agent-run';
@@ -38,7 +38,7 @@ export function AgentWorkspace() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <AgentSessionSidebar
+      <AgentSidebarDrawer
         sessions={sessions} activeId={activeId}
         onSelect={setActiveId} onCreate={() => void onCreate()} onSearch={setKeyword}
       />
