@@ -12,6 +12,7 @@ import { BlockRenderer } from './blocks/block-renderer';
 import { StepStrip } from './step-strip';
 import { useFollowBottom } from '@/hooks/use-follow-bottom';
 import { EmptyState } from './empty-state';
+import { AgentMessageCard } from './agent-message-card';
 
 export interface AgentMessageListProps {
   messages: AgentMessage[];
@@ -42,8 +43,8 @@ export function AgentMessageList({ messages, runState, onSubmitInteraction }: Ag
   }
 
   return (
-    <div ref={ref} className="flex-1 overflow-y-auto bg-gray-50">
-      <div className="mx-auto max-w-[760px] px-4 py-6 space-y-4">
+    <div ref={ref} className="flex-1 overflow-y-auto bg-[#F8FAFC]">
+      <div className="mx-auto max-w-[880px] px-4 py-6 space-y-6">
         {messages.map(msg => (
           <MessageRow key={msg.id} message={msg} onSubmitInteraction={onSubmitInteraction} />
         ))}
@@ -52,9 +53,20 @@ export function AgentMessageList({ messages, runState, onSubmitInteraction }: Ag
         {runState.running && (
           <div className="space-y-2">
             <StepStrip steps={runState.steps} running={runState.running} />
-            {runState.current_blocks.map(b => (
-              <BlockRenderer key={b.index} block={b} onSubmitInteraction={onSubmitInteraction} />
-            ))}
+            <div className="border border-[#E2E8F0] rounded-xl bg-white shadow-sm">
+              <div className="divide-y divide-[#E2E8F0]">
+                {runState.current_blocks.map(b => (
+                  <div key={b.index} className="px-4 py-3">
+                    <BlockRenderer
+                      block={b}
+                      onSubmitInteraction={
+                        b.type === 'interaction' ? onSubmitInteraction : undefined
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
@@ -80,18 +92,18 @@ function MessageRow({
   if (message.role === 'user') {
     const userText = (message.content.blocks?.[0] as { type: 'text'; text: string } | undefined)?.text ?? '';
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[560px] rounded-lg bg-blue-600 text-white px-4 py-2 text-sm whitespace-pre-wrap">
+      <div className="flex justify-end mb-4">
+        <div className="max-w-[560px] rounded-2xl rounded-br-md bg-[#0369A1] text-white px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed shadow-sm">
           {userText}
         </div>
       </div>
     );
   }
   return (
-    <div className="space-y-2">
-      {(message.content.blocks ?? []).map(b => (
-        <BlockRenderer key={b.index} block={b} onSubmitInteraction={onSubmitInteraction} />
-      ))}
-    </div>
+    <AgentMessageCard
+      message={message}
+      runState={null}
+      onSubmitInteraction={onSubmitInteraction}
+    />
   );
 }
