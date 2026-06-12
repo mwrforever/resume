@@ -1,4 +1,4 @@
-﻿import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AdminLayout } from '@/components/layout/admin-layout';
 import { employeeAgentApi, employeeLlmApi } from '@/api/employee/agent';
 import { useAuthStore } from '@/store/auth';
@@ -23,7 +23,7 @@ import { AgentPreferencesDialog } from '@/components/employee/agent/agent-prefer
 import { AgentSessionSidebar, type WorkspaceSession } from '@/components/employee/agent/agent-session-sidebar';
 import { DeleteSessionDialog, SessionDialog, SessionSearchDialog } from '@/components/employee/agent/agent-session-dialogs';
 import { AgentWorkspaceHeader } from '@/components/employee/agent/agent-workspace-header';
-import { DEFAULT_MODEL_VALUE } from '@/components/employee/agent/agent-ui-utils';
+import { DEFAULT_MODEL_VALUE, buildLocalTitle } from '@/components/employee/agent/agent-ui-utils';
 
 const AGENT_IMMERSIVE_STORAGE_KEY = 'employee-agent-immersive';
 const AGENT_SESSION_COLLAPSED_STORAGE_KEY = 'employee-agent-session-collapsed';
@@ -74,6 +74,7 @@ export default function EmployeeAgent() {
   const [immersiveMode, setImmersiveMode] = useState(() => readBooleanStorage(AGENT_IMMERSIVE_STORAGE_KEY, true));
   const [sessionSidebarCollapsed, setSessionSidebarCollapsed] = useState(() => readBooleanStorage(AGENT_SESSION_COLLAPSED_STORAGE_KEY, false));
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const totalTokens = useMemo(() => messages.reduce((sum, message) => sum + (message.token_count || 0), 0), [messages]);
   const selectableModels = useMemo(() => models.filter((model) => model.source !== 'env'), [models]);
@@ -288,6 +289,10 @@ export default function EmployeeAgent() {
       setErrorMessage(error instanceof Error ? error.message : '规划审批提交失败，请稍后重试。');
     } finally {
       setSending(false);
+      abortControllerRef.current = null;
+      /* 流式结束时将所有未完成的思考项标记为已完成，避免动画永久运行 */
+      setThinkingItems((prev) => prev.map((item) => item.status === 'streaming' || item.status === 'started' ? { ...item, status: 'completed' } : item));
+      setRuntimeFeedItems((prev) => prev.map((item) => item.status === 'running' ? { ...item, status: 'success' } : item));
     }
   };
 
@@ -303,11 +308,10 @@ export default function EmployeeAgent() {
     setPlanReview(null);
     /* 乐观更新：在 API 调用前立即将用户消息添加到列表，避免等待后端响应才展示 */
     const optimisticMessage: IAgentMessageItem = {
-      id: -Date.now(),
+      id: streamingMessageId,
       role: 'user',
       content: { context_refs: [], blocks: [{ type: 'text', text: content }] },
-      token_count: 0,
-      created_at: new Date().toISOString(),
+      session_id: activeSession.id, message_type: 'text' as const, sort_order: 0, token_count: 0, create_time: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticMessage]);
     setSending(true);
@@ -315,10 +319,11 @@ export default function EmployeeAgent() {
     setRuntimeFeedItems(enableThinking ? [{ id: `thinking-${streamingMessageId}`, type: 'thinking', status: 'running', title: 'Agent 正在思考' }] : []);
     setInput('');
     setResumeFile(null);
+    abortControllerRef.current = new AbortController();
     try {
       let persistedSession: WorkspaceSession = activeSession;
       if (activeSession.isLocal) {
-        const createRes = await employeeAgentApi.createSession({ title: '新会话', selected_model_name: activeSession.selected_model_name || null });
+        const createRes = await employeeAgentApi.createSession({ title: buildLocalTitle(content), selected_model_name: activeSession.selected_model_name || null });
         persistedSession = createRes.data;
         replaceSession(persistedSession, oldSessionId);
       }
@@ -336,6 +341,7 @@ export default function EmployeeAgent() {
         persistedSession.id,
         { content, workflow_type: workflowType, context_refs: contextRefs, runtime_options: { enable_thinking: enableThinking } },
         (streamEvent) => handleAgentStreamEvent(streamEvent, buildStreamHandlerDeps(streamingMessageId, persistedSession, oldSessionId)),
+        abortControllerRef.current.signal,
       );
       await loadSessions();
     } catch (error) {
@@ -344,6 +350,10 @@ export default function EmployeeAgent() {
       setErrorMessage(error instanceof Error ? error.message : '消息发送失败，请检查模型配置或稍后重试。');
     } finally {
       setSending(false);
+      abortControllerRef.current = null;
+      /* 流式结束时将所有未完成的思考项标记为已完成，避免动画永久运行 */
+      setThinkingItems((prev) => prev.map((item) => item.status === 'streaming' || item.status === 'started' ? { ...item, status: 'completed' } : item));
+      setRuntimeFeedItems((prev) => prev.map((item) => item.status === 'running' ? { ...item, status: 'success' } : item));
     }
   };
 
@@ -353,6 +363,11 @@ export default function EmployeeAgent() {
    * @param actionId  动作唯一标识
    * @param status    目标状态码（如 3 表示已确认，4 表示已拒绝）
    */
+  /** 终止当前流式请求 */
+  const abortStream = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
+
   const updateActionStatus = useCallback((actionId: string, status: number) => {
     setActions((prev) => prev.map((item) => item.id === actionId ? { ...item, status } : item));
     setRuntimeFeedItems((prev) => prev.map((item) => item.id === `action-${actionId}` && item.action ? { ...item, status: status === 3 ? 'success' : item.status, action: { ...item.action, status } } : item));
@@ -530,6 +545,7 @@ export default function EmployeeAgent() {
             onInputChange={setInput}
             onResumeFileChange={setResumeFile}
             onSubmit={sendMessage}
+            onStop={abortStream}
           />
         </main>
         </div>

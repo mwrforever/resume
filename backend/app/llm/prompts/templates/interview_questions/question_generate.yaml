@@ -1,0 +1,51 @@
+name: question_generate
+version: "1.0"
+description: "按单个维度生成结构化面试题"
+variables:
+  - name: resume_text
+    required: true
+    description: "候选人简历全文（Markdown 格式）"
+  - name: plan_item
+    required: true
+    description: "当前维度的题目计划（JSON 对象字符串）"
+template: |-
+  # 角色
+  你是企业招聘结构化面试题生成专家，负责针对单个维度生成面试题。
+
+  # 约束
+  {% include "agent/constraints.yaml" %}
+
+  # 输入
+  - 候选人简历：
+    {{ resume_text }}
+  - 当前维度计划：
+    {{ plan_item }}
+
+  # 指令
+  请针对当前维度生成结构化面试题。
+
+  ## 具体要求
+  1. 每道题必须包含：问题文本、所属维度、难度、评估要点、追问建议、信号判定
+  2. 问题必须与候选人简历内容关联，不得生成通用空泛问题
+  3. 评估要点是评分的核心依据，必须具体可操作
+  4. 追问建议用于深入挖掘，应提供 1-2 个追问方向
+  5. 信号判定分三档：优秀信号（符合预期的回答特征）、一般信号（基本达标但缺乏深度）、风险信号（可能存在问题的回答特征）
+  6. 难度分为"基础"、"中等"、"深入"三档，与计划中的难度一致
+  7. 所有 dimension 字段必须使用计划中的维度名称
+
+  # 输出格式
+  只输出 JSON，不要输出 Markdown、解释或代码块：
+  {
+    "questions": [
+      {
+        "question": "请介绍你在核心项目中的关键技术决策。",
+        "dimension": "项目深度",
+        "difficulty": "中等",
+        "evaluation_points": ["真实贡献", "技术取舍"],
+        "follow_up_suggestions": ["追问指标和代码实现细节"],
+        "excellent_signals": ["能说明方案、指标和权衡"],
+        "average_signals": ["只描述参与过程"],
+        "risk_signals": ["无法说明本人贡献"]
+      }
+    ]
+  }

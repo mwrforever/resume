@@ -136,12 +136,16 @@ async def _build_question_plan_node(state: InterviewQuestionState) -> dict[str, 
     service = _get_service(state)
     if service is None:
         return {"question_plan": {}}
+    # 若是从 review 回流的重生成请求，则把上一轮反馈带入题目规划，引导 LLM 调整方向
+    review_feedback = str(state.get("review_feedback") or "").strip()
     plan = await service.build_question_plan(
         resume_text=str(state.get("resume_text") or ""),
         selected_dimensions=list(state.get("selected_dimensions") or []),
         runtime_config=_runtime_config(state),
+        review_feedback=review_feedback or None,
     )
-    return {"question_plan": plan.model_dump(mode="json")}
+    # 重生成后清空 review_decision，避免无限循环
+    return {"question_plan": plan.model_dump(mode="json"), "review_decision": "", "review_feedback": ""}
 
 
 def _request_plan_approval_node(state: InterviewQuestionState) -> dict[str, Any]:
@@ -210,6 +214,67 @@ def _reduce_questions_node(state: InterviewQuestionState) -> dict[str, Any]:
     return {"question_items": list(state.get("question_items") or [])}
 
 
+
+def _request_question_review_node(state: InterviewQuestionState) -> dict[str, Any]:
+    """
+    中断等待用户对生成的题集进行人工批阅。
+
+    交互协议：
+        - interaction_type: 'question_review'
+        - data.questions: 当前题集（供前端展示）
+        - data.plan: 题目计划摘要（供前端展示分布）
+        - 用户返回：{ 'decision': 'approve' | 'regenerate', 'feedback': str }
+
+    Args:
+        state: LangGraph state
+
+    Returns:
+        dict[str, Any]: state 更新，包含 review_decision / review_feedback
+    """
+    request_id = f"{state.get('run_id') or uuid.uuid4().hex}:question_review"
+    decision = interrupt(
+        {
+            "kind": "interaction",
+            "request_id": request_id,
+            "interaction_type": "question_review",
+            "title": "请批阅生成的面试题",
+            "prompt": "通过后题集将作为最终结果交付；不通过将基于您的反馈重新生成。",
+            "data": {
+                "questions": list(state.get("question_items") or []),
+                "plan": state.get("question_plan") or {},
+            },
+            "submit_label": "提交批阅意见",
+        }
+    )
+    review_decision = "approve"
+    feedback = ""
+    if isinstance(decision, dict):
+        raw_decision = str(decision.get("decision") or "").strip().lower()
+        if raw_decision in {"regenerate", "reject", "rework"}:
+            review_decision = "regenerate"
+        feedback = str(decision.get("feedback") or "").strip()
+    return {
+        "review_decision": review_decision,
+        "review_feedback": feedback,
+        "interaction_payload": decision if isinstance(decision, dict) else {},
+    }
+
+
+def _route_after_review(state: InterviewQuestionState) -> str:
+    """
+    依据用户批阅意见决定下一节点：通过 → finalize；驳回 → 重新规划。
+
+    Args:
+        state: LangGraph state
+
+    Returns:
+        str: 下一节点名（finalize_question_set / build_question_plan）
+    """
+    # 用户反馈被驳回时回流到题目规划节点，由其在新一轮 prompt 中纳入反馈
+    if str(state.get("review_decision") or "approve") == "regenerate":
+        return "build_question_plan"
+    return "finalize_question_set"
+
 def _finalize_question_set_node(state: InterviewQuestionState) -> dict[str, Any]:
     """
     生成最终面试题卡片。
@@ -244,6 +309,7 @@ def build_interview_question_graph(*, checkpointer: BaseCheckpointSaver | None =
     graph.add_node("request_plan_approval", _request_plan_approval_node)
     graph.add_node("fanout_generate_questions", _fanout_generate_questions_node)
     graph.add_node("reduce_questions", _reduce_questions_node)
+    graph.add_node("request_question_review", _request_question_review_node)
     graph.add_node("finalize_question_set", _finalize_question_set_node)
     graph.add_edge(START, "load_resume")
     graph.add_edge("load_resume", "suggest_dimensions")
@@ -252,6 +318,15 @@ def build_interview_question_graph(*, checkpointer: BaseCheckpointSaver | None =
     graph.add_edge("build_question_plan", "request_plan_approval")
     graph.add_edge("request_plan_approval", "fanout_generate_questions")
     graph.add_edge("fanout_generate_questions", "reduce_questions")
-    graph.add_edge("reduce_questions", "finalize_question_set")
+    graph.add_edge("reduce_questions", "request_question_review")
+    # 条件路由：审批通过 → 终结；审批驳回 → 回到题目规划节点（携带反馈重生成）
+    graph.add_conditional_edges(
+        "request_question_review",
+        _route_after_review,
+        {
+            "finalize_question_set": "finalize_question_set",
+            "build_question_plan": "build_question_plan",
+        },
+    )
     graph.add_edge("finalize_question_set", END)
     return graph.compile(checkpointer=checkpointer or get_default_checkpointer())

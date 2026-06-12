@@ -11,9 +11,18 @@ import yaml
 
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.llm.model_router import LLMModelRouter
+from app.llm.prompts.manager import prompt_manager
 from app.repositories.job_repository import JobRepository
 from app.schemas.agent.dto import LLMRuntimeConfigDTO, ResumeEvaluationReportDTO
 from app.services.agent_resume_pipeline_service import AgentResumePipelineService
+from app.llm.graphs.workflows._ctx import get_thinking_queue
+from app.llm.streaming.emitter import AgentStreamEmitter
+from app.schemas.agent.stream import (
+    AgentNodeId,
+    AgentStreamEventType,
+    ThinkingStatusPayload,
+    ThinkingStreamPayload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +73,29 @@ class ResumeEvaluationWorkflowService:
         raw_text = str(getattr(context, "raw_text", "") or "").strip()
         return structured_markdown or raw_text
 
+    async def load_job_candidates(self, *, employee_id: int) -> list[dict[str, Any]]:
+        """加载员工的已发布岗位列表，供前端岗位选择交互使用。
+
+        Args:
+            employee_id: 当前员工 ID
+
+        Returns:
+            list[dict[str, Any]]: 岗位候选列表，每项包含 id/job_id/name/job_name/source
+        """
+        jobs = await self._job_repo.get_by_employee(employee_id)
+        return [
+            {
+                "id": int(getattr(job, "id", 0)),
+                "job_id": int(getattr(job, "id", 0)),
+                "name": str(getattr(job, "name", "") or ""),
+                "job_name": str(getattr(job, "name", "") or ""),
+                "description": str(getattr(job, "description", "") or ""),
+                "source": "hr_requirement",
+            }
+            for job in jobs
+            if getattr(job, "status", 0) == 1
+        ]
+
     async def validate_selected_job(self, *, employee_id: int, job_id: int, job_name: str) -> dict[str, Any]:
         """
         校验用户选择的岗位 ID 与岗位名称严格一致。
@@ -76,7 +108,11 @@ class ResumeEvaluationWorkflowService:
         Returns:
             dict[str, Any]: 岗位快照
         """
-        job = await self._job_repo.get_by_id(job_id)
+        job = None
+        if job_id and job_id > 0:
+            job = await self._job_repo.get_by_id(job_id)
+        if not job and job_name.strip():
+            job = await self._job_repo.get_by_name(employee_id, job_name.strip())
         if not job:
             raise NotFoundError("岗位不存在")
         if int(getattr(job, "employee_id", 0)) != int(employee_id):
@@ -101,8 +137,9 @@ class ResumeEvaluationWorkflowService:
         Returns:
             dict[str, Any]: 简历画像 JSON
         """
-        prompt = self._render_prompt("resume_profile_analyze", resume_text=resume_text[:120000])
-        result = await self._model_router.complete(prompt, runtime_config)
+        prompt = prompt_manager.render("resume_evaluation/profile_analyze", resume_text=resume_text[:120000])
+        # 启用思考模式时通过 ContextVar 队列推送 thinking 事件，前端可实时看到模型推理过程
+        result = await self._complete_with_thinking(prompt, runtime_config, label="分析简历画像")
         return self._parse_json_object(result.content)
 
     async def build_visual_report(
@@ -125,14 +162,13 @@ class ResumeEvaluationWorkflowService:
         Returns:
             ResumeEvaluationReportDTO: 评估报告 DTO
         """
-        prompt = self._render_prompt(
-            "resume_evaluation_visual_report",
+        prompt = prompt_manager.render("resume_evaluation/visual_report",
             resume_profile=json.dumps(resume_profile, ensure_ascii=False),
             selected_job=json.dumps(selected_job, ensure_ascii=False),
             evaluation_result=json.dumps(evaluation_result, ensure_ascii=False),
         )
         try:
-            result = await self._model_router.complete(prompt, runtime_config)
+            result = await self._complete_with_thinking(prompt, runtime_config, label="生成可视化评估报告")
             return ResumeEvaluationReportDTO.model_validate(self._parse_json_object(result.content))
         except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             logger.warning("Resume evaluation report generation failed, using fallback report", exc_info=True)
@@ -174,27 +210,79 @@ class ResumeEvaluationWorkflowService:
             job_gaps=[],
         )
 
-    def _render_prompt(self, template_name: str, **context: str) -> str:
-        """
-        渲染多字段 YAML Prompt 模板。
-
-        Args:
-            template_name: 模板文件名，不含 `.yaml`
-            context: 模板变量
-
-        Returns:
-            str: 完整 prompt
-        """
-        template_path = PROMPT_TEMPLATE_DIR / f"{template_name}.yaml"
-        with template_path.open("r", encoding="utf-8") as file:
-            payload = yaml.safe_load(file) or {}
-        sections = [str(payload.get(key) or "") for key in ("role", "context", "instructions", "output_format")]
-        prompt = "\n\n".join(section.strip() for section in sections if section.strip())
-        for key, value in context.items():
-            prompt = prompt.replace("{" + key + "}", value)
-        return prompt.strip()
+    # _render_prompt 已废弃，统一使用 prompt_manager.render()
 
     @staticmethod
+    async def _complete_with_thinking(self, prompt: str, runtime_config: LLMRuntimeConfigDTO, *, label: str) -> Any:
+        """
+        启用思考模式时把 LLM 流式增量转为 thinking 事件推入请求级队列；否则保持原 complete 行为。
+
+        Args:
+            prompt: 拼装后的 prompt 文本
+            runtime_config: LLM 运行配置
+            label: 思考面板标题，用于前端区分本次思考流（如"分析简历画像"）
+
+        Returns:
+            含 `.content` 属性的结果对象
+        """
+        queue = get_thinking_queue()
+        if not bool(getattr(runtime_config, "enable_thinking", False)) or queue is None:
+            return await self._model_router.complete(prompt, runtime_config)
+
+        emitter = AgentStreamEmitter(session_id=0, session_key="thinking-local", workflow_type="resume_evaluation")
+        message_id = emitter.run_id
+        await queue.put(
+            emitter.emit(
+                event=AgentStreamEventType.THINKING_STATUS,
+                node_id=AgentNodeId.RESUME_EVALUATION,
+                payload=ThinkingStatusPayload(message_id=message_id, status="started", title=label),
+            )
+        )
+        accumulated_parts: list[str] = []
+        try:
+            async for chunk in self._model_router.stream(prompt, runtime_config):
+                delta = str(getattr(chunk, "delta", "") or "")
+                if delta:
+                    accumulated_parts.append(delta)
+                    await queue.put(
+                        emitter.emit(
+                            event=AgentStreamEventType.THINKING_STREAM,
+                            node_id=AgentNodeId.RESUME_EVALUATION,
+                            payload=ThinkingStreamPayload(message_id=message_id, delta=delta),
+                        )
+                    )
+                final_result = getattr(chunk, "result", None)
+                if final_result is not None:
+                    await queue.put(
+                        emitter.emit(
+                            event=AgentStreamEventType.THINKING_STATUS,
+                            node_id=AgentNodeId.RESUME_EVALUATION,
+                            payload=ThinkingStatusPayload(message_id=message_id, status="completed", title=label),
+                        )
+                    )
+                    return final_result
+        except Exception:
+            await queue.put(
+                emitter.emit(
+                    event=AgentStreamEventType.THINKING_STATUS,
+                    node_id=AgentNodeId.RESUME_EVALUATION,
+                    payload=ThinkingStatusPayload(message_id=message_id, status="unavailable", title=label),
+                )
+            )
+            raise
+
+        await queue.put(
+            emitter.emit(
+                event=AgentStreamEventType.THINKING_STATUS,
+                node_id=AgentNodeId.RESUME_EVALUATION,
+                payload=ThinkingStatusPayload(message_id=message_id, status="completed", title=label),
+            )
+        )
+
+        class _LocalResult:
+            __slots__ = ("content",)
+            def __init__(self, content: str) -> None: self.content = content
+        return _LocalResult("".join(accumulated_parts))
     def _parse_json_object(content: str) -> dict[str, Any]:
         """
         从 LLM 输出中解析 JSON 对象。

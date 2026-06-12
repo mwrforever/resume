@@ -35,6 +35,10 @@ class InterviewQuestionState(AgentWorkflowState, total=False):
     selected_dimensions: list[str]
     question_plan: dict[str, Any]
     question_items: list[dict[str, Any]]
+    user_intent: str
+    # 用户对题集的批阅意见：approve | regenerate；regenerate 时会带 feedback 回到规划节点
+    review_decision: str
+    review_feedback: str
 
 
 class ResumeEvaluationState(AgentWorkflowState, total=False):

@@ -38,20 +38,20 @@ async function refreshStreamAccessToken() {
   return accessToken as string;
 }
 
-async function fetchStreamWithAuth(url: string, body: string) {
+async function fetchStreamWithAuth(url: string, body: string, signal?: AbortSignal) {
   const buildHeaders = (token: string | null) => ({
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   });
   const firstToken = useAuthStore.getState().accessToken;
-  let response = await fetch(url, { method: 'POST', headers: buildHeaders(firstToken), body });
+  let response = await fetch(url, { method: 'POST', headers: buildHeaders(firstToken), body, ...(signal ? { signal } : {}) });
   if (response.status !== 401) return response;
   const refreshedToken = await refreshStreamAccessToken();
   if (!refreshedToken) {
     // refreshStreamAccessToken 内部已处理跳转，此处返回原始 401 响应供上层判断
     return response;
   }
-  response = await fetch(url, { method: 'POST', headers: buildHeaders(refreshedToken), body });
+  response = await fetch(url, { method: 'POST', headers: buildHeaders(refreshedToken), body, ...(signal ? { signal } : {}) });
   return response;
 }
 
@@ -97,8 +97,9 @@ async function streamAgentMessage(
   id: number,
   data: IAgentMessageCreatePayload,
   onEvent: (event: IAgentStreamEvent) => void,
+  signal?: AbortSignal,
 ) {
-  const response = await fetchStreamWithAuth(`/api/v1/employee/agent/sessions/${id}/messages/stream`, JSON.stringify(data));
+  const response = await fetchStreamWithAuth(`/api/v1/employee/agent/sessions/${id}/messages/stream`, JSON.stringify(data), signal);
   await consumeSseResponse(response, onEvent);
 }
 

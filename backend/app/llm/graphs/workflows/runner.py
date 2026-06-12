@@ -8,6 +8,7 @@ from typing import Any
 
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, Interrupt
+import asyncio
 from app.llm.graphs.workflows._ctx import workflow_service_context
 
 from app.llm.streaming.emitter import AgentStreamEmitter
@@ -76,12 +77,21 @@ class AgentWorkflowRunner:
             AgentStreamEvent: 标准化流事件
         """
         config = {"configurable": {"thread_id": thread_id}}
-        with workflow_service_context(self._service_context):
+        # 为本次运行创建专用思考事件队列，业务层通过 ContextVar 拿到该队列并 push 流式思考事件
+        thinking_queue: asyncio.Queue = asyncio.Queue()
+        service_ctx = {**self._service_context, "thinking_queue": thinking_queue}
+        with workflow_service_context(service_ctx):
             async for mode, payload in self._graph.astream(graph_input, config=config, stream_mode=["updates"]):
+                # graph 每推进一步前先把思考队列里积压的事件全部 drain 出去，保证思考与执行节点穿插展示
+                while not thinking_queue.empty():
+                    yield thinking_queue.get_nowait()
                 if mode != "updates":
                     continue
                 async for event in self._handle_updates(thread_id=thread_id, payload=payload, emitter=emitter):
                     yield event
+            # 收尾：把可能在最后一次节点结束后才到达的思考事件 drain 完
+            while not thinking_queue.empty():
+                yield thinking_queue.get_nowait()
 
     def get_final_message(self, thread_id: str) -> str:
         """
@@ -236,5 +246,6 @@ class AgentWorkflowRunner:
             "dimension_selection": AgentNodeId.DIMENSION_SELECTION,
             "plan_approval": AgentNodeId.PLAN_APPROVAL,
             "job_selection": AgentNodeId.JOB_SELECTION,
+            "question_review": AgentNodeId.INTERVIEW_QUESTIONS,
         }
         return mapping.get(interaction_type, AgentNodeId.FORM_REQUEST)

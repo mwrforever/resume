@@ -1,4 +1,4 @@
-﻿"""
+"""
 Agent 服务层 — 工作流模式入口（简历评估 + 简历问答）。
 
 职责：
@@ -13,6 +13,7 @@ LLM/Agent 编排逻辑全部下沉到 `app.llm.graphs.workflows`，
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import time
@@ -299,6 +300,7 @@ class AgentService:
             "resume_ref": resume_ref or {},
             "runtime_config": runtime_config.model_dump(mode="python"),
             "final_message": "",
+            "user_intent": body.content,
             "final_text": "",
             "final_blocks": [],
         }
@@ -314,6 +316,9 @@ class AgentService:
             run_id=run_id,
         ):
             yield event
+        asyncio.create_task(
+            self._async_update_session_title(session.id, body.content)
+        )
 
     async def submit_form(
         self,
@@ -843,6 +848,35 @@ class AgentService:
     # ------------------------------------------------------------------
     # 工具方法
     # ------------------------------------------------------------------
+
+
+    async def _async_update_session_title(self, session_id: int, user_content: str) -> None:
+        """
+        异步调用 LLM 生成会话标题并更新数据库。
+
+        即发即弃：调用方通过 asyncio.create_task 调度，不阻塞流式返回。
+
+        Args:
+            session_id: 会话 ID
+            user_content: 用户发送的首条消息内容
+        """
+        try:
+            snippet = user_content.strip().replace("\n", " ")[:200]
+            prompt = (
+                "请为以下对话生成一个简短标题（不超过20个字，不要使用引号、不要换行，"
+                "只输出标题文本）：\n" + snippet
+            )
+            router = self._model_router
+            runtime_config = await self._llm_service.get_runtime_config(
+                {"user_type": "system"}, None
+            )
+            result = await router.complete(prompt, runtime_config)
+            title = result.content.strip().replace('"', "").replace("'", "")[:50]
+            if title:
+                await self._agent_repo.update_session(session_id, title=title)
+                logger.info("异步生成会话标题成功：session_id=%s, title=%s", session_id, title)
+        except Exception:
+            logger.warning("异步生成会话标题失败：session_id=%s", session_id, exc_info=True)
 
     async def _build_runtime_config(
         self,

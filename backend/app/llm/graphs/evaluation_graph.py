@@ -175,7 +175,7 @@ async def _match_skills_node(state: EvaluationState) -> dict[str, Any]:
         return {"skill_hits": []}
 
     prompt = prompt_manager.render(
-        "skill_match",
+        "evaluation/skill_match",
         job_name=state.job_name,
         job_description=state.job_description or "",
         skills=json.dumps(
@@ -271,7 +271,7 @@ async def _dimension_eval_node(payload: dict[str, Any]) -> dict[str, Any]:
         skill_hits,
     )
     prompt = prompt_manager.render(
-        "dimension_eval_with_skills",
+        "evaluation/dimension_eval",
         job_name=job_name,
         job_description=job_description,
         dimension=json.dumps(
@@ -380,7 +380,7 @@ def _label_for_score(score: float) -> str:
 async def _comprehensive_node(state: EvaluationState) -> dict[str, Any]:
     """综合评估节点：让 LLM 输出最终分、标签、优劣势总评。"""
     prompt = prompt_manager.render(
-        "comprehensive_eval",
+        "evaluation/comprehensive",
         job_name=state.job_name,
         job_description=state.job_description or "",
         skill_hits=json.dumps(

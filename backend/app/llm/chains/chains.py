@@ -16,7 +16,7 @@ class JobAiSuggestChain:
         Returns:
             dict: {comprehensive_description}
         """
-        prompt = prompt_manager.render("job_ai_suggest", job_name=name, job_description=description or "")
+        prompt = prompt_manager.render("admin/job_description", job_name=name, job_description=description or "")
         try:
             raw = llm_complete(prompt, max_retries=2, timeout=90)
             result = self._parse_object(raw)
@@ -42,7 +42,7 @@ class JobAiSuggestChain:
 
 class JobTemplateAiSuggestChain:
     def suggest(self, job_name: str, job_description: str) -> dict:
-        prompt = prompt_manager.render("job_template_ai_suggest", job_name=job_name, job_description=job_description or "")
+        prompt = prompt_manager.render("admin/eval_template", job_name=job_name, job_description=job_description or "")
         raw = llm_complete(prompt, max_retries=2, timeout=120)
         result = self._parse_object(raw)
         return {
@@ -66,7 +66,7 @@ class JobTemplateAiSuggestChain:
 
 class EvalDimensionAiSuggestChain:
     def suggest(self, job_name: str, job_description: str) -> dict:
-        prompt = prompt_manager.render("eval_dimension_ai_suggest", job_name=job_name, job_description=job_description or "")
+        prompt = prompt_manager.render("admin/eval_dimension", job_name=job_name, job_description=job_description or "")
         raw = llm_complete(prompt, max_retries=2, timeout=90)
         result = self._parse_object(raw)
         return {
@@ -89,7 +89,7 @@ class EvalDimensionAiSuggestChain:
 
 class TemplateSkillAiSuggestChain:
     def suggest(self, dimensions: list[dict]) -> dict:
-        prompt = prompt_manager.render("template_skill_ai_suggest", dimensions=json.dumps(dimensions, ensure_ascii=False))
+        prompt = prompt_manager.render("admin/template_skills", dimensions=json.dumps(dimensions, ensure_ascii=False))
         raw = llm_complete(prompt, max_retries=2, timeout=90)
         result = self._parse_object(raw)
         return {

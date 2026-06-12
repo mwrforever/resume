@@ -86,11 +86,13 @@ class AgentContextService:
                 prefix_text = cached_prefix["prefix_text"]
         if prefix_text is None:
             # 前缀只依赖长期记忆，可按 hash 缓存；当前用户输入始终在运行时模板中追加。
+            # ????? agent/system ????????????
             prefix_text = prompt_manager.render(
-                "agent_prompt_prefix",
-                system_prompt=prompt_manager.render("agent_system_prompt"),
+                "agent/system",
                 snapshot_summary="",
                 memories=[memory.content for memory in memories[:MEMORY_LIMIT]],
+                recent_messages=[],
+                user_content="",
             )
             if self.cache and prompt_prefix_hash:
                 await self.cache.set_json(
@@ -102,9 +104,11 @@ class AgentContextService:
             {"role": message.role, "text": self._message_text(message.content)}
             for message in recent_messages[-RECENT_MESSAGE_LIMIT:]
         ]
+        # ? prefix_text ????????????? Prompt
         return prompt_manager.render(
-            "agent_runtime_prompt",
-            prefix_text=prefix_text,
+            "agent/system",
+            snapshot_summary="",
+            memories=[memory.content for memory in memories[:MEMORY_LIMIT]],
             recent_messages=recent_message_payload,
             user_content=user_content,
         )

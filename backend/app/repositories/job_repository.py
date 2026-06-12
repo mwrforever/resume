@@ -68,6 +68,23 @@ class JobRepository:
         result = await self.db.execute(query)
         return result.scalar() or 0
 
+    async def get_by_name(self, employee_id: int, job_name: str) -> JobPosition | None:
+        """根据员工 ID 和岗位名称精确查询岗位。
+
+        Args:
+            employee_id: 员工 ID
+            job_name: 岗位名称（精确匹配）
+
+        Returns:
+            JobPosition | None: 匹配的岗位，不存在则返回 None
+        """
+        stmt = select(JobPosition).where(
+            JobPosition.employee_id == employee_id,
+            JobPosition.name == job_name.strip(),
+            JobPosition.status == 1,
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
     async def get_by_employee(self, employee_id: int) -> list[JobPosition]:
         """获取员工发布的岗位"""
         result = await self.db.execute(

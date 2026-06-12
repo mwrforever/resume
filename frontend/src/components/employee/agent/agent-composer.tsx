@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, KeyboardEvent, useRef } from 'react';
-import { FileUp, Send, X } from 'lucide-react';
+import { FileUp, Send, Square, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import type { TAgentWorkflowType } from '@/types/agent';
@@ -15,6 +15,8 @@ interface AgentComposerProps {
   onInputChange: (value: string) => void;
   onResumeFileChange: (file: File | null) => void;
   onSubmit: (event: FormEvent) => void;
+  /** 终止当前流式请求 */
+  onStop?: () => void;
 }
 
 const ACCEPT_RESUME = '.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -33,6 +35,7 @@ export function AgentComposer({
   onInputChange,
   onResumeFileChange,
   onSubmit,
+  onStop,
 }: AgentComposerProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -95,6 +98,8 @@ export function AgentComposer({
           input={input}
           inputLocked={inputLocked}
           canSend={canSend}
+          sending={sending}
+          onStop={onStop}
           onInputChange={onInputChange}
           onInputKeyDown={handleInputKeyDown}
         />
@@ -130,12 +135,16 @@ function MessageInputRow({
   input,
   inputLocked,
   canSend,
+  sending,
+  onStop,
   onInputChange,
   onInputKeyDown,
 }: {
   input: string;
   inputLocked: boolean;
   canSend: boolean;
+  sending: boolean;
+  onStop?: () => void;
   onInputChange: (value: string) => void;
   onInputKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
 }) {
@@ -150,9 +159,15 @@ function MessageInputRow({
         disabled={inputLocked}
         aria-label="Agent 消息输入"
       />
-      <Button type="submit" className="mb-1 h-11 w-11 rounded-2xl p-0" disabled={!canSend} aria-label="发送消息">
-        <Send size={17} aria-hidden="true" />
-      </Button>
+      {sending ? (
+        <Button type="button" className="mb-1 h-11 w-11 rounded-2xl p-0 bg-red-500 hover:bg-red-600 text-white" onClick={onStop} aria-label="终止生成">
+          <Square size={15} aria-hidden="true" />
+        </Button>
+      ) : (
+        <Button type="submit" className="mb-1 h-11 w-11 rounded-2xl p-0" disabled={!canSend} aria-label="发送消息">
+          <Send size={17} aria-hidden="true" />
+        </Button>
+      )}
     </div>
   );
 }

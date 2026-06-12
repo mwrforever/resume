@@ -19,10 +19,18 @@ from app.schemas.agent.dto import (
     LLMRuntimeConfigDTO,
 )
 from app.services.agent_resume_pipeline_service import AgentResumePipelineService
+from app.llm.graphs.workflows._ctx import get_thinking_queue
+from app.llm.streaming.emitter import AgentStreamEmitter
+from app.schemas.agent.stream import (
+    AgentNodeId,
+    AgentStreamEventType,
+    ThinkingStatusPayload,
+    ThinkingStreamPayload,
+)
 
 logger = logging.getLogger(__name__)
 
-PROMPT_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "llm" / "prompts" / "templates"
+PROMPT_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "llm" / "prompts" / "templates" / "interview_questions"
 FALLBACK_DIMENSIONS = ["项目深度", "技术能力", "沟通表达", "稳定性", "岗位匹配"]
 
 
@@ -73,7 +81,7 @@ class InterviewQuestionService:
         Returns:
             list[InterviewDimensionDTO]: 面试维度列表
         """
-        prompt = self._render_prompt("interview_dimension_suggest", resume_text=resume_text[:120000])
+        prompt = self._render_prompt("dimension_suggest", resume_text=resume_text[:120000])
         try:
             result = await self._model_router.complete(prompt, runtime_config)
             data = self._parse_json_object(result.content)
@@ -91,6 +99,7 @@ class InterviewQuestionService:
         resume_text: str,
         selected_dimensions: list[str],
         runtime_config: LLMRuntimeConfigDTO,
+        review_feedback: str | None = None,
     ) -> InterviewQuestionPlanDTO:
         """
         构建面试题生成计划。
@@ -99,17 +108,20 @@ class InterviewQuestionService:
             resume_text: 简历文本
             selected_dimensions: 已选择面试维度
             runtime_config: LLM 运行配置
+            review_feedback: 上一轮人工批阅反馈；非空时表示当前是重生成请求，需将反馈注入 prompt
 
         Returns:
             InterviewQuestionPlanDTO: 面试题计划
         """
+        # 重生成路径下把用户反馈合并到 prompt 模板变量，引导 LLM 修正方向
         prompt = self._render_prompt(
-            "interview_question_plan",
+            "question_plan",
             resume_text=resume_text[:120000],
             selected_dimensions=json.dumps(selected_dimensions, ensure_ascii=False),
+            review_feedback=review_feedback or "",
         )
         try:
-            result = await self._model_router.complete(prompt, runtime_config)
+            result = await self._complete_with_thinking(prompt, runtime_config, label="规划面试题")
             return InterviewQuestionPlanDTO.model_validate(self._parse_json_object(result.content))
         except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             logger.warning("Interview question plan generation failed, using fallback plan", exc_info=True)
@@ -134,12 +146,12 @@ class InterviewQuestionService:
             list[InterviewQuestionItemDTO]: 结构化面试题列表
         """
         prompt = self._render_prompt(
-            "interview_question_generate",
+            "question_generate",
             resume_text=resume_text[:120000],
             plan_item=json.dumps(plan_item.model_dump(mode="json"), ensure_ascii=False),
         )
         try:
-            result = await self._model_router.complete(prompt, runtime_config)
+            result = await self._complete_with_thinking(prompt, runtime_config, label="生成面试题")
             data = self._parse_json_object(result.content)
             questions = data.get("questions")
             if not isinstance(questions, list):
@@ -165,6 +177,89 @@ class InterviewQuestionService:
             questions=questions,
         )
         return {"type": "interview_question_set", "question_set": question_set.model_dump(mode="json")}
+
+
+    async def _complete_with_thinking(self, prompt: str, runtime_config: LLMRuntimeConfigDTO, *, label: str) -> Any:
+        """
+        统一 LLM 调用入口：启用思考模式时走流式接口，并实时把 thinking 事件推入请求级队列。
+
+        - 当 `runtime_config.enable_thinking` 为 True 时：调用 `model_router.stream`，
+          每个 chunk 以 `thinking_stream` 事件 push 到当前请求级 `thinking_queue`；
+          结束时 push 一条 `thinking_status: completed` 关闭面板；最终把累计内容包装
+          成与 `complete()` 等价的对象返回（`.content` 属性）。
+        - 其它情况直接调用 `model_router.complete`，行为与原来一致。
+
+        Args:
+            prompt: 拼装好的 prompt 文本
+            runtime_config: LLM 运行配置
+            label: 思考面板标题，用于前端识别本次思考流（如“建议面试维度”）
+
+        Returns:
+            Any: 含 `.content` 属性的结果对象，统一供调用方解析
+        """
+        # 未启用思考模式或缺少思考队列：保留原行为
+        queue = get_thinking_queue()
+        if not bool(getattr(runtime_config, "enable_thinking", False)) or queue is None:
+            return await self._model_router.complete(prompt, runtime_config)
+
+        emitter = AgentStreamEmitter(session_id=0, session_key="thinking-local", workflow_type="interview_questions")
+        message_id = emitter.run_id
+        # thinking_status: started
+        await queue.put(
+            emitter.emit(
+                event=AgentStreamEventType.THINKING_STATUS,
+                node_id=AgentNodeId.INTERVIEW_QUESTIONS,
+                payload=ThinkingStatusPayload(message_id=message_id, status="started", title=label),
+            )
+        )
+        accumulated_parts: list[str] = []
+        try:
+            async for chunk in self._model_router.stream(prompt, runtime_config):
+                delta = str(getattr(chunk, "delta", "") or "")
+                if delta:
+                    accumulated_parts.append(delta)
+                    await queue.put(
+                        emitter.emit(
+                            event=AgentStreamEventType.THINKING_STREAM,
+                            node_id=AgentNodeId.INTERVIEW_QUESTIONS,
+                            payload=ThinkingStreamPayload(message_id=message_id, delta=delta),
+                        )
+                    )
+                # 末尾 chunk 通常带 result，直接返回避免重复 join
+                final_result = getattr(chunk, "result", None)
+                if final_result is not None:
+                    await queue.put(
+                        emitter.emit(
+                            event=AgentStreamEventType.THINKING_STATUS,
+                            node_id=AgentNodeId.INTERVIEW_QUESTIONS,
+                            payload=ThinkingStatusPayload(message_id=message_id, status="completed", title=label),
+                        )
+                    )
+                    return final_result
+        except Exception:
+            # 失败时关闭思考面板，错误日志由上层捕获，避免双重打印
+            await queue.put(
+                emitter.emit(
+                    event=AgentStreamEventType.THINKING_STATUS,
+                    node_id=AgentNodeId.INTERVIEW_QUESTIONS,
+                    payload=ThinkingStatusPayload(message_id=message_id, status="unavailable", title=label),
+                )
+            )
+            raise
+
+        # 没拿到 result 时，用累计 delta 构造一个轻量返回对象
+        await queue.put(
+            emitter.emit(
+                event=AgentStreamEventType.THINKING_STATUS,
+                node_id=AgentNodeId.INTERVIEW_QUESTIONS,
+                payload=ThinkingStatusPayload(message_id=message_id, status="completed", title=label),
+            )
+        )
+
+        class _LocalResult:
+            __slots__ = ("content",)
+            def __init__(self, content: str) -> None: self.content = content
+        return _LocalResult("".join(accumulated_parts))
 
     def _fallback_dimensions(self) -> list[InterviewDimensionDTO]:
         """

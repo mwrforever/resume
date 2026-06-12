@@ -18,6 +18,10 @@ import type {
 import { getUiComponentKey, parseAgentStreamEnvelopeV1, parsePlanReviewTreeData, parseRepairSuggestions } from '@/utils/agent-stream-v1';
 import { parseAgentStreamEnvelopeV2 } from '@/utils/agent-stream-v2';
 
+/** Global monotonic counter; first push of each timeline item gets a seq so message-list can interleave them in arrival order. */
+let __timelineSeqCounter = 0;
+function nextTimelineSeq(): number { __timelineSeqCounter += 1; return __timelineSeqCounter; }
+
 /** 流式事件处理所需的 React 状态更新器集合 */
 export interface AgentStreamHandlerDeps {
   streamingMessageId: number;
@@ -81,25 +85,24 @@ function handleAgentV2Event(data: Record<string, unknown>, deps: AgentStreamHand
   if (event === 'message.started') {
     const messageId = typeof payload.message_id === 'number' ? payload.message_id : deps.streamingMessageId;
     const content = typeof payload.content === 'string' ? payload.content : '';
-    if (content) {
-      deps.setMessages((prev) => {
-        const exists = prev.some((message) => message.id === messageId);
-        if (exists) return prev;
-        const userMessage: IAgentMessageItem = {
-          id: messageId,
-          session_id: deps.persistedSession.id,
-          parent_message_id: null,
-          role: 'user',
-          message_type: 'text',
-          content: { context_refs: (payload.context_refs as Array<Record<string, unknown>>) || [], blocks: [{ type: 'text', text: content }] },
-          model_name: null,
-          token_count: null,
-          sort_order: prev.length + 1,
-          create_time: null,
-        };
-        return [...prev, userMessage];
-      });
-    }
+    deps.setMessages((prev) => {
+      const withoutOptimistic = prev.filter((m) => m.id !== deps.streamingMessageId);
+      const exists = withoutOptimistic.some((m) => m.id === messageId);
+      if (exists) return withoutOptimistic;
+      const userMessage: IAgentMessageItem = {
+        id: messageId,
+        session_id: deps.persistedSession.id,
+        parent_message_id: null,
+        role: 'user',
+        message_type: 'text',
+        content: { context_refs: (payload.context_refs as Array<Record<string, unknown>>) || [], blocks: [{ type: 'text', text: content }] },
+        model_name: null,
+        token_count: null,
+        sort_order: prev.length + 1,
+        create_time: null,
+      };
+      return [...withoutOptimistic, userMessage];
+    });
     return;
   }
 
@@ -308,7 +311,7 @@ function upsertThinkingStatus(
     if (prev.some((item) => item.id === id)) {
       return prev.map((item) => (item.id === id ? { ...item, status, content: content || item.content } : item));
     }
-    return [...prev, { id, run_id: envelope.run_id, status, content }];
+    return [...prev, { id, run_id: envelope.run_id, status, content, seq: nextTimelineSeq() }];
   });
 }
 
@@ -325,7 +328,7 @@ function appendThinkingStream(
     if (prev.some((item) => item.id === id)) {
       return prev.map((item) => (item.id === id ? { ...item, status: 'streaming', content: `${item.content}${delta}` } : item));
     }
-    return [...prev, { id, run_id: envelope.run_id, status: 'streaming', content: delta }];
+    return [...prev, { id, run_id: envelope.run_id, status: 'streaming', content: delta, seq: nextTimelineSeq() }];
   });
 }
 
@@ -360,8 +363,13 @@ function upsertInteractionRequest(
     data: (payload.data as Record<string, unknown>) || {},
     submit_label: String(payload.submit_label || '提交'),
     status: 'pending',
+    seq: nextTimelineSeq(),
   };
-  deps.setInteractionRequests?.((prev) => [item, ...prev.filter((current) => current.id !== item.id)]);
+  deps.setInteractionRequests?.((prev) => {
+    const existing = prev.find((current) => current.id === item.id);
+    const merged = existing ? { ...item, seq: existing.seq ?? item.seq } : item;
+    return [merged, ...prev.filter((current) => current.id !== item.id)];
+  });
   deps.setRuntimeFeedItems((prev) => upsertRuntimeFeed(prev, {
     id: `interaction-${requestId}`,
     type: 'action',
@@ -396,10 +404,11 @@ function appendCompletedBusinessCards(envelope: IAgentStreamEnvelopeV2, payload:
     const cardPayload = cardType === 'interview_question_set' ? blockRecord.question_set : blockRecord.report;
     if (!cardPayload || typeof cardPayload !== 'object' || Array.isArray(cardPayload)) return;
     const id = `${cardType}-${envelope.run_id}-${index}`;
-    deps.setBusinessCards?.((prev) => [
-      { id, run_id: envelope.run_id, type: cardType, payload: cardPayload as Record<string, unknown> },
-      ...prev.filter((item) => item.id !== id),
-    ]);
+    deps.setBusinessCards?.((prev) => {
+      const existing = prev.find((it) => it.id === id);
+      const card: IAgentBusinessCardItem = { id, run_id: envelope.run_id, type: cardType, payload: cardPayload as Record<string, unknown>, seq: existing?.seq ?? nextTimelineSeq() };
+      return [card, ...prev.filter((it) => it.id !== id)];
+    });
   });
 }
 
@@ -411,10 +420,11 @@ function appendBusinessCard(
   const cardType = coerceBusinessCardType(payload.card_type || payload.type);
   if (!cardType || !deps.setBusinessCards) return;
   const id = String(payload.card_id || `${cardType}-${envelope.run_id}-${envelope.seq}`);
-  deps.setBusinessCards((prev) => [
-    { id, run_id: envelope.run_id, type: cardType, payload },
-    ...prev.filter((item) => item.id !== id),
-  ]);
+  deps.setBusinessCards((prev) => {
+    const existing = prev.find((it) => it.id === id);
+    const card: IAgentBusinessCardItem = { id, run_id: envelope.run_id, type: cardType, payload, seq: existing?.seq ?? nextTimelineSeq() };
+    return [card, ...prev.filter((it) => it.id !== id)];
+  });
 }
 
 function getV2NodeId(envelope: IAgentStreamEnvelopeV2): string {
@@ -424,9 +434,9 @@ function getV2NodeId(envelope: IAgentStreamEnvelopeV2): string {
 
 function upsertRuntimeFeed(items: IAgentRuntimeFeedItem[], next: IAgentRuntimeFeedItem): IAgentRuntimeFeedItem[] {
   if (items.some((item) => item.id === next.id)) {
-    return items.map((item) => (item.id === next.id ? { ...item, ...next } : item));
+    return items.map((item) => (item.id === next.id ? { ...item, ...next, seq: item.seq ?? next.seq ?? nextTimelineSeq() } : item));
   }
-  return [...items, next];
+  return [...items, { ...next, seq: next.seq ?? nextTimelineSeq() }];
 }
 
 function updateRuntimeFeedStatus(

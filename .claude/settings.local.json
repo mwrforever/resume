@@ -10,7 +10,19 @@
       "Skill(superpowers:subagent-driven-development)",
       "Skill(superpowers:requesting-code-review)",
       "Skill(superpowers:finishing-a-development-branch)",
-      "Skill(investigate)"
+      "Skill(investigate)",
+      "Read(//c/Users/18229/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/.claude/skills/ui-ux-pro-max/**)",
+      "Bash(python scripts/search.py \"enterprise HR SaaS recruitment agent chat streaming interview evaluation professional minimal\" --design-system -p \"Recruitment Agent Workspace\")",
+      "Read(//c/Users/18229/.claude/plugins/cache/ui-ux-pro-max-skill/**)",
+      "Bash(python scripts/search.py \"enterprise HR SaaS recruitment AI agent chat streaming professional content-first minimal blue\" --design-system -p \"Recruitment Agent Workspace\")",
+      "Bash(python scripts/search.py \"AI chat assistant streaming workspace conversation dashboard sidebar\" --domain product -n 4)",
+      "Bash(python scripts/search.py \"streaming text typewriter loading skeleton smooth incremental render\" --domain ux -n 6)",
+      "Bash(python scripts/search.py \"animation transition continuity interruptible spring\" --domain ux -n 8)",
+      "Bash(python scripts/search.py \"minimalism micro-interactions chat trust enterprise blue\" --domain style -n 4)",
+      "Bash(python scripts/search.py \"professional dashboard blue trust SaaS enterprise\" --domain color -n 4)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'docs\\(agent\\): add agent runtime & rendering refactor design *)",
+      "Bash(git commit -m 'docs\\(agent\\): add agent runtime refactor implementation plan *)"
     ]
   }
 }

@@ -36,6 +36,20 @@ def get_service(key: str) -> Any:
     return ctx.get(key)
 
 
+def get_thinking_queue() -> Any:
+    """读取当前请求级思考事件队列（asyncio.Queue[AgentStreamEvent]）。
+
+    业务服务在调用 LLM stream 时将 thinking_status / thinking_stream 事件
+    push 到该队列，由 AgentService._run_graph_stream 主循环异步消费并向前端 yield。
+
+    Returns:
+        asyncio.Queue | None: 当前请求级思考事件队列，未注入时为 None
+    """
+    ctx = _workflow_service_ctx.get()
+    if ctx is None:
+        return None
+    return ctx.get("thinking_queue")
+
 def get_all() -> dict[str, Any]:
     """读取全部业务服务上下文（供需要多个服务的节点使用）。"""
     return _workflow_service_ctx.get() or {}

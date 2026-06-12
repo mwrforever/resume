@@ -432,17 +432,21 @@ export interface IAgentThinkingStreamItem {
   run_id: string;
   status: 'started' | 'streaming' | 'completed' | 'unavailable';
   content: string;
+  /** 出现/更新顺序号，用于消息时间线穿插渲染，单调递增 */
+  seq?: number;
 }
 
 export interface IAgentInteractionRequestItem {
   id: string;
   run_id: string;
-  interaction_type: 'dimension_selection' | 'plan_approval' | 'job_selection';
+  interaction_type: 'dimension_selection' | 'plan_approval' | 'job_selection' | 'question_review';
   title: string;
   prompt: string;
   data: Record<string, unknown>;
   submit_label: string;
   status: 'pending' | 'submitted' | 'expired';
+  /** 出现顺序号，用于消息时间线穿插渲染，单调递增 */
+  seq?: number;
 }
 
 export interface IAgentBusinessCardItem {
@@ -450,6 +454,8 @@ export interface IAgentBusinessCardItem {
   run_id: string;
   type: 'interview_question_set' | 'resume_evaluation_report';
   payload: Record<string, unknown>;
+  /** 出现顺序号，用于消息时间线穿插渲染，单调递增 */
+  seq?: number;
 }
 
 /** 消息列表下方的运行时动态条目（思考、工具、待确认动作） */
@@ -460,6 +466,8 @@ export interface IAgentRuntimeFeedItem {
   title: string;
   message?: string | null;
   action?: IAgentActionStreamItem;
+  /** 出现顺序号，用于消息时间线穿插渲染，单调递增 */
+  seq?: number;
 }
 
 /** RepairSuggestionsPanel 组件 Props */

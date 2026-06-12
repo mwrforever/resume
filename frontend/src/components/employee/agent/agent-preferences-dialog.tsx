@@ -32,7 +32,7 @@ function MetricCard({ label, value }: { label: string; value: string | number })
   );
 }
 
-export function AgentPreferencesDialog({ open, memories, toolEvents, totalTokens, messageCount, actionCount, onClose }: AgentPreferencesDialogProps) {
+export function AgentPreferencesDialog({ open, memories, totalTokens, messageCount, actionCount, onClose }: AgentPreferencesDialogProps) {
   const [activeTab, setActiveTab] = useState<PreferenceTab>('metrics');
 
   return (

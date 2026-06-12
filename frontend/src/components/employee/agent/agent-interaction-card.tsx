@@ -13,7 +13,7 @@ function asRecordArray(value: unknown): Record<string, unknown>[] {
 }
 
 function labelOf(item: Record<string, unknown>) {
-  return String(item.name || item.title || item.job_name || item.label || '未命名');
+  return String(item.name || item.title || item.job_name || item.label || item.dimension || item.key || '未命名');
 }
 
 function DimensionSelection({ item, onSubmit }: AgentInteractionCardProps) {
@@ -118,7 +118,7 @@ function PlanApproval({ item, onSubmit }: AgentInteractionCardProps) {
       {/* 展示面试题计划具体内容 */}
       {plan && (
         <div className="rounded-2xl border border-slate-200 bg-white p-3">
-          {plan.summary && <p className="text-sm text-slate-700">{String(plan.summary)}</p>}
+          {typeof plan.summary === "string" && plan.summary && <p className="text-sm text-slate-700">{String(plan.summary)}</p>}
           {planItems.length > 0 && (
             <ol className="mt-2 space-y-2">
               {planItems.map((planItem, index) => (
@@ -126,9 +126,9 @@ function PlanApproval({ item, onSubmit }: AgentInteractionCardProps) {
                   <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-100 text-xs font-semibold text-sky-700">{index + 1}</span>
                   <div className="min-w-0 flex-1">
                     <div className="font-medium text-slate-900">{labelOf(planItem)}</div>
-                    {(planItem.dimension || planItem.focus) && <div className="text-xs text-slate-500">{String(planItem.dimension || planItem.focus || '')}</div>}
+                    {(typeof planItem.dimension === "string" && planItem.dimension || typeof planItem.focus === "string" && planItem.focus) && <div className="text-xs text-slate-500">{String(planItem.dimension || planItem.focus || "")}</div>}
                     {planItem.question_count != null && <div className="text-xs text-slate-400">题目数：{String(planItem.question_count)}</div>}
-                    {planItem.description && <div className="mt-1 text-xs text-slate-600">{String(planItem.description)}</div>}
+                    {typeof planItem.description === "string" && planItem.description && <div className="mt-1 text-xs text-slate-600">{String(planItem.description)}</div>}
                   </div>
                 </li>
               ))}
@@ -195,7 +195,7 @@ function JobSelection({ item, onSubmit }: AgentInteractionCardProps) {
               }}
             >
               {name}
-              {candidate.source && <SourceBadge source={String(candidate.source)} />}
+              {typeof candidate.source === "string" && candidate.source && <SourceBadge source={String(candidate.source)} />}
             </button>
           );
         })}
@@ -228,6 +228,106 @@ function SourceBadge({ source }: { source: string }) {
   return <span className="inline-flex items-center gap-0.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600"><Sparkles size={9} aria-hidden="true" />系统推测</span>;
 }
 
+/**
+ * 题集人工批阅交互卡。
+ *
+ * 用户在面试题集生成后进行人工把关：
+ *   - "通过"：题集作为最终结果交付
+ *   - "重新生成"：提交反馈意见，引擎根据反馈回流到规划节点重新生成
+ *
+ * 交互协议：
+ *   - data.questions: Array<面试题对象>
+ *   - data.plan: { items: Array<{ dimension, question_count, difficulty, focus }>, summary, total_questions }
+ *   - 提交载荷：{ decision: 'approve' | 'regenerate', feedback: string }
+ */
+function QuestionReview({ item, onSubmit }: AgentInteractionCardProps) {
+  const questions = useMemo(() => asRecordArray(item.data.questions), [item.data.questions]);
+  const planObj = (item.data.plan && typeof item.data.plan === 'object' && !Array.isArray(item.data.plan)) ? (item.data.plan as Record<string, unknown>) : {};
+  const planItems = useMemo(() => asRecordArray(planObj.items), [planObj.items]);
+  const totalQuestions = typeof planObj.total_questions === 'number' ? planObj.total_questions : questions.length;
+  const planSummary = typeof planObj.summary === 'string' ? planObj.summary : '';
+  const [decision, setDecision] = useState<'approve' | 'regenerate'>('approve');
+  const [feedback, setFeedback] = useState('');
+  const [error, setError] = useState('');
+
+  /** 提交批阅意见：驳回时强制要求填写反馈，避免引擎无方向重生成 */
+  const submit = () => {
+    if (decision === 'regenerate' && !feedback.trim()) {
+      setError('请填写需要调整的方向，引擎将基于反馈重新生成。');
+      return;
+    }
+    onSubmit(item.id, { decision, feedback: feedback.trim() });
+  };
+
+  return (
+    <>
+      {/* 题集摘要：先展示规划分布，便于用户快速判断 */}
+      <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
+        <div className="text-xs font-semibold text-slate-500">题目分布（共 {totalQuestions} 题）</div>
+        {planSummary && <div className="mt-1 text-xs text-slate-500">{planSummary}</div>}
+        <div className="mt-2 flex flex-wrap gap-2">
+          {planItems.map((p, i) => (
+            <span key={'plan-' + i} className="inline-flex items-center gap-1 rounded-2xl bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
+              <span className="font-medium">{String(p.dimension || p.name || '维度')}</span>
+              <span className="text-slate-500">×{Number(p.question_count || 0)}</span>
+              {p.difficulty ? <span className="text-slate-400">· {String(p.difficulty)}</span> : null}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* 题目预览：限制展示前 6 题，避免卡片过长 */}
+      <div className="mt-3 space-y-2">
+        {questions.slice(0, 6).map((q, i) => (
+          <div key={'q-' + i} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3 text-xs leading-5 text-slate-700">
+            <span className="mr-1 font-semibold text-slate-500">{i + 1}.</span>
+            <span>{String(q.question || q.text || '')}</span>
+            {q.dimension ? <span className="ml-2 inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">{String(q.dimension)}</span> : null}
+            {q.difficulty ? <span className="ml-1 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">{String(q.difficulty)}</span> : null}
+          </div>
+        ))}
+        {questions.length > 6 && (
+          <div className="text-xs text-slate-400">…还有 {questions.length - 6} 题未展示</div>
+        )}
+      </div>
+
+      {/* 决策切换：通过 / 重新生成 */}
+      <div className="mt-4 flex gap-2">
+        <button
+          type="button"
+          className={'flex items-center gap-1.5 rounded-2xl border px-3 py-2 text-sm font-medium transition-colors ' + (decision === 'approve' ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50')}
+          onClick={() => { setDecision('approve'); setError(''); }}
+        >
+          <CheckCircle2 size={14} aria-hidden="true" />通过
+        </button>
+        <button
+          type="button"
+          className={'flex items-center gap-1.5 rounded-2xl border px-3 py-2 text-sm font-medium transition-colors ' + (decision === 'regenerate' ? 'border-rose-300 bg-rose-50 text-rose-800' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50')}
+          onClick={() => { setDecision('regenerate'); setError(''); }}
+        >
+          <MessageSquareText size={14} aria-hidden="true" />重新生成
+        </button>
+      </div>
+
+      {/* 反馈输入：仅在驳回时显示，其它情况展示可选附加说明 */}
+      <label className="mt-3 block text-xs font-medium text-slate-600">
+        {decision === 'regenerate' ? '请填写调整意见（必填）' : '附加说明（可选）'}
+        <textarea
+          className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+          rows={3}
+          value={feedback}
+          onChange={(event) => setFeedback(event.target.value)}
+          placeholder={decision === 'regenerate' ? '例如：请增加对系统设计能力的考察，减少基础语法题' : '可补充对题集的整体评价'}
+        />
+      </label>
+      {error && <div role="alert" className="mt-2 text-xs text-red-600">{error}</div>}
+      <Button type="button" size="sm" className="mt-4" onClick={submit} disabled={item.status !== 'pending'}>
+        <Send size={13} className="mr-1" aria-hidden="true" />{item.submit_label || '提交批阅意见'}
+      </Button>
+    </>
+  );
+}
+
 export function AgentInteractionCard({ item, onSubmit }: AgentInteractionCardProps) {
   return (
     <section className="max-w-3xl rounded-3xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-slate-700 shadow-sm shadow-amber-100/70 md:ml-12">
@@ -241,6 +341,7 @@ export function AgentInteractionCard({ item, onSubmit }: AgentInteractionCardPro
           {item.interaction_type === 'dimension_selection' && <DimensionSelection item={item} onSubmit={onSubmit} />}
           {item.interaction_type === 'plan_approval' && <PlanApproval item={item} onSubmit={onSubmit} />}
           {item.interaction_type === 'job_selection' && <JobSelection item={item} onSubmit={onSubmit} />}
+          {item.interaction_type === 'question_review' && <QuestionReview item={item} onSubmit={onSubmit} />}
         </div>
       </div>
     </section>

@@ -128,6 +128,57 @@ function restoreMessageBlocks(blocks: Array<Record<string, unknown>>): RestoredM
  * @param props 业务卡片渲染项。
  * @return React.ReactElement 业务卡片组件。
  */
+type TimelineEntry =
+  | { kind: 'feed'; seq: number; item: IAgentRuntimeFeedItem }
+  | { kind: 'thinking'; seq: number; item: IAgentThinkingStreamItem }
+  | { kind: 'interaction'; seq: number; item: IAgentInteractionRequestItem; readOnly: boolean }
+  | { kind: 'card'; seq: number; item: IAgentBusinessCardItem }
+  | { kind: 'action'; seq: number; item: IAgentRuntimeFeedItem };
+
+/**
+ * 合并四类流式事件为按 seq 排序的统一时间线。
+ *
+ * 行为：
+ *   - runtimeFeedItems 中 type==action 的项被剥离出来，由 RuntimeFeedRow 在末尾单独渲染（保留旧行为）；
+ *   - 其余 feed、thinking、interaction、card 按各自首次推入时分配的 seq 升序穿插；
+ *   - 缺失 seq 的旧条目按 0 处理，会优先排在前列，保证不丢条目。
+ *
+ * @param feed 运行 feed 集合
+ * @param thinking 思考流集合
+ * @param interactions 人机交互集合
+ * @param cards 业务卡片集合
+ * @param interactionReadOnly true 表示历史快照中的已结束交互（仅展示、不可重新提交）
+ * @return TimelineEntry[] 按时间线穿插顺序的条目数组
+ */
+function buildMergedTimeline(
+  feed: IAgentRuntimeFeedItem[],
+  thinking: IAgentThinkingStreamItem[],
+  interactions: IAgentInteractionRequestItem[],
+  cards: IAgentBusinessCardItem[],
+  interactionReadOnly: boolean,
+): TimelineEntry[] {
+  const entries: TimelineEntry[] = [];
+  feed.forEach((item) => {
+    if (item.type === 'action') return;
+    entries.push({ kind: 'feed', seq: item.seq ?? 0, item });
+  });
+  thinking.forEach((item) => entries.push({ kind: 'thinking', seq: item.seq ?? 0, item }));
+  interactions.forEach((item) => entries.push({ kind: 'interaction', seq: item.seq ?? 0, item, readOnly: interactionReadOnly }));
+  cards.forEach((item) => entries.push({ kind: 'card', seq: item.seq ?? 0, item }));
+  entries.sort((a, b) => a.seq - b.seq);
+  return entries;
+}
+
+/**
+ * 单条运行 feed 行渲染：复用 AgentRunCompactTimeline 的视觉风格，
+ * 但只渲染一项以便参与时间线穿插。
+ *
+ * @param item 单个运行 feed 条目
+ * @return React.ReactElement 紧凑型时间线行
+ */
+function SingleFeedRow({ item }: { item: IAgentRuntimeFeedItem }) {
+  return <AgentRunCompactTimeline items={[item]} />;
+}
 function BusinessCardRenderer({ item }: { item: IAgentBusinessCardItem }) {
   if (item.type === 'interview_question_set') return <InterviewQuestionSetCard questionSet={item.payload} />;
   return <ResumeEvaluationReportCard report={item.payload} />;
@@ -254,19 +305,36 @@ export function AgentMessageList({
                     </div>
                   )}
                 </div>
-                {restoredBlocks && <AgentRunCompactTimeline items={restoredBlocks.runtimeFeedItems} />}
-                {restoredBlocks?.thinkingItems.map((item) => <AgentThinkingPanel key={item.id} item={item} />)}
-                {restoredBlocks?.interactionRequests.map((item) => (
-                  <AgentInteractionCard key={item.id} item={{ ...item, status: 'expired' }} onSubmit={() => undefined} />
-                ))}
-                {restoredBlocks?.businessCards.map((item) => <BusinessCardRenderer key={item.id} item={item} />)}
-                {index === insertRuntimeFeedAfterIndex && <AgentRunCompactTimeline items={runtimeFeedItems} />}
-                {index === insertRuntimeFeedAfterIndex && thinkingItems.map((item) => <AgentThinkingPanel key={item.id} item={item} />)}
+                {restoredBlocks &&
+                  buildMergedTimeline(
+                    restoredBlocks.runtimeFeedItems,
+                    restoredBlocks.thinkingItems,
+                    restoredBlocks.interactionRequests,
+                    restoredBlocks.businessCards,
+                    true,
+                  ).map((entry) => {
+                    if (entry.kind === 'feed') return <SingleFeedRow key={'hist-feed-' + entry.item.id} item={entry.item} />;
+                    if (entry.kind === 'thinking') return <AgentThinkingPanel key={'hist-think-' + entry.item.id} item={entry.item} />;
+                    if (entry.kind === 'interaction') return (
+                      <AgentInteractionCard key={'hist-inter-' + entry.item.id} item={{ ...entry.item, status: 'expired' }} onSubmit={() => undefined} />
+                    );
+                    if (entry.kind === 'card') return <BusinessCardRenderer key={'hist-card-' + entry.item.id} item={entry.item} />;
+                    return null;
+                  })}
                 {index === insertRuntimeFeedAfterIndex &&
-                  interactionRequests.map((item) => (
-                    <AgentInteractionCard key={item.id} item={item} onSubmit={onSubmitInteraction || (() => undefined)} />
-                  ))}
-                {index === insertRuntimeFeedAfterIndex && businessCards.map((item) => <BusinessCardRenderer key={item.id} item={item} />)}
+                  buildMergedTimeline(runtimeFeedItems, thinkingItems, interactionRequests, businessCards, false).map((entry) => {
+                    if (entry.kind === 'feed') return <SingleFeedRow key={'live-feed-' + entry.item.id} item={entry.item} />;
+                    if (entry.kind === 'thinking') return <AgentThinkingPanel key={'live-think-' + entry.item.id} item={entry.item} />;
+                    if (entry.kind === 'interaction') return (
+                      <AgentInteractionCard
+                        key={'live-inter-' + entry.item.id}
+                        item={entry.item}
+                        onSubmit={onSubmitInteraction || (() => undefined)}
+                      />
+                    );
+                    if (entry.kind === 'card') return <BusinessCardRenderer key={'live-card-' + entry.item.id} item={entry.item} />;
+                    return null;
+                  })}
                 {index === insertRuntimeFeedAfterIndex &&
                   runtimeFeedItems
                     .filter((item) => item.type === 'action' && item.action)
