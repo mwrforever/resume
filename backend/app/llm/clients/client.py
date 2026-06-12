@@ -9,6 +9,8 @@ import asyncio
 import logging
 from typing import Coroutine, TypeVar
 
+from pydantic import SecretStr
+
 from app.core.config import get_settings
 from app.llm.model_router import get_default_model_router
 from app.schemas.agent.dto import LLMResultDTO, LLMRuntimeConfigDTO
@@ -28,42 +30,49 @@ def _run_async_completion(coro: Coroutine[object, object, T]) -> T:
     raise RuntimeError("同步LLM客户端不能在事件循环中直接调用，请使用 async_llm_complete")
 
 
-async def async_llm_complete(prompt: str, model: str | None = None, max_retries: int = 3, timeout: int = 60) -> str:
-    """异步 LLM 调用入口，用于 Agent 运行时异步上下文。"""
-    runtime_config = LLMRuntimeConfigDTO(
+def _build_runtime_config(
+    model: str | None = None, max_retries: int = 3, timeout: int = 60,
+) -> LLMRuntimeConfigDTO:
+    """从全局 settings 构造 LLMRuntimeConfigDTO（兼容新 DTO schema）。"""
+    return LLMRuntimeConfigDTO(
+        provider="other",
         model_name=model or settings.OPENAI_MODEL,
-        api_key=settings.openai_api_key,
+        api_key=SecretStr(settings.openai_api_key),
         base_url=settings.OPENAI_API_BASE,
         fallback_model_name=settings.FALLBACK_MODEL,
-        extra_body={"enable_thinking": False},
         timeout_seconds=timeout,
         max_retries=max_retries,
-        source="env",
     )
+
+
+async def async_llm_complete(
+    prompt: str, model: str | None = None, max_retries: int = 3, timeout: int = 60,
+) -> str:
+    """异步 LLM 调用入口，用于 Agent 运行时异步上下文。"""
+    runtime_config = _build_runtime_config(model, max_retries, timeout)
     result = await get_default_model_router().complete(prompt, runtime_config)
     return result.content
 
 
-async def async_llm_complete_with_result(prompt: str, runtime_config: LLMRuntimeConfigDTO) -> LLMResultDTO:
+async def async_llm_complete_with_result(
+    prompt: str, runtime_config: LLMRuntimeConfigDTO,
+) -> LLMResultDTO:
     """异步 LLM 调用（含完整结果），用于 Agent 运行时异步上下文。"""
     return await get_default_model_router().complete(prompt, runtime_config)
 
 
-def llm_complete(prompt: str, model: str | None = None, max_retries: int = 3, timeout: int = 60) -> str:
+def llm_complete(
+    prompt: str, model: str | None = None, max_retries: int = 3, timeout: int = 60,
+) -> str:
     """同步 LLM 调用入口，仅在 Celery worker / 非事件循环环境中使用。"""
-    runtime_config = LLMRuntimeConfigDTO(
-        model_name=model or settings.OPENAI_MODEL,
-        api_key=settings.openai_api_key,
-        base_url=settings.OPENAI_API_BASE,
-        fallback_model_name=settings.FALLBACK_MODEL,
-        extra_body={"enable_thinking": False},
-        timeout_seconds=timeout,
-        max_retries=max_retries,
-        source="env",
-    )
-    return _run_async_completion(get_default_model_router().complete(prompt, runtime_config)).content
+    runtime_config = _build_runtime_config(model, max_retries, timeout)
+    return _run_async_completion(
+        get_default_model_router().complete(prompt, runtime_config),
+    ).content
 
 
 def llm_complete_with_result(prompt: str, runtime_config: LLMRuntimeConfigDTO) -> LLMResultDTO:
     """同步 LLM 调用（含完整结果），仅在 Celery worker / 非事件循环环境中使用。"""
-    return _run_async_completion(get_default_model_router().complete(prompt, runtime_config))
+    return _run_async_completion(
+        get_default_model_router().complete(prompt, runtime_config),
+    )

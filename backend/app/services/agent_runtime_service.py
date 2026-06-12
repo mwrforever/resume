@@ -1,0 +1,348 @@
+"""
+AgentRuntimeService：SSE 编排核心。
+
+职责：
+- stream_message：构造 emitter + ctx → 调 Runner → 把所有 envelope 写入 Redis buffer → 落库 → yield
+- resolve_interaction：用 Command(resume=values) 恢复 graph，复用 stream_message 编排
+- 收尾时把 emitter 累积的 envelope 折叠成 agent_message.content.blocks
+
+不做：业务规则、Prompt、LLM 调用、session CRUD。
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from collections.abc import AsyncIterator, Callable
+from datetime import datetime
+from typing import Any
+
+from langgraph.types import Command
+
+from app.core.exceptions import ValidationError
+from app.llm.graphs.workflows.runner import AgentWorkflowRunner
+from app.llm.graphs.workflows.context import WorkflowRuntimeContext
+from app.llm.streaming.emitter import AgentStreamEmitter
+from app.repositories.agent_repository import AgentRepository
+from app.schemas.agent.dto import LLMRuntimeConfigDTO
+from app.schemas.agent.request import AgentInteractionSubmit, AgentMessageCreate
+from app.schemas.agent.stream import AgentStreamEnvelope
+from app.services.agent_resume_service import AgentResumeService
+from app.services.cache_service import CacheService
+
+logger = logging.getLogger(__name__)
+
+STREAM_BUFFER_KEY = "agent:stream_buffer:{session_id}:{run_id}"
+STREAM_BUFFER_TTL = 1800  # 30 分钟
+
+
+class AgentRuntimeService:
+    """SSE 编排 + Redis buffer + 消息落库。"""
+
+    def __init__(
+        self, *,
+        repo: AgentRepository,
+        cache: CacheService,
+        workflow_graphs: dict[str, Any],
+        runner_factory: Callable[[Any], AgentWorkflowRunner],
+        interview_service,
+        evaluation_service,
+        resume_loader,
+        agent_resume_service: AgentResumeService,
+    ) -> None:
+        self._repo = repo
+        self._cache = cache
+        self._workflow_graphs = workflow_graphs
+        self._runner_factory = runner_factory
+        self._interview_service = interview_service
+        self._evaluation_service = evaluation_service
+        self._resume_loader = resume_loader
+        self._agent_resume = agent_resume_service
+
+    async def stream_message(
+        self, *, session, body: AgentMessageCreate, runtime_config: LLMRuntimeConfigDTO,
+    ) -> AsyncIterator[AgentStreamEnvelope]:
+        """新一轮 run：落库用户消息 → 跑 graph → 落库 agent 消息。
+
+        Args:
+            session: AgentSession ORM 对象
+            body: 用户消息创建请求体
+            runtime_config: LLM 运行时配置
+
+        Yields:
+            AgentStreamEnvelope 协议事件（run.start → step/block events → run.finish）
+        """
+        run_id = f"run_{uuid.uuid4().hex[:12]}"
+        emitter = AgentStreamEmitter(
+            session_id=session.id, run_id=run_id, workflow_type=body.workflow_type,
+        )
+        ctx = WorkflowRuntimeContext(
+            emitter=emitter, runtime_config=runtime_config,
+            interview_service=self._interview_service,
+            evaluation_service=self._evaluation_service,
+            resume_loader=self._resume_loader,
+            session_id=session.id, employee_id=session.employee_id, run_id=run_id,
+        )
+        # 解析简历引用（前端 context_refs 优先，否则从 Redis 会话引用读取）
+        resume_ref = await self._resolve_resume_ref(session.id, body)
+        graph_input = await self._build_graph_input(body, resume_ref)
+        # 落库用户消息
+        user_message = await self._create_user_message(session, body, run_id=run_id)
+
+        envelope_buffer: list[AgentStreamEnvelope] = []
+
+        # 发射 run.start
+        env = emitter.emit_run_start(
+            enable_thinking=runtime_config.enable_thinking,
+            user_message_id=user_message.id,
+        )
+        envelope_buffer.append(env)
+        await self._buffer_append(session.id, run_id, env)
+        yield env
+
+        # 运行 graph
+        runner = self._runner_factory(self._workflow_graphs[body.workflow_type])
+        try:
+            async for env in runner.astream(
+                thread_id=session.session_key, graph_input=graph_input, ctx=ctx,
+            ):
+                envelope_buffer.append(env)
+                await self._buffer_append(session.id, run_id, env)
+                yield env
+        except Exception as exc:
+            logger.exception("Graph 执行异常：session_id=%s run_id=%s", session.id, run_id)
+            err_env = emitter.emit_run_error(
+                code="graph_execution_failed", message=str(exc), retriable=False,
+            )
+            envelope_buffer.append(err_env)
+            await self._buffer_append(session.id, run_id, err_env)
+            yield err_env
+
+        # 收尾：把 buffer 折叠为 blocks，落库 agent 消息
+        agent_message = await self._persist_agent_message(
+            session=session, user_message=user_message, run_id=run_id,
+            envelopes=envelope_buffer, runtime_config=runtime_config,
+            workflow_type=body.workflow_type,
+        )
+        finish_env = emitter.emit_run_finish(agent_message_id=agent_message.id)
+        await self._buffer_append(session.id, run_id, finish_env)
+        yield finish_env
+        # 清理 Redis buffer
+        await self._cache.client.delete(
+            STREAM_BUFFER_KEY.format(session_id=session.id, run_id=run_id),
+        )
+
+    async def resolve_interaction(
+        self, *, session, request_id: str, body: AgentInteractionSubmit,
+        runtime_config: LLMRuntimeConfigDTO, workflow_type: str,
+    ) -> AsyncIterator[AgentStreamEnvelope]:
+        """提交 interaction 恢复 graph。
+
+        Args:
+            session: AgentSession ORM 对象
+            request_id: 前端提交的 interaction request_id
+            body: interaction 提交内容
+            runtime_config: LLM 运行时配置
+            workflow_type: 工作流类型
+
+        Yields:
+            AgentStreamEnvelope 协议事件
+        """
+        run_id = f"run_{uuid.uuid4().hex[:12]}"
+        emitter = AgentStreamEmitter(
+            session_id=session.id, run_id=run_id, workflow_type=workflow_type,
+        )
+        ctx = WorkflowRuntimeContext(
+            emitter=emitter, runtime_config=runtime_config,
+            interview_service=self._interview_service,
+            evaluation_service=self._evaluation_service,
+            resume_loader=self._resume_loader,
+            session_id=session.id, employee_id=session.employee_id, run_id=run_id,
+        )
+        # 先回执 interaction.resolve，让前端立刻关闭卡片
+        resolve_env = emitter.emit_interaction_resolve(request_id=request_id, values=body.values)
+        # 回写旧 interaction block 的 status 为 submitted
+        await self._update_old_interaction_block_status(
+            session_id=session.id, request_id=request_id, values=body.values,
+        )
+        await self._buffer_append(session.id, run_id, resolve_env)
+        yield resolve_env
+
+        # 进入 graph 恢复（Command(resume=values)）
+        envelope_buffer: list[AgentStreamEnvelope] = [resolve_env]
+        runner = self._runner_factory(self._workflow_graphs[workflow_type])
+        try:
+            async for env in runner.astream(
+                thread_id=session.session_key,
+                graph_input=Command(resume=body.values),
+                ctx=ctx,
+            ):
+                envelope_buffer.append(env)
+                await self._buffer_append(session.id, run_id, env)
+                yield env
+        except Exception as exc:
+            logger.exception("Graph 恢复失败：session_id=%s run_id=%s", session.id, run_id)
+            err_env = emitter.emit_run_error(
+                code="graph_execution_failed", message=str(exc), retriable=False,
+            )
+            envelope_buffer.append(err_env)
+            await self._buffer_append(session.id, run_id, err_env)
+            yield err_env
+
+        # 收尾：落库新一条 agent 消息
+        agent_message = await self._persist_agent_message(
+            session=session, user_message=None, run_id=run_id,
+            envelopes=envelope_buffer, runtime_config=runtime_config,
+            workflow_type=workflow_type,
+        )
+        finish_env = emitter.emit_run_finish(agent_message_id=agent_message.id)
+        await self._buffer_append(session.id, run_id, finish_env)
+        yield finish_env
+        await self._cache.client.delete(
+            STREAM_BUFFER_KEY.format(session_id=session.id, run_id=run_id),
+        )
+
+    # ---------- 内部 ----------
+
+    async def _resolve_resume_ref(
+        self, session_id: int, body: AgentMessageCreate,
+    ) -> dict[str, Any] | None:
+        """解析简历引用：前端 context_refs 优先，否则从 Redis 会话引用读取。"""
+        for ref in body.context_refs or []:
+            if str(ref.get("type") or "").lower() == "resume":
+                if not ref.get("resume_id"):
+                    raise ValidationError("简历附件缺少 resume_id")
+                return {
+                    "resume_id": int(ref["resume_id"]),
+                    "job_id": int(ref["job_id"]) if ref.get("job_id") is not None else None,
+                    "file_name": str(ref.get("file_name") or ""),
+                }
+        return await self._agent_resume.get_session_ref(session_id=session_id)
+
+    async def _build_graph_input(
+        self, body: AgentMessageCreate, resume_ref: dict | None,
+    ) -> dict:
+        """构造 graph 输入（resume_ref + validation_attempts 初始为 0）。"""
+        return {"resume_ref": resume_ref or {}, "validation_attempts": 0}
+
+    async def _create_user_message(
+        self, session, body: AgentMessageCreate, *, run_id: str,
+    ):
+        """落库用户消息。"""
+        return await self._repo.create_message(
+            session_id=session.id,
+            role="user",
+            workflow_type=body.workflow_type,
+            run_id=run_id,
+            content={"blocks": [{"type": "text", "text": body.content}]},
+            sort_order=await self._repo.next_message_order(session.id),
+        )
+
+    async def _persist_agent_message(
+        self, *, session, user_message, run_id: str,
+        envelopes: list[AgentStreamEnvelope],
+        runtime_config: LLMRuntimeConfigDTO, workflow_type: str,
+    ):
+        """把 envelope 序列折叠为 blocks 并落库 agent 消息。"""
+        blocks = self._envelopes_to_blocks(envelopes)
+        try:
+            msg = await self._repo.create_message(
+                session_id=session.id,
+                parent_message_id=user_message.id if user_message else None,
+                role="agent",
+                workflow_type=workflow_type,
+                run_id=run_id,
+                content={"blocks": blocks},
+                model_name=runtime_config.model_name,
+                sort_order=await self._repo.next_message_order(session.id),
+            )
+            await self._repo.update_session(
+                session.id, status=1, last_message_time=datetime.now(),
+            )
+            await self._repo.commit()
+            return msg
+        except Exception:
+            await self._repo.rollback()
+            logger.exception("agent_message 落库失败")
+            raise
+
+    @staticmethod
+    def _envelopes_to_blocks(envelopes: list[AgentStreamEnvelope]) -> list[dict[str, Any]]:
+        """把 envelope 序列折叠成 block 数组。
+
+        规则：
+        - block.start 建立骨架
+        - block.delta 累加 text/text_delta、覆盖 status/output、一次性写满业务卡
+        - block.stop 标记完成（streaming → success）
+        """
+        blocks_by_index: dict[int, dict[str, Any]] = {}
+        for env in envelopes:
+            if env.type == "block.start":
+                idx = int(env.data["index"])
+                blocks_by_index[idx] = dict(env.data["block"])
+            elif env.type == "block.delta":
+                idx = int(env.data["index"])
+                if idx not in blocks_by_index:
+                    continue
+                delta = env.data.get("delta") or {}
+                # text/thinking 累加
+                if "text_delta" in delta and "text" in blocks_by_index[idx]:
+                    blocks_by_index[idx]["text"] = (
+                        blocks_by_index[idx].get("text") or ""
+                    ) + delta["text_delta"]
+                # tool_use 完成状态
+                for k in ("status", "output", "error"):
+                    if k in delta:
+                        blocks_by_index[idx][k] = delta[k]
+                # 业务卡一次写满
+                for k in ("question_set", "report"):
+                    if k in delta:
+                        blocks_by_index[idx][k] = delta[k]
+                # interaction 提交值
+                if "values" in delta:
+                    blocks_by_index[idx]["values"] = delta["values"]
+            elif env.type == "block.stop":
+                idx = int(env.data["index"])
+                if idx in blocks_by_index:
+                    # streaming → success（除非业务已显式标记其他状态）
+                    if blocks_by_index[idx].get("status") == "streaming":
+                        blocks_by_index[idx]["status"] = "success"
+        return [blocks_by_index[i] for i in sorted(blocks_by_index)]
+
+    async def _buffer_append(
+        self, session_id: int, run_id: str, env: AgentStreamEnvelope,
+    ) -> None:
+        """JSONL 形式 APPEND 到 Redis buffer；失败仅日志，不中断主流程。"""
+        try:
+            key = STREAM_BUFFER_KEY.format(session_id=session_id, run_id=run_id)
+            line = env.model_dump_json() + "\n"
+            await self._cache.client.append(key, line)
+            await self._cache.client.expire(key, STREAM_BUFFER_TTL)
+        except Exception:
+            logger.exception("Redis stream buffer append 失败")
+
+    async def _update_old_interaction_block_status(
+        self, *, session_id: int, request_id: str, values: dict[str, Any],
+    ) -> None:
+        """把指定 request_id 对应的旧 interaction block status 改为 submitted。"""
+        try:
+            messages = await self._repo.list_messages(session_id)
+            for msg in reversed(messages):
+                content = msg.content or {}
+                blocks = content.get("blocks") or []
+                dirty = False
+                for b in blocks:
+                    if (
+                        b.get("type") == "interaction"
+                        and b.get("request_id") == request_id
+                        and b.get("status") == "pending"
+                    ):
+                        b["status"] = "submitted"
+                        b["values"] = values
+                        dirty = True
+                if dirty:
+                    await self._repo.update_message_content(msg.id, content)
+                    await self._repo.commit()
+                    return
+        except Exception:
+            logger.exception("更新旧 interaction block status 失败")

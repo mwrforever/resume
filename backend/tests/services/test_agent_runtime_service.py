@@ -1,0 +1,152 @@
+"""AgentRuntimeService：stream_message + resolve_interaction 关键路径。"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from pydantic import SecretStr
+
+from app.llm.streaming.emitter import AgentStreamEmitter
+from app.schemas.agent.dto import LLMRuntimeConfigDTO
+from app.schemas.agent.request import AgentInteractionSubmit, AgentMessageCreate
+from app.schemas.agent.stream import AgentStreamEnvelope
+from app.services.agent_runtime_service import AgentRuntimeService
+
+
+def _envelope(
+    emitter: AgentStreamEmitter, seq_override: int | None = None,
+    type_: str = "block.start",
+) -> AgentStreamEnvelope:
+    """构造测试用 envelope。"""
+    return emitter._wrap(type=type_, data={
+        "index": 0, "block": {"type": "text", "text": "", "status": "streaming"},
+    })
+
+
+def _runtime_cfg() -> LLMRuntimeConfigDTO:
+    """构造测试用 LLM 配置。"""
+    return LLMRuntimeConfigDTO(
+        provider="deepseek", base_url="x", api_key=SecretStr("sk"), model_name="m",
+    )
+
+
+def _make_session() -> MagicMock:
+    """构造模拟的 AgentSession ORM 对象。"""
+    return MagicMock(
+        id=1, session_key="k1", employee_id=2,
+        selected_model_name=None, enable_thinking=False,
+    )
+
+
+def _build_svc(runner_astream_fn=None) -> AgentRuntimeService:
+    """构造测试用 AgentRuntimeService。"""
+    repo = MagicMock()
+    repo.create_message = AsyncMock(side_effect=[
+        MagicMock(id=10),  # user message
+        MagicMock(id=20),  # agent message
+    ])
+    repo.update_session = AsyncMock()
+    repo.commit = AsyncMock()
+    repo.rollback = AsyncMock()
+    repo.next_message_order = AsyncMock(side_effect=[1, 2])
+    repo.list_messages = AsyncMock(return_value=[])
+    cache = MagicMock()
+    cache.set = AsyncMock()
+    cache.get_json = AsyncMock(return_value=None)
+    cache.client = MagicMock()
+    cache.client.append = AsyncMock()
+    cache.client.expire = AsyncMock()
+    cache.client.delete = AsyncMock()
+
+    runner = MagicMock()
+    if runner_astream_fn:
+        runner.astream = runner_astream_fn
+    else:
+        async def _default_astream(*, thread_id, graph_input, ctx):
+            yield _envelope(ctx.emitter)
+        runner.astream = _default_astream
+
+    workflow_graphs = {
+        "interview_questions": MagicMock(),
+        "resume_evaluation": MagicMock(),
+    }
+    return AgentRuntimeService(
+        repo=repo, cache=cache, workflow_graphs=workflow_graphs,
+        runner_factory=lambda graph: runner,
+        interview_service=MagicMock(), evaluation_service=MagicMock(),
+        resume_loader=MagicMock(),
+        agent_resume_service=MagicMock(get_session_ref=AsyncMock(return_value=None)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_message_emits_run_start_then_runner_then_run_finish():
+    """编排骨架：run.start → runner events → run.finish。"""
+    svc = _build_svc()
+    session = _make_session()
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+    out_types = []
+    async for env in svc.stream_message(session=session, body=body, runtime_config=_runtime_cfg()):
+        out_types.append(env.type)
+
+    assert out_types[0] == "run.start"
+    assert out_types[-1] == "run.finish"
+    # 中间应有 runner 产出的 block.start
+    assert "block.start" in out_types
+
+
+@pytest.mark.asyncio
+async def test_stream_message_catches_graph_error_and_emits_run_error():
+    """graph 执行异常时应发射 run.error 而非崩溃。"""
+    async def _failing_astream(*, thread_id, graph_input, ctx):
+        yield _envelope(ctx.emitter)
+        raise RuntimeError("graph crash")
+
+    svc = _build_svc(runner_astream_fn=_failing_astream)
+    session = _make_session()
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+    out_types = []
+    async for env in svc.stream_message(session=session, body=body, runtime_config=_runtime_cfg()):
+        out_types.append(env.type)
+
+    assert "run.error" in out_types
+    assert out_types[-1] == "run.finish"
+
+
+@pytest.mark.asyncio
+async def test_resolve_interaction_emits_resolve_then_runner_then_finish():
+    """resolve_interaction 应先发 interaction.resolve 再跑 graph。"""
+    async def _astream(*, thread_id, graph_input, ctx):
+        yield _envelope(ctx.emitter, type_="block.start")
+
+    svc = _build_svc(runner_astream_fn=_astream)
+    session = _make_session()
+    body = AgentInteractionSubmit(values={"selected": ["d1"]})
+    out_types = []
+    async for env in svc.resolve_interaction(
+        session=session, request_id="req_1", body=body,
+        runtime_config=_runtime_cfg(), workflow_type="interview_questions",
+    ):
+        out_types.append(env.type)
+
+    assert out_types[0] == "interaction.resolve"
+    assert out_types[-1] == "run.finish"
+
+
+@pytest.mark.asyncio
+async def test_envelopes_to_blocks_folds_correctly():
+    """_envelopes_to_blocks 应正确折叠 text delta。"""
+    emitter = AgentStreamEmitter(session_id=1, run_id="r", workflow_type="interview_questions")
+
+    envs = [
+        emitter.emit_block_start(index=0, block={"type": "text", "text": "", "status": "streaming"}),
+        emitter.emit_block_delta(index=0, delta={"text_delta": "hello "}),
+        emitter.emit_block_delta(index=0, delta={"text_delta": "world"}),
+        emitter.emit_block_stop(index=0),
+    ]
+    blocks = AgentRuntimeService._envelopes_to_blocks(envs)
+    assert len(blocks) == 1
+    assert blocks[0]["text"] == "hello world"
+    assert blocks[0]["status"] == "success"
