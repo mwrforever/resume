@@ -1,11 +1,11 @@
 /**
- * Agent 工作台页面入口。
+ * Agent 工作台入口 — 独立布局
  *
- * 挂载 AgentWorkspace 三栏布局。
+ * 通过 window.open 新 Tab 打开时不挂 AdminLayout。
  */
 
-import { AgentWorkspace } from '@/components/employee/agent/agent-workspace';
+import { AgentStandaloneLayout } from '@/components/employee/agent/layout/agent-standalone-layout';
 
 export default function AgentPage() {
-  return <AgentWorkspace />;
+  return <AgentStandaloneLayout />;
 }

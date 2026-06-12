@@ -1,67 +1,33 @@
 /**
- * AgentWorkspace：三栏布局组合（sidebar + message-list + composer）。
+ * AgentWorkspace：消息运行区（瘦身版）
+ *
+ * session 管理已上提到 AgentStandaloneLayout。
+ * 本组件只接收 sessionId 和 onSessionUpdate。
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { AgentSidebarDrawer } from './layout/agent-sidebar-drawer';
 import { AgentMessageList } from './agent-message-list';
 import { AgentComposer } from './agent-composer';
 import { useAgentRun } from '@/hooks/use-agent-run';
-import { employeeAgentApi } from '@/api/employee/agent';
 import type { WorkspaceSession } from '@/types/agent';
 
-export function AgentWorkspace() {
-  const [sessions, setSessions] = useState<WorkspaceSession[]>([]);
-  const [activeId, setActiveId] = useState<number | null>(null);
-  const [keyword, setKeyword] = useState('');
+export interface AgentWorkspaceProps {
+  sessionId: number | null;
+  onSessionUpdate: (s: WorkspaceSession) => void;
+}
 
-  /** 刷新会话列表 */
-  const refreshSessions = useCallback(async () => {
-    const resp = await employeeAgentApi.listSessions({
-      page: 1, page_size: 50, keyword: keyword || undefined,
-    });
-    const data = resp.data?.data ?? resp.data;
-    const items = (data?.items ?? []) as WorkspaceSession[];
-    setSessions(items);
-    if (activeId === null && items.length) setActiveId(items[0].id);
-  }, [keyword, activeId]);
-
-  useEffect(() => { void refreshSessions(); }, [refreshSessions]);
-
-  /** 创建新会话 */
-  const onCreate = async () => {
-    const resp = await employeeAgentApi.createSession({ title: undefined });
-    const s = (resp.data?.data ?? resp.data) as WorkspaceSession;
-    setSessions(prev => [s, ...prev]);
-    setActiveId(s.id);
-  };
-
-  return (
-    <div className="flex h-screen bg-gray-50">
-      <AgentSidebarDrawer
-        sessions={sessions} activeId={activeId}
-        onSelect={setActiveId} onCreate={() => void onCreate()} onSearch={setKeyword}
-      />
-      <main className="flex-1 flex flex-col">
-        {activeId !== null ? (
-          <WorkspaceMain
-            sessionId={activeId}
-            onSessionUpdate={(next) => {
-              setSessions(prev => prev.map(s => s.id === next.id ? next : s));
-            }}
-          />
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-400">
-            请选择或创建会话
-          </div>
-        )}
+export function AgentWorkspace({ sessionId, onSessionUpdate }: AgentWorkspaceProps) {
+  if (sessionId === null) {
+    return (
+      <main className="flex-1 flex items-center justify-center text-sm text-[#94A3B8]">
+        请选择或创建会话
       </main>
-    </div>
-  );
+    );
+  }
+  return <WorkspaceInner sessionId={sessionId} onSessionUpdate={onSessionUpdate} />;
 }
 
 /** 主内容区：消息列表 + 输入框 */
-function WorkspaceMain({
+function WorkspaceInner({
   sessionId,
   onSessionUpdate,
 }: {
@@ -72,12 +38,14 @@ function WorkspaceMain({
 
   if (!session) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400">加载中…</div>
+      <main className="flex-1 flex items-center justify-center text-sm text-[#64748B]">
+        加载中…（第 {sessionId} 号会话）
+      </main>
     );
   }
 
   return (
-    <>
+    <main className="flex-1 flex flex-col min-w-0">
       <AgentMessageList
         messages={messages}
         runState={runState}
@@ -90,6 +58,6 @@ function WorkspaceMain({
         onAbort={abort}
         onSessionUpdate={onSessionUpdate}
       />
-    </>
+    </main>
   );
 }
