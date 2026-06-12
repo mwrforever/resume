@@ -18,9 +18,10 @@ export interface AgentMessageListProps {
   messages: AgentMessage[];
   runState: AgentRunState;
   onSubmitInteraction: (requestId: string, values: Record<string, unknown>) => void;
+  onPickPrompt?: (prompt: string) => void;
 }
 
-export function AgentMessageList({ messages, runState, onSubmitInteraction }: AgentMessageListProps) {
+export function AgentMessageList({ messages, runState, onSubmitInteraction, onPickPrompt }: AgentMessageListProps) {
   const { ref, followIfNeeded, forceSmoothToBottom } = useFollowBottom();
 
   // 流式期间新增 envelope → 触发滚动 follow
@@ -37,7 +38,7 @@ export function AgentMessageList({ messages, runState, onSubmitInteraction }: Ag
   if (messages.length === 0 && !runState.running) {
     return (
       <div ref={ref} className="flex-1 overflow-y-auto bg-[#F8FAFC]">
-        <EmptyState />
+        <EmptyState onPickPrompt={onPickPrompt ?? (() => {})} />
       </div>
     );
   }

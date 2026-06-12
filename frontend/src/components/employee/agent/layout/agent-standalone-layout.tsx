@@ -2,8 +2,7 @@
  * AgentStandaloneLayout：独立布局容器
  *
  * 状态管理：会话列表、激活 ID、关键词由本层保持。
- * 负责与 employeeAgentApi 通信拉取/创建会话。
- * 通过 props 向下分发给 TopBar / Sidebar / Workspace。
+ * 提供 onRequestNewSession：跨模式切换时由 Composer 调用，创建新会话并切换。
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -11,7 +10,7 @@ import { AgentTopbar } from './agent-topbar';
 import { AgentSidebarDrawer } from './agent-sidebar-drawer';
 import { AgentWorkspace } from '../agent-workspace';
 import { employeeAgentApi } from '@/api/employee/agent';
-import type { WorkspaceSession } from '@/types/agent';
+import type { WorkflowType, WorkspaceSession } from '@/types/agent';
 
 export function AgentStandaloneLayout() {
   const [sessions, setSessions] = useState<WorkspaceSession[]>([]);
@@ -39,6 +38,14 @@ export function AgentStandaloneLayout() {
     setActiveId(s.id);
   };
 
+  /** 跨模式切换专用：创建新会话并切到该会话 */
+  const onRequestNewSession = useCallback(async (_workflow: WorkflowType) => {
+    const resp = await employeeAgentApi.createSession({ title: undefined });
+    const s = (resp.data?.data ?? resp.data) as WorkspaceSession;
+    setSessions(prev => [s, ...prev]);
+    setActiveId(s.id);
+  }, []);
+
   // Tab 标题
   useEffect(() => {
     document.title = activeSession?.title
@@ -62,6 +69,7 @@ export function AgentStandaloneLayout() {
           onSessionUpdate={(next) => {
             setSessions(prev => prev.map(s => s.id === next.id ? next : s));
           }}
+          onRequestNewSession={onRequestNewSession}
         />
       </div>
     </div>
