@@ -11,6 +11,7 @@ import type { AgentMessage, AgentRunState } from '@/types/agent';
 import { BlockRenderer } from './blocks/block-renderer';
 import { StepStrip } from './step-strip';
 import { useFollowBottom } from '@/hooks/use-follow-bottom';
+import { EmptyState } from './empty-state';
 
 export interface AgentMessageListProps {
   messages: AgentMessage[];
@@ -30,6 +31,15 @@ export function AgentMessageList({ messages, runState, onSubmitInteraction }: Ag
   useEffect(() => {
     if (!runState.running) forceSmoothToBottom();
   }, [runState.running, forceSmoothToBottom]);
+
+  // 空态：无历史消息 + 无 run 进行中（所有 hooks 已在上方无条件执行，符合 Hooks 规则）
+  if (messages.length === 0 && !runState.running) {
+    return (
+      <div ref={ref} className="flex-1 overflow-y-auto bg-[#F8FAFC]">
+        <EmptyState />
+      </div>
+    );
+  }
 
   return (
     <div ref={ref} className="flex-1 overflow-y-auto bg-gray-50">
