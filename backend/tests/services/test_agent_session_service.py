@@ -1,0 +1,104 @@
+"""AgentSessionService：CRUD + thinking 开关持久化。"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from app.core.exceptions import NotFoundError
+from app.schemas.agent.request import AgentSessionCreate, AgentSessionUpdate
+from app.services.agent_session_service import AgentSessionService
+
+
+def _make_session_orm(**overrides) -> MagicMock:
+    """构造模拟的 AgentSession ORM 对象。"""
+    defaults = dict(
+        id=1, session_key="k", employee_id=2, title="T",
+        selected_model_name=None, enable_thinking=0, status=1,
+        last_message_time=None, create_time=None, update_time=None,
+    )
+    defaults.update(overrides)
+    m = MagicMock(**defaults)
+    for k, v in defaults.items():
+        setattr(m, k, v)
+    return m
+
+
+@pytest.mark.asyncio
+async def test_create_session_returns_item():
+    """创建会话后返回 AgentSessionItem。"""
+    repo = MagicMock()
+    repo.create_session = AsyncMock(return_value=_make_session_orm())
+    repo.commit = AsyncMock()
+    svc = AgentSessionService(repo)
+    item = await svc.create_session(
+        AgentSessionCreate(title="T"),
+        current_user={"user_type": "employee", "sub": "2"},
+    )
+    assert item.title == "T"
+    repo.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_enable_thinking_persists():
+    """set_enable_thinking 应持久化到数据库。"""
+    updated_orm = _make_session_orm(enable_thinking=1)
+    repo = MagicMock()
+    repo.get_session = AsyncMock(return_value=_make_session_orm())
+    repo.update_session = AsyncMock(return_value=updated_orm)
+    repo.commit = AsyncMock()
+    svc = AgentSessionService(repo)
+    item = await svc.set_enable_thinking(
+        session_id=1, enable_thinking=True,
+        current_user={"user_type": "employee", "sub": "2"},
+    )
+    assert item.enable_thinking is True
+    repo.update_session.assert_awaited_once()
+    repo.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_session_not_found_raises():
+    """查询不存在的会话应抛 NotFoundError。"""
+    repo = MagicMock()
+    repo.get_session = AsyncMock(return_value=None)
+    svc = AgentSessionService(repo)
+    with pytest.raises(NotFoundError):
+        await svc.get_session_detail(
+            session_id=999,
+            current_user={"user_type": "employee", "sub": "2"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_session_renames():
+    """更新会话标题。"""
+    updated_orm = _make_session_orm(title="新标题")
+    repo = MagicMock()
+    repo.get_session = AsyncMock(return_value=_make_session_orm())
+    repo.update_session = AsyncMock(return_value=updated_orm)
+    repo.commit = AsyncMock()
+    svc = AgentSessionService(repo)
+    item = await svc.update_session(
+        session_id=1,
+        body=AgentSessionUpdate(title="新标题"),
+        current_user={"user_type": "employee", "sub": "2"},
+    )
+    assert item.title == "新标题"
+
+
+@pytest.mark.asyncio
+async def test_delete_session_soft_deletes():
+    """软删除会话。"""
+    repo = MagicMock()
+    repo.get_session = AsyncMock(return_value=_make_session_orm())
+    repo.soft_delete_session = AsyncMock()
+    repo.commit = AsyncMock()
+    svc = AgentSessionService(repo)
+    await svc.delete_session(
+        session_id=1,
+        current_user={"user_type": "employee", "sub": "2"},
+    )
+    repo.soft_delete_session.assert_awaited_once_with(1)
+    repo.commit.assert_awaited_once()
