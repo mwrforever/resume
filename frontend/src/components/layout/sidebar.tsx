@@ -76,6 +76,35 @@ export function Sidebar() {
             {group.items.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname.startsWith(item.href);
+
+              // Agent 工作台 → 新 Tab 打开沉浸式工作台，不挂主后台 AdminLayout
+              if (item.href === '/employee/agent') {
+                return (
+                  <button
+                    key={item.href}
+                    type="button"
+                    onClick={() => window.open('/employee/agent', '_blank', 'noopener')}
+                    aria-label={collapsed ? item.label : undefined}
+                    title={collapsed ? item.label : undefined}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300',
+                      'text-slate-300 hover:bg-white/10 hover:text-white'
+                    )}
+                  >
+                    <Icon size={18} className="flex-shrink-0" aria-hidden="true" />
+                    {!collapsed && (
+                      <>
+                        <span className="truncate flex-1 text-left">{item.label}</span>
+                        {/* 外链图标：提示新 Tab 打开 */}
+                        <svg className="w-3 h-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                      </>
+                    )}
+                  </button>
+                );
+              }
+
               return (
                 <Link
                   key={item.href}
