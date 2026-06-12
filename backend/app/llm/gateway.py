@@ -1,31 +1,58 @@
+"""
+OpenAI 协议网关（重写版）。
+
+职责：
+- 把 LLMRuntimeConfigDTO 翻译成 ChatOpenAI 构造参数（含 thinking 模式 extra_body 注入）
+- 流式响应分流：reasoning_content → kind=thinking；content → kind=text
+- 统一异常 LLMGatewayError；ChatOpenAI 实例 LRU 缓存复用 HTTP 连接
+
+不做：业务规则、模型路由（由 model_router 负责）、provider SDK 直接调用。
+"""
+
+from __future__ import annotations
+
 import logging
-import re
 from collections.abc import AsyncIterator
+from typing import Any
 
 from langchain_openai import ChatOpenAI
 from openai import OpenAIError
 
-from app.core.config import get_settings
-from app.schemas.agent.dto import LLMResultDTO, LLMRuntimeConfigDTO, LLMStreamChunkDTO
+from app.schemas.agent.dto import (
+    LLMResultDTO,
+    LLMRuntimeConfigDTO,
+    LLMStreamChunkDTO,
+    TokenUsage,
+)
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+
 LLM_GATEWAY_ERRORS = (OpenAIError, TimeoutError, ValueError)
 
 
+# Provider 适配表：enable_thinking=True 时注入到 ChatOpenAI extra_body 的键值
+THINKING_PARAM_MAP: dict[str, dict[str, Any]] = {
+    "deepseek": {"thinking": {"type": "enabled"}},
+    "qwen":     {"enable_thinking": True},
+    "other":    {"enable_thinking": True},
+}
+
+
 class LLMGatewayError(RuntimeError):
-    pass
+    """LLM 调用网关层统一异常。"""
 
 
 class OpenAICompatibleGateway:
-    """OpenAI 协议网关：封装 ChatOpenAI 调用，负责协议适配与响应归一化。"""
+    """OpenAI 协议网关。"""
 
-    protocol = "openai"
+    protocol = "openai_compatible"
     _chat_model_cache: dict[str, ChatOpenAI] = {}
     _chat_model_max_cache: int = 16
 
+    # ---------- 内部辅助 ----------
+
     def _get_or_create_chat_model(self, runtime_config: LLMRuntimeConfigDTO) -> ChatOpenAI:
-        """获取或缓存 ChatOpenAI 实例，复用 HTTP 连接池以减少延迟。"""
+        """获取/缓存 ChatOpenAI 实例，复用 HTTP 连接池。"""
         kwargs = self._chat_kwargs(runtime_config)
         cache_key = f"{kwargs['model']}:{kwargs['base_url']}:{kwargs.get('api_key', '')}"
         cached = self._chat_model_cache.get(cache_key)
@@ -37,81 +64,92 @@ class OpenAICompatibleGateway:
         self._chat_model_cache[cache_key] = instance
         return instance
 
-    async def complete_once(self, prompt: str, runtime_config: LLMRuntimeConfigDTO) -> LLMResultDTO:
-        try:
-            response = await self._get_or_create_chat_model(runtime_config).ainvoke(prompt)
-        except LLM_GATEWAY_ERRORS as exc:
-            raise LLMGatewayError(str(exc)) from exc
-        return self._extract_result(response, runtime_config.model_name)
+    def _chat_kwargs(self, runtime_config: LLMRuntimeConfigDTO) -> dict[str, Any]:
+        """构造 ChatOpenAI kwargs。仅在 enable_thinking 时注入 extra_body。"""
+        extra_body: dict[str, Any] = {}
+        if runtime_config.enable_thinking:
+            extra_body.update(THINKING_PARAM_MAP.get(runtime_config.provider, THINKING_PARAM_MAP["other"]))
+            if runtime_config.thinking_budget_tokens:
+                extra_body["thinking_budget_tokens"] = runtime_config.thinking_budget_tokens
 
-    async def stream_once(self, prompt: str, runtime_config: LLMRuntimeConfigDTO) -> AsyncIterator[LLMStreamChunkDTO]:
-        chunks: list[str] = []
-        usage_metadata: dict = {}
-        response_metadata: dict = {}
-        try:
-            async for chunk in self._get_or_create_chat_model(runtime_config).astream(prompt):
-                raw_delta = chunk.content
-                delta = raw_delta if isinstance(raw_delta, str) else str(raw_delta or "")
-                if delta:
-                    chunks.append(delta)
-                    yield LLMStreamChunkDTO(delta=delta)
-                usage_metadata = dict(getattr(chunk, "usage_metadata", None) or usage_metadata)
-                response_metadata = dict(getattr(chunk, "response_metadata", None) or response_metadata)
-        except LLM_GATEWAY_ERRORS as exc:
-            raise LLMGatewayError(str(exc)) from exc
-        content = self._strip_thinking("".join(chunks))
-        prompt_tokens = int(usage_metadata.get("input_tokens") or usage_metadata.get("prompt_tokens") or 0)
-        completion_tokens = int(usage_metadata.get("output_tokens") or usage_metadata.get("completion_tokens") or 0)
-        total_tokens = int(usage_metadata.get("total_tokens") or prompt_tokens + completion_tokens)
-        yield LLMStreamChunkDTO(
-            result=LLMResultDTO(
-                content=content,
-                model_name=runtime_config.model_name,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                usage_detail=usage_metadata,
-                raw_response_metadata=response_metadata,
-            )
-        )
-
-    def _normalize_model_name(self, model_name: str) -> str:
-        return model_name.removeprefix("openai/")
-
-    def _chat_kwargs(self, runtime_config: LLMRuntimeConfigDTO) -> dict:
-        extra_body = dict(runtime_config.extra_body or {})
-        extra_body["enable_thinking"] = runtime_config.enable_thinking
-        extra_body["enable_prompt_cache"] = runtime_config.enable_prompt_cache
-        return {
-            "model": self._normalize_model_name(runtime_config.model_name),
-            "api_key": runtime_config.api_key or settings.openai_api_key,
-            "base_url": runtime_config.base_url or settings.OPENAI_API_BASE,
+        kwargs: dict[str, Any] = {
+            "model": runtime_config.model_name,
+            "api_key": runtime_config.api_key.get_secret_value(),
+            "base_url": runtime_config.base_url,
             "timeout": runtime_config.timeout_seconds,
             "temperature": runtime_config.temperature,
-            "top_p": runtime_config.top_p,
-            "max_tokens": runtime_config.max_tokens,
-            "presence_penalty": runtime_config.presence_penalty,
-            "frequency_penalty": runtime_config.frequency_penalty,
-            "extra_body": extra_body,
         }
+        if runtime_config.max_tokens is not None:
+            kwargs["max_tokens"] = runtime_config.max_tokens
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+        return kwargs
 
-    def _strip_thinking(self, text: str) -> str:
-        return re.sub(r"<think.*?</think\s*>", "", text, flags=re.DOTALL).strip()
+    @staticmethod
+    def _extract_reasoning(chunk: Any) -> str:
+        """
+        从 ChatOpenAI 流式 chunk 中抽取 reasoning_content。
 
-    def _extract_result(self, response, model_name: str) -> LLMResultDTO:
-        raw_content = response.content
-        content = self._strip_thinking(raw_content if isinstance(raw_content, str) else str(raw_content or ""))
-        usage_metadata = getattr(response, "usage_metadata", None) or {}
-        response_metadata = getattr(response, "response_metadata", None) or {}
-        prompt_tokens = int(usage_metadata.get("input_tokens") or usage_metadata.get("prompt_tokens") or 0)
-        completion_tokens = int(usage_metadata.get("output_tokens") or usage_metadata.get("completion_tokens") or 0)
-        total_tokens = int(usage_metadata.get("total_tokens") or prompt_tokens + completion_tokens)
-        return LLMResultDTO(
-            content=content,
-            model_name=model_name,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            usage_detail=dict(usage_metadata),
-            raw_response_metadata=dict(response_metadata),
+        两路 fallback：
+            1. chunk.additional_kwargs['reasoning_content']  (DeepSeek/Qwen)
+            2. chunk.additional_kwargs['thinking']           (部分实现)
+        """
+        kw = getattr(chunk, "additional_kwargs", None) or {}
+        return kw.get("reasoning_content") or kw.get("thinking") or ""
+
+    @staticmethod
+    def _extract_usage(chunk: Any) -> TokenUsage | None:
+        """从流式 chunk 或最终响应中抽取 token usage。"""
+        meta = getattr(chunk, "usage_metadata", None) or {}
+        if not meta:
+            return None
+        return TokenUsage(
+            input_tokens=int(meta.get("input_tokens") or meta.get("prompt_tokens") or 0),
+            output_tokens=int(meta.get("output_tokens") or meta.get("completion_tokens") or 0),
         )
+
+    # ---------- 对外 API ----------
+
+    async def stream_once(
+        self, prompt: str, runtime_config: LLMRuntimeConfigDTO,
+    ) -> AsyncIterator[LLMStreamChunkDTO]:
+        """
+        流式调用。按以下顺序 yield chunk：
+            kind=thinking (多次) → kind=text (多次) → kind=usage (0或1) → kind=done (1)
+        """
+        chat = self._get_or_create_chat_model(runtime_config)
+        finish_reason: str | None = None
+        try:
+            async for chunk in chat.astream(prompt):
+                # 抽取 reasoning_content（思考过程）
+                reasoning = self._extract_reasoning(chunk)
+                if reasoning:
+                    yield LLMStreamChunkDTO(kind="thinking", text_delta=reasoning)
+                # 抽取正文内容
+                raw_content = chunk.content if isinstance(chunk.content, str) else str(chunk.content or "")
+                if raw_content:
+                    yield LLMStreamChunkDTO(kind="text", text_delta=raw_content)
+                # 抽取 usage
+                usage = self._extract_usage(chunk)
+                if usage is not None:
+                    yield LLMStreamChunkDTO(kind="usage", usage=usage)
+                # 抽取 finish_reason
+                meta = getattr(chunk, "response_metadata", None) or {}
+                if meta.get("finish_reason"):
+                    finish_reason = str(meta["finish_reason"])
+        except LLM_GATEWAY_ERRORS as exc:
+            raise LLMGatewayError(str(exc)) from exc
+        yield LLMStreamChunkDTO(kind="done", finish_reason=finish_reason)
+
+    async def complete_once(
+        self, prompt: str, runtime_config: LLMRuntimeConfigDTO,
+    ) -> LLMResultDTO:
+        """非流式调用，仅用于会话标题生成等内部场景。"""
+        chat = self._get_or_create_chat_model(runtime_config)
+        try:
+            response = await chat.ainvoke(prompt)
+        except LLM_GATEWAY_ERRORS as exc:
+            raise LLMGatewayError(str(exc)) from exc
+        raw = response.content if isinstance(response.content, str) else str(response.content or "")
+        usage = self._extract_usage(response) or TokenUsage()
+        return LLMResultDTO(content=raw, model_name=runtime_config.model_name, usage=usage)

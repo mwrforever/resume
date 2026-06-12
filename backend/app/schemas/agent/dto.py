@@ -1,96 +1,82 @@
-from typing import Any
+"""
+Agent / LLM 数据传输对象（精简后版本）。
 
-from pydantic import BaseModel, Field
+仅保留两次重构后实际使用的 DTO：
+- LLM 调用相关：LLMRuntimeConfigDTO / LLMResultDTO / LLMStreamChunkDTO / TokenUsage
+- 业务结构：InterviewQuestionSetDTO 系列、ResumeEvaluationReportDTO
+
+删除（v1 残留）：source / enable_memory / top_p / presence_penalty / frequency_penalty /
+enable_prompt_cache / AgentToolCallDTO / AgentToolResultDTO / AgentToolContextDTO /
+ResumeContextDTO / ResumeAnalyseState。
+"""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
+
+
+# ====== LLM 调用 ======
+
+LLMProtocol = Literal["openai_compatible"]
+LLMProvider = Literal["deepseek", "qwen", "other"]
 
 
 class LLMRuntimeConfigDTO(BaseModel):
-    model_name: str
-    api_key: str
+    """LLM 运行时配置（精简版）。"""
+    model_config = ConfigDict(extra="forbid")
+
+    # 路由
+    protocol: LLMProtocol = "openai_compatible"
+    provider: LLMProvider
     base_url: str
-    protocol: str = "openai"
+    api_key: SecretStr
+    model_name: str
     fallback_model_name: str | None = None
-    extra_body: dict[str, Any] | None = None
-    timeout_seconds: int = 120
-    max_retries: int = 2
-    source: str = "env"
-    enable_thinking: bool = False
-    enable_tools: bool = True
-    enable_prompt_cache: bool = False
-    enable_memory: bool = True
+
+    # 运行参数
     temperature: float = 0.7
-    top_p: float = 0.9
-    max_tokens: int = 2048
-    presence_penalty: float = 0
-    frequency_penalty: float = 0
+    max_tokens: int | None = None
+    max_retries: int = 1
+    timeout_seconds: int = 60
+
+    # 思考模式
+    enable_thinking: bool = False
+    thinking_budget_tokens: int | None = None
+
+
+class TokenUsage(BaseModel):
+    """Token 使用统计。"""
+    model_config = ConfigDict(extra="forbid")
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
 
 
 class LLMResultDTO(BaseModel):
+    """非流式调用结果。"""
     content: str
     model_name: str
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-    usage_detail: dict[str, Any] | None = None
-    raw_response_metadata: dict[str, Any] | None = None
-
-
-class AgentToolCallDTO(BaseModel):
-    tool_name: str
-    display_name: str
-    input_payload: dict[str, Any] = Field(default_factory=dict)
-
-
-class AgentToolResultDTO(BaseModel):
-    tool_name: str
-    display_name: str
-    output_payload: dict[str, Any] = Field(default_factory=dict)
-    success: bool = True
-    error_message: str | None = None
-
-
-class AgentToolContextDTO(BaseModel):
-    """Agent 内置工具执行上下文（与 agent_service._build_tool_context 结构一致）。"""
-
-    recent_messages: list[dict[str, Any]] = Field(default_factory=list)
-    memories: list[dict[str, Any]] = Field(default_factory=list)
-    business: dict[str, Any] = Field(default_factory=dict)
-    prompt_prefix_hash: str | None = None
-    snapshot_id: str | None = None
-    runs: list[dict[str, Any]] = Field(default_factory=list)
+    usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
 class LLMStreamChunkDTO(BaseModel):
-    delta: str = ""
-    result: LLMResultDTO | None = None
-    tool_call: AgentToolCallDTO | None = None
-    tool_result: AgentToolResultDTO | None = None
-    error_message: str | None = None
+    """流式增量。同一 chunk 至多承载一种 delta。"""
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["text", "thinking", "usage", "done"]
+    text_delta: str = ""
+    usage: TokenUsage | None = None
+    finish_reason: str | None = None
 
 
-class ResumeContextDTO(BaseModel):
-    """Agent 会话中候选人简历附件的上下文数据。"""
-
-    resume_id: int
-    job_id: int | None = None
-    file_name: str = ""
-    file_path: str = ""
-    raw_text: str = ""
-    structured_markdown: str = ""
-
-
-class ResumeAnalyseState(BaseModel):
-    prompt: str
-    runtime_config: LLMRuntimeConfigDTO
-    tool_context: dict[str, Any] = Field(default_factory=dict)
-    tool_calls: list[AgentToolCallDTO] = Field(default_factory=list)
-    tool_results: list[AgentToolResultDTO] = Field(default_factory=list)
-    result: LLMResultDTO | None = None
-    error_message: str | None = None
-
+# ====== 业务结构 DTO ======
 
 class InterviewDimensionDTO(BaseModel):
     """AI 提议的面试维度。"""
-
     name: str
     reason: str
     source: str = "ai"
@@ -98,7 +84,6 @@ class InterviewDimensionDTO(BaseModel):
 
 class InterviewQuestionPlanItemDTO(BaseModel):
     """面试题计划中的单个维度配置。"""
-
     dimension: str
     question_count: int
     difficulty: str
@@ -107,7 +92,6 @@ class InterviewQuestionPlanItemDTO(BaseModel):
 
 class InterviewQuestionPlanDTO(BaseModel):
     """面试题生成计划。"""
-
     total_questions: int
     items: list[InterviewQuestionPlanItemDTO]
     summary: str
@@ -115,7 +99,6 @@ class InterviewQuestionPlanDTO(BaseModel):
 
 class InterviewQuestionItemDTO(BaseModel):
     """单道结构化面试题。"""
-
     question: str
     dimension: str
     difficulty: str
@@ -128,7 +111,6 @@ class InterviewQuestionItemDTO(BaseModel):
 
 class InterviewQuestionSetDTO(BaseModel):
     """最终面试题清单。"""
-
     title: str = "面试题清单"
     total_questions: int
     dimensions: list[str]
@@ -137,7 +119,6 @@ class InterviewQuestionSetDTO(BaseModel):
 
 class ResumeEvaluationReportDTO(BaseModel):
     """简历评估报告结构化数据。"""
-
     final_score: float
     final_label: str
     decision: str
