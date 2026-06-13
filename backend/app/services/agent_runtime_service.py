@@ -267,14 +267,29 @@ class AgentRuntimeService:
     async def _build_graph_input(
         self, body: AgentMessageCreate, resume_ref: dict | None,
     ) -> dict:
-        """构造 graph 输入（resume_ref + validation_attempts 初始为 0）。"""
-        return {"resume_ref": resume_ref or {}, "validation_attempts": 0}
+        """构造 graph 输入。
+
+        - resume_ref：简历引用，三层 fallback 已在 _resolve_resume_ref 完成
+        - validation_attempts：图二评估循环计数器初始 0
+        - user_intent：把本次用户消息内容透传给图一，用于 dimension_suggest /
+          question_plan 的 user_intent 注入，保证不同问题不会得到一样的维度建议
+        """
+        return {
+            "resume_ref": resume_ref or {},
+            "validation_attempts": 0,
+            "user_intent": (body.content or "").strip(),
+        }
 
     async def _create_user_message(
         self, session, body: AgentMessageCreate, *, run_id: str,
     ):
-        """落库用户消息。"""
-        return await self._repo.create_message(
+        """落库用户消息。
+
+        副作用：若会话尚未命名（首次发送消息），用本次问题前 30 字截取为标题
+        （单行化后取前 30 字符），保证侧边栏列表与 Topbar 标题不换行。
+        标题截取走纯字符串处理，不调 LLM。
+        """
+        msg = await self._repo.create_message(
             session_id=session.id,
             role="user",
             workflow_type=body.workflow_type,
@@ -282,6 +297,35 @@ class AgentRuntimeService:
             content={"blocks": [{"type": "text", "text": body.content}]},
             sort_order=await self._repo.next_message_order(session.id),
         )
+        # 仅当当前会话没有标题（None / 空 / 默认占位）时才用首条问题作为标题
+        existing_title = (session.title or "").strip()
+        if not existing_title or existing_title in {"新会话", "未命名会话"}:
+            snippet = self._make_title_from_content(body.content or "")
+            if snippet:
+                await self._repo.update_session(session.id, title=snippet)
+                # 同步内存对象，避免后续 yield 中读到旧 title
+                session.title = snippet
+                logger.info(
+                    "首次发送消息自动设置会话标题：session_id=%s title=%s",
+                    session.id, snippet,
+                )
+        return msg
+
+    @staticmethod
+    def _make_title_from_content(content: str) -> str:
+        """把用户消息内容压成单行 30 字以内的会话标题。
+
+        规则：
+        1. strip 首尾空白
+        2. 所有换行/制表符替换为单空格，再合并连续空白
+        3. 截取前 30 个字符（中文按字符计；不再加省略号，前端 .truncate 已处理）
+        """
+        if not content:
+            return ""
+        flat = content.strip().replace("\r", " ").replace("\n", " ").replace("\t", " ")
+        # 合并连续空白
+        flat = " ".join(flat.split())
+        return flat[:30]
 
     async def _persist_agent_message(
         self, *, session, user_message, run_id: str,

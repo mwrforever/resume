@@ -1,10 +1,21 @@
-"""面试题生成工作流业务服务（重构中占位，Stage 5 完整实现）。"""
+"""面试题生成工作流业务服务。
+
+职责：
+- 维度提议、出题计划、题目生成（图一三个核心 LLM 调用）
+- 全部经由可流式的 thinking/text 通道，思考模式开启时把 reasoning_content
+  推到 thinking block，正文累加到内部 buffer 用于 JSON 解析（默认不
+  emit 给前端，避免 JSON 字面量变成正文，但 thinking 仍然展示）
+- 解析 LLM 输出时容忍三种形态：顶层 list / 顶层 obj / Markdown 代码块包裹
+
+不做：状态机编排（在 graph 节点里）、消息落库（在 AgentRuntimeService）。
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -23,6 +34,11 @@ from app.schemas.agent.dto import (
 from app.services.resume_loader import ResumeLoader
 
 logger = logging.getLogger(__name__)
+
+# 抽取首段 JSON：兼容 LLM 输出被 Markdown 代码块或额外说明文字包裹的常见情况
+# 贪婪匹配最外层括号；优先抓 {...}，其次 [...]
+_JSON_OBJECT_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
+_JSON_ARRAY_PATTERN = re.compile(r"\[.*\]", re.DOTALL)
 
 # AI 维度提议失败时的内置兜底维度
 BUILTIN_DIMENSIONS: list[dict[str, Any]] = [
@@ -59,15 +75,22 @@ class InterviewQuestionService:
     async def suggest_dimensions(self, state, ctx: WorkflowRuntimeContext) -> dict:
         """AI 提议维度；失败兜底为内置维度。
 
-        说明：维度提议属于**内部 JSON 生成调用**，不应作为可见文本/思考内容
-        推送给前端 UI。这里改为静默调用 LLM，仅当解析成功后通过 interaction
-        卡片让用户选择维度。
+        渲染 prompt 时把用户的首条消息作为 user_intent 注入，避免不同问题
+        都得到同样的 3 个维度。LLM 调用走 thinking-aware 通道：思考模式
+        开启时前端能看到推理过程；JSON 正文用于后端解析，不直接 emit。
         """
-        prompt = _pm.render("interview_questions/dimension_suggest", resume_text=state["resume_text"])
-        text = await self._silent_complete(prompt, ctx)
+        prompt = _pm.render(
+            "interview_questions/dimension_suggest",
+            resume_text=state.get("resume_text") or "",
+            user_intent=self._extract_user_intent(state),
+        )
+        text = await self._stream_with_thinking(prompt, ctx)
         dims = self._parse_dimensions(text)
         if not dims:
-            logger.warning("AI 维度提议失败/为空，使用内置维度兜底")
+            logger.warning(
+                "AI 维度提议失败/为空，使用内置维度兜底；原始返回前 200 字：%s",
+                text[:200].replace("\n", " "),
+            )
             dims = BUILTIN_DIMENSIONS
         return {"suggested_dimensions": dims}
 
@@ -77,20 +100,35 @@ class InterviewQuestionService:
             "request_id": f"dim_{uuid.uuid4().hex[:8]}",
             "interaction_type": "dimension_selection",
             "title": "请选择面试重点维度",
-            "prompt": "从下列候选维度中选择需要重点考察的（多选）",
+            "prompt": "从下列候选维度中选择需要重点考察的（多选），可在下方补充意见或追加维度",
             "data": {"candidates": state.get("suggested_dimensions") or []},
         }
 
     async def build_question_plan(self, state, ctx: WorkflowRuntimeContext) -> dict:
-        """AI 生成出题计划。"""
+        """AI 生成出题计划。
+
+        review_feedback 来自上一轮 plan_approval 驳回时透传的反馈；
+        user_intent 透传维度卡片提交时的"补充意见"或首条用户消息。
+        """
+        question_plan = state.get("question_plan") or {}
+        review_feedback = str(question_plan.get("_feedback") or "").strip() or None
         prompt = _pm.render(
             "interview_questions/question_plan",
-            resume_text=state["resume_text"],
-            dimensions=json.dumps(state.get("selected_dimensions") or [], ensure_ascii=False),
+            resume_text=state.get("resume_text") or "",
+            selected_dimensions=json.dumps(
+                state.get("selected_dimensions") or [], ensure_ascii=False,
+            ),
+            user_intent=(
+                state.get("dimension_feedback")
+                or self._extract_user_intent(state)
+                or None
+            ),
+            review_feedback=review_feedback,
         )
-        # 出题计划同样属于内部 JSON 生成，不向前端 UI 推流
-        text = await self._silent_complete(prompt, ctx)
-        plan = self._parse_plan(text) or self._fallback_plan(state.get("selected_dimensions") or BUILTIN_DIMENSIONS)
+        text = await self._stream_with_thinking(prompt, ctx)
+        plan = self._parse_plan(text) or self._fallback_plan(
+            state.get("selected_dimensions") or BUILTIN_DIMENSIONS,
+        )
         return {"question_plan": plan}
 
     def build_plan_interaction(self, state) -> dict:
@@ -99,7 +137,7 @@ class InterviewQuestionService:
             "request_id": f"plan_{uuid.uuid4().hex[:8]}",
             "interaction_type": "plan_approval",
             "title": "请确认出题计划",
-            "prompt": "审阅维度分布与题量，批准或驳回",
+            "prompt": "审阅维度分布与题量，可直接编辑后批准或填写反馈驳回",
             "data": {"plan": state.get("question_plan") or {}},
         }
 
@@ -107,6 +145,7 @@ class InterviewQuestionService:
         """并发为每个维度生成题目；单分支失败不阻塞其他。"""
         plan: dict = state.get("question_plan") or {}
         items = plan.get("items") or []
+        # 一次 fanout 内的所有 LLM 调用共享 ctx；单维度异常被 gather 捕获
         tasks = [self._generate_for_dimension(item, state["resume_text"], ctx) for item in items]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         all_questions: list[dict[str, Any]] = []
@@ -145,65 +184,152 @@ class InterviewQuestionService:
 
     # ---------- 内部 ----------
 
-    async def _silent_complete(
+    async def _stream_with_thinking(
         self, prompt: str, ctx: WorkflowRuntimeContext,
     ) -> str:
-        """LLM 调用（内部 JSON 生成场景）：不 emit 任何 block 事件，仅返回纯文本。
+        """LLM 流式调用：思考模式开启时把 reasoning_content emit 为 thinking block；
+        text 正文不 emit（结构化 JSON 不应当作正文展示给用户），仅累加返回。
 
-        为什么需要这条通道：维度提议、出题计划、题目生成都是结构化 JSON 调用，
-        其文本是给后端解析用的，不应作为 UI 文本/思考内容推流给前端，否则前端
-        会把 JSON 字面量当正文渲染，且会产生空内容的 thinking block。
-
-        采用流式 API 是为了与 stream_text 共用同一 model_router；这里对 chunk
-        只累加正文，丢弃 reasoning_content。
+        与 ResumeEvaluationService._stream_text_with_optional_thinking 的差异：
+        本通道**不**为正文创建 text block——这里的 text 是结构化 JSON，会被后端
+        解析后通过 dimension_selection / plan_approval / interview_questions 等
+        专用 block 呈现，不能直接渲染为正文。
         """
+        writer = get_stream_writer()
+        thinking_idx: int | None = None
+        # 仅当用户在前端开启思考模式时，才创建 thinking block 并推流
+        if ctx.runtime_config.enable_thinking:
+            thinking_idx = ctx.emitter.next_block_index()
+            writer(ctx.emitter.emit_block_start(
+                index=thinking_idx, block={"type": "thinking", "text": "", "status": "streaming"},
+            ))
         text_buf: list[str] = []
         try:
             async for chunk in self._router.stream(prompt, ctx.runtime_config):
-                if chunk.kind == "text":
+                if chunk.kind == "thinking" and thinking_idx is not None:
+                    writer(ctx.emitter.emit_block_delta(
+                        index=thinking_idx, delta={"text_delta": chunk.text_delta},
+                    ))
+                elif chunk.kind == "text":
                     text_buf.append(chunk.text_delta)
         except Exception:
             logger.exception("LLM 内部 JSON 调用失败")
+        finally:
+            if thinking_idx is not None:
+                writer(ctx.emitter.emit_block_stop(index=thinking_idx))
         return "".join(text_buf)
 
     async def _generate_for_dimension(
         self, plan_item: dict, resume_text: str, ctx: WorkflowRuntimeContext,
     ) -> list[dict[str, Any]]:
-        """为单个维度生成题目（内部 JSON 调用，不向前端推流）。"""
+        """为单个维度生成题目。
+
+        模板要求 LLM 输出 {"questions": [...]}，此处对三种形态做归一化：
+        顶层 list、顶层 {questions: [...]}、Markdown 代码块包裹。
+        """
         prompt = _pm.render(
             "interview_questions/question_generate",
-            dimension=plan_item.get("dimension"),
-            question_count=plan_item.get("question_count", 3),
-            difficulty=plan_item.get("difficulty", "中等"),
-            focus=plan_item.get("focus", ""),
             resume_text=resume_text,
+            plan_item=json.dumps(plan_item, ensure_ascii=False),
         )
-        text = await self._silent_complete(prompt, ctx)
-        try:
-            parsed = json.loads(text)
-            return list(parsed) if isinstance(parsed, list) else []
-        except json.JSONDecodeError:
-            logger.warning("题目生成 JSON 解析失败")
-            return []
+        text = await self._stream_with_thinking(prompt, ctx)
+        questions = self._parse_questions(text)
+        if not questions:
+            logger.warning(
+                "题目生成 JSON 解析失败：dimension=%s，原始返回前 200 字：%s",
+                plan_item.get("dimension"), text[:200].replace("\n", " "),
+            )
+        return questions
 
     @staticmethod
-    def _parse_dimensions(text: str) -> list[dict[str, Any]]:
-        """解析 AI 返回的维度列表。"""
+    def _try_load_json(text: str) -> Any | None:
+        """容错解析：先尝试整体 json.loads；失败时从文本中抢救首段 {} 或 []。
+
+        LLM 即使被指令"只输出 JSON"，仍可能输出 ```json ... ``` 代码块或
+        附带一段说明文字。在解析侧做归一化比改 prompt 更稳。
+        """
+        if not text:
+            return None
         try:
-            data = json.loads(text)
-            if isinstance(data, list):
-                return [InterviewDimensionDTO.model_validate(item).model_dump() for item in data]
+            return json.loads(text)
         except (json.JSONDecodeError, ValueError):
             pass
-        return []
+        # 优先匹配对象（{}），覆盖大部分包装形态；其次匹配数组（[]）
+        for pattern in (_JSON_OBJECT_PATTERN, _JSON_ARRAY_PATTERN):
+            m = pattern.search(text)
+            if not m:
+                continue
+            try:
+                return json.loads(m.group(0))
+            except (json.JSONDecodeError, ValueError):
+                continue
+        return None
+
+    @classmethod
+    def _parse_dimensions(cls, text: str) -> list[dict[str, Any]]:
+        """解析 AI 返回的维度列表。
+
+        三种形态：
+        1) 顶层 list：[{"name": ..., "reason": ...}, ...]
+        2) 顶层 obj：{"dimensions": [...]}（dimension_suggest.yaml 当前模板）
+        3) Markdown 代码块包裹的以上两种
+        """
+        data = cls._try_load_json(text)
+        if data is None:
+            return []
+        # 顶层对象时取 dimensions 字段
+        if isinstance(data, dict):
+            data = data.get("dimensions") or data.get("items") or []
+        if not isinstance(data, list):
+            return []
+        result: list[dict[str, Any]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            try:
+                result.append(InterviewDimensionDTO.model_validate(item).model_dump())
+            except (ValueError, TypeError):
+                # 单条不合规则丢弃，不阻塞其他维度
+                continue
+        return result
+
+    @classmethod
+    def _parse_plan(cls, text: str) -> dict[str, Any] | None:
+        """解析 AI 返回的出题计划，兼容 Markdown 代码块包裹。"""
+        data = cls._try_load_json(text)
+        if not isinstance(data, dict):
+            return None
+        try:
+            return InterviewQuestionPlanDTO.model_validate(data).model_dump()
+        except (ValueError, TypeError):
+            return None
+
+    @classmethod
+    def _parse_questions(cls, text: str) -> list[dict[str, Any]]:
+        """解析 AI 返回的题目列表。
+
+        三种形态：顶层 list、顶层 {"questions": [...]}、Markdown 代码块包裹。
+        """
+        data = cls._try_load_json(text)
+        if data is None:
+            return []
+        if isinstance(data, dict):
+            data = data.get("questions") or data.get("items") or []
+        if not isinstance(data, list):
+            return []
+        return [item for item in data if isinstance(item, dict)]
 
     @staticmethod
-    def _parse_plan(text: str) -> dict[str, Any] | None:
-        """解析 AI 返回的出题计划。"""
-        try:
-            return InterviewQuestionPlanDTO.model_validate_json(text).model_dump()
-        except (json.JSONDecodeError, ValueError):
-            return None
+    def _extract_user_intent(state) -> str | None:
+        """从 state 中提取本次用户意图（首条用户消息内容），用于 prompt 注入。
+
+        runner.py 已把消息内容透传到 state["user_message"] 中（如未来扩展），
+        当前 state schema 暂未包含；这里防御性地从可选字段读取，缺失返回 None。
+        """
+        intent = state.get("user_intent") if hasattr(state, "get") else None
+        if intent and isinstance(intent, str):
+            return intent.strip() or None
+        return None
 
     @staticmethod
     def _fallback_plan(dimensions: list[dict[str, Any]]) -> dict[str, Any]:

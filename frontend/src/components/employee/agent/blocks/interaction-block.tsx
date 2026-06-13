@@ -2,8 +2,8 @@
  * InteractionBlock：用户交互卡片。
  *
  * - pending：根据 interaction_type 渲染不同表单
- *     - dimension_selection：候选维度多选 → 提交 { selected_dimensions: [...] }
- *     - plan_approval：批准/驳回 → 提交 { approved: bool, feedback?: string }
+ *     - dimension_selection：候选维度多选 + 补充意见 → 提交 { selected_dimensions, user_feedback? }
+ *     - plan_approval：可编辑计划 → 批准 { approved: true, edited_plan } / 驳回 { approved: false, feedback? }
  *     - job_selection：候选岗位单选 → 提交 { selected_job_name: string }
  * - submitted：已提交，显示已选值
  * - expired：超时未提交
@@ -90,12 +90,18 @@ interface SectionProps {
   onSubmit: (values: Record<string, unknown>) => void;
 }
 
-/** 维度多选卡：提交 { selected_dimensions: [{name, reason, source}, ...] } */
+/** 维度多选卡：提交 { selected_dimensions: [...], user_feedback?: string }
+ *
+ * 用户除了勾选 AI 提议的维度，还可以在下方文本框补充意见或追加自定义维度。
+ * - 自定义维度按"，"或换行切分，source 标记为 user
+ * - user_feedback 透传至后端，作为 question_plan prompt 的 user_intent 注入
+ */
 function DimensionSelection({ title, prompt, data, onSubmit }: SectionProps) {
   const candidates = (data?.candidates ?? []) as Array<{
     name?: unknown; reason?: unknown; source?: unknown;
   }>;
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [feedback, setFeedback] = useState('');
 
   const toggle = (name: string) => {
     setSelected(prev => {
@@ -107,7 +113,7 @@ function DimensionSelection({ title, prompt, data, onSubmit }: SectionProps) {
   };
 
   const submit = () => {
-    // 把选中的维度对象（保留 name/reason/source）原样回传，与后端 state 类型对齐
+    // 1) 用户勾选的 AI 提议维度（保留 name/reason/source）
     const picked = candidates
       .filter(c => selected.has(String(c.name ?? '')))
       .map(c => ({
@@ -115,8 +121,15 @@ function DimensionSelection({ title, prompt, data, onSubmit }: SectionProps) {
         reason: c.reason ? String(c.reason) : '',
         source: c.source ? String(c.source) : 'ai',
       }));
-    onSubmit({ selected_dimensions: picked });
+    const trimmed = feedback.trim();
+    const payload: Record<string, unknown> = { selected_dimensions: picked };
+    // 2) 补充意见非空时透传到后端，参与 question_plan prompt 注入
+    if (trimmed) payload.user_feedback = trimmed;
+    onSubmit(payload);
   };
+
+  // 至少选中一个维度，或填写了补充意见，才允许提交
+  const canSubmit = selected.size > 0 || feedback.trim().length > 0;
 
   return (
     <div className="rounded-md border border-[#0EA5E9]/40 bg-white shadow-sm px-4 py-3">
@@ -153,55 +166,145 @@ function DimensionSelection({ title, prompt, data, onSubmit }: SectionProps) {
         <p className="text-xs text-[#94A3B8] mb-3">候选维度为空</p>
       )}
 
+      {/* 补充意见输入框：可追加维度或对 AI 提议的维度做约束说明 */}
+      <textarea
+        value={feedback}
+        onChange={e => setFeedback(e.target.value)}
+        placeholder="补充意见或追加维度（可选）：例如「重点关注分布式事务设计」"
+        rows={2}
+        className="w-full text-xs border border-[#E2E8F0] rounded px-2 py-1.5 mb-2
+                   outline-none focus:border-[#0EA5E9] resize-none"
+      />
+
       <button
         type="button"
         className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
                    hover:bg-[#0EA5E9] transition-colors
                    disabled:opacity-50 disabled:cursor-not-allowed"
-        disabled={selected.size === 0}
+        disabled={!canSubmit}
         onClick={submit}
       >
-        确认选择 ({selected.size})
+        确认选择 ({selected.size}{feedback.trim() ? ' + 备注' : ''})
       </button>
     </div>
   );
 }
 
-/** 出题计划审批卡：提交 { approved: bool, feedback?: string } */
+/** 出题计划审批卡：提交 { approved, edited_plan?, feedback? }
+ *
+ * 计划项可直接编辑：每行 question_count（数字）、difficulty（下拉）、focus（文本）。
+ * - 批准时把编辑后的 items 与重算的 total_questions 一起回传 edited_plan
+ * - 驳回时只透传 feedback，由后端循环回 build_question_plan 重新规划
+ */
+type PlanItem = {
+  dimension: string;
+  question_count: number;
+  difficulty: string;
+  focus: string;
+};
+
+const DIFFICULTY_OPTIONS = ['较低', '中等', '较高'];
+
 function PlanApproval({ title, prompt, data, onSubmit }: SectionProps) {
   const [feedback, setFeedback] = useState('');
-  const plan = (data?.plan ?? {}) as {
+  const initialPlan = (data?.plan ?? {}) as {
     total_questions?: number;
     items?: Array<{ dimension?: string; question_count?: number; difficulty?: string; focus?: string }>;
     summary?: string;
   };
 
-  const approve = () => onSubmit({ approved: true });
+  // items 进入受控状态以支持行内编辑；缺失字段填默认值，避免 input 切换 controlled/uncontrolled
+  const [items, setItems] = useState<PlanItem[]>(
+    (initialPlan.items ?? []).map(it => ({
+      dimension: String(it.dimension ?? ''),
+      question_count: Math.max(1, Number(it.question_count ?? 1)),
+      difficulty: DIFFICULTY_OPTIONS.includes(String(it.difficulty)) ? String(it.difficulty) : '中等',
+      focus: String(it.focus ?? ''),
+    })),
+  );
+  const summary = String(initialPlan.summary ?? '');
+
+  // 实时重算总题量；批准时一并回传，避免和 items 求和不一致
+  const totalQuestions = items.reduce((s, it) => s + (Number.isFinite(it.question_count) ? it.question_count : 0), 0);
+
+  const updateItem = (idx: number, patch: Partial<PlanItem>) => {
+    setItems(prev => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+  };
+
+  const approve = () => {
+    // 编辑后的 plan 与原 plan 字段对齐；后端 _request_plan_approval 检测到 edited_plan 会覆盖 state.question_plan
+    const edited_plan = {
+      total_questions: totalQuestions,
+      items,
+      summary,
+    };
+    onSubmit({ approved: true, edited_plan });
+  };
   const reject = () => onSubmit({ approved: false, feedback: feedback.trim() });
+
+  // 至少有一行且每行 question_count >=1 才允许批准
+  const canApprove = items.length > 0 && items.every(it => it.question_count >= 1 && it.dimension);
 
   return (
     <div className="rounded-md border border-[#0EA5E9]/40 bg-white shadow-sm px-4 py-3">
       <p className="text-sm font-semibold text-[#020617]">{title}</p>
       {prompt && <p className="text-xs text-[#64748B] mt-1 mb-3">{prompt}</p>}
 
-      {/* 计划摘要表 */}
+      {/* 计划编辑表 */}
       <div className="mb-3 text-xs">
-        {plan.total_questions != null && (
-          <p className="text-[#64748B] mb-1">总题量：{plan.total_questions}</p>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[#64748B]">总题量：<span className="text-[#0369A1] font-semibold">{totalQuestions}</span></span>
+          <span className="text-[#94A3B8]">可直接编辑题量、难度与考察重点</span>
+        </div>
+        {items.length > 0 ? (
+          <div className="border border-[#E2E8F0] rounded overflow-hidden">
+            {/* 表头 */}
+            <div className="flex items-center gap-2 px-2 py-1.5 bg-[#F8FAFC] text-[#94A3B8] text-[11px]">
+              <span className="w-24 shrink-0">维度</span>
+              <span className="w-14 shrink-0 text-center">题量</span>
+              <span className="w-20 shrink-0">难度</span>
+              <span className="flex-1">考察重点</span>
+            </div>
+            <div className="divide-y divide-[#E2E8F0]">
+              {items.map((it, i) => (
+                <div key={i} className="flex items-center gap-2 px-2 py-1.5">
+                  {/* 维度名只读：与已选维度严格对齐，由后端校验 */}
+                  <span className="w-24 shrink-0 font-medium text-[#020617] truncate" title={it.dimension}>
+                    {it.dimension}
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={6}
+                    value={it.question_count}
+                    onChange={e => updateItem(i, { question_count: Math.max(1, Math.min(6, Number(e.target.value) || 1)) })}
+                    className="w-14 shrink-0 text-center border border-[#E2E8F0] rounded px-1 py-0.5
+                               outline-none focus:border-[#0EA5E9]"
+                  />
+                  <select
+                    value={it.difficulty}
+                    onChange={e => updateItem(i, { difficulty: e.target.value })}
+                    className="w-20 shrink-0 border border-[#E2E8F0] rounded px-1 py-0.5
+                               outline-none focus:border-[#0EA5E9] bg-white"
+                  >
+                    {DIFFICULTY_OPTIONS.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                  <input
+                    type="text"
+                    value={it.focus}
+                    onChange={e => updateItem(i, { focus: e.target.value })}
+                    placeholder="考察重点"
+                    className="flex-1 min-w-0 border border-[#E2E8F0] rounded px-1.5 py-0.5
+                               outline-none focus:border-[#0EA5E9]"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="text-[#94A3B8]">出题计划为空</p>
         )}
-        {(plan.items ?? []).length > 0 && (
-          <ul className="border border-[#E2E8F0] rounded divide-y divide-[#E2E8F0]">
-            {plan.items!.map((it, i) => (
-              <li key={i} className="px-2 py-1.5 flex items-center gap-2">
-                <span className="font-medium text-[#020617]">{it.dimension}</span>
-                <span className="text-[#94A3B8]">{it.question_count} 题</span>
-                <span className="text-[#94A3B8]">· {it.difficulty}</span>
-                {it.focus && <span className="text-[#94A3B8] truncate ml-auto">{it.focus}</span>}
-              </li>
-            ))}
-          </ul>
-        )}
-        {plan.summary && <p className="text-[#64748B] mt-1">{plan.summary}</p>}
+        {summary && <p className="text-[#64748B] mt-2">{summary}</p>}
       </div>
 
       {/* 驳回反馈输入框 */}
@@ -211,15 +314,17 @@ function PlanApproval({ title, prompt, data, onSubmit }: SectionProps) {
         placeholder="如需驳回，请填写反馈意见（可选）"
         rows={2}
         className="w-full text-xs border border-[#E2E8F0] rounded px-2 py-1.5 mb-2
-                   outline-none focus:border-[#0EA5E9]"
+                   outline-none focus:border-[#0EA5E9] resize-none"
       />
 
       <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={approve}
+          disabled={!canApprove}
           className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
-                     hover:bg-[#0EA5E9] transition-colors"
+                     hover:bg-[#0EA5E9] transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed"
         >
           批准
         </button>
