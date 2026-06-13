@@ -15,8 +15,12 @@ class InterviewQuestionState(TypedDict, total=False):
     """图一 state：简历问答。"""
     resume_ref: dict[str, Any]
     resume_text: str
+    # 用户首条问题，用于 dimension_suggest / question_plan prompt 的 user_intent 注入
+    user_intent: str
     suggested_dimensions: list[dict[str, Any]]
     selected_dimensions: list[dict[str, Any]]
+    # 维度卡片提交时的"补充意见或追加维度"，作为 question_plan 的 user_intent 透传
+    dimension_feedback: str
     question_plan: dict[str, Any]
     plan_approved: bool
     question_set: dict[str, Any] | None

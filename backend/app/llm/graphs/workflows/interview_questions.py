@@ -30,11 +30,19 @@ async def _suggest_dimensions(state: InterviewQuestionState, config) -> dict:
 
 
 async def _request_dimension_selection(state: InterviewQuestionState, config) -> Command:
-    """请求用户选择维度（interrupt）。"""
+    """请求用户选择维度（interrupt）。
+
+    用户可在卡片中携带 user_feedback 字段表达"补充意见或追加维度"，
+    将其透传至 state.dimension_feedback，供后续 build_question_plan 注入 prompt。
+    """
     ctx: WorkflowRuntimeContext = config["configurable"]["ctx"]
     payload = ctx.interview_service.build_dimension_interaction(state)
     user_values = interrupt(payload)
-    return Command(update={"selected_dimensions": user_values.get("selected_dimensions", [])})
+    update: dict = {"selected_dimensions": user_values.get("selected_dimensions", [])}
+    feedback = str(user_values.get("user_feedback") or "").strip()
+    if feedback:
+        update["dimension_feedback"] = feedback
+    return Command(update=update)
 
 
 async def _build_question_plan(state: InterviewQuestionState, config) -> dict:
@@ -44,12 +52,23 @@ async def _build_question_plan(state: InterviewQuestionState, config) -> dict:
 
 
 async def _request_plan_approval(state: InterviewQuestionState, config) -> Command:
-    """请求用户审批出题计划（interrupt）。"""
+    """请求用户审批出题计划（interrupt）。
+
+    支持三种用户回执：
+    - {approved: true}                  → 走 fanout 生成
+    - {approved: true, edited_plan}     → 用编辑后的计划替换 state.question_plan，再 fanout
+    - {approved: false, feedback: ...}  → 携反馈循环回 build_question_plan
+    """
     ctx: WorkflowRuntimeContext = config["configurable"]["ctx"]
     payload = ctx.interview_service.build_plan_interaction(state)
     user_values = interrupt(payload)
     if user_values.get("approved"):
-        return Command(goto="fanout_generate_questions", update={"plan_approved": True})
+        update: dict = {"plan_approved": True}
+        edited = user_values.get("edited_plan")
+        if isinstance(edited, dict) and edited.get("items"):
+            # 用前端编辑后的计划覆盖原 plan，保证 fanout_generate_questions 按编辑值出题
+            update["question_plan"] = edited
+        return Command(goto="fanout_generate_questions", update=update)
     # 驳回：循环回 build_question_plan，携带 HR 反馈
     return Command(
         goto="build_question_plan",
