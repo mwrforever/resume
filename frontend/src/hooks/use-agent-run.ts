@@ -15,6 +15,8 @@ import type {
 /** hook 返回值 */
 export interface UseAgentRunResult {
   session: WorkspaceSession | null;
+  /** 局部更新会话（如切换模型/思考开关），不触发后端重新拉取 */
+  patchSession: (patch: Partial<WorkspaceSession>) => void;
   messages: AgentMessage[];
   runState: typeof INITIAL_RUN_STATE;
   sending: boolean;
@@ -63,16 +65,22 @@ export function useAgentRun(sessionId: number): UseAgentRunResult {
   const runEnvelopes = useCallback(async (
     iter: AsyncIterableIterator<AgentEnvelope>,
   ) => {
-    let lastMessageId: number | null = null;
+    // run.finish 不立即 dispatch：先 reload 拿到落库后的 agent 消息，
+    // 再紧随其后 dispatch run.finish 清空 current_blocks。这两步都处于
+    // await reload() 返回后的同一微任务延续中，React 18 会自动批处理
+    // setMessages + dispatch，单帧完成"RunRow → 新消息"的对调，避免
+    // 出现 RunRow 已消失但新消息还没到的留白闪烁。
+    let pendingFinish: AgentEnvelope | null = null;
     for await (const env of iter) {
-      dispatch(env);
       if (env.type === 'run.finish') {
-        lastMessageId = env.data.agent_message_id;
+        pendingFinish = env;
+        continue;
       }
+      dispatch(env);
     }
-    // 落库完成后从后端拉取最新消息列表
-    if (lastMessageId !== null) {
+    if (pendingFinish) {
       await reload();
+      dispatch(pendingFinish);
     }
   }, [reload]);
 
@@ -82,6 +90,22 @@ export function useAgentRun(sessionId: number): UseAgentRunResult {
     const ac = new AbortController();
     abortRef.current = ac;
     setSending(true);
+    // 乐观追加用户消息：发送后立即在 UI 中展示，无需等待后端 run.finish 后 reload
+    // 使用负数临时 id 作占位（后端真实 id 在 reload 后会替换整段消息列表）
+    const optimisticUserMessage: AgentMessage = {
+      id: -Date.now(),
+      session_id: sessionId,
+      parent_message_id: null,
+      role: 'user',
+      workflow_type: input.workflow_type,
+      run_id: null,
+      content: { blocks: [{ type: 'text', index: 0, text: input.content, status: 'success' }] },
+      model_name: null,
+      token_count: null,
+      sort_order: 0,
+      create_time: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, optimisticUserMessage]);
     try {
       const iter = employeeAgentApi.streamMessage(
         sessionId,
@@ -119,6 +143,11 @@ export function useAgentRun(sessionId: number): UseAgentRunResult {
     abortRef.current?.abort();
   }, []);
 
+  /** 局部更新会话字段（用于切换模型/思考开关后立刻反映到 UI） */
+  const patchSession = useCallback((patch: Partial<WorkspaceSession>) => {
+    setSession(prev => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
   // sessionId 切换时 abort 旧流
   useEffect(() => {
     return () => {
@@ -126,5 +155,5 @@ export function useAgentRun(sessionId: number): UseAgentRunResult {
     };
   }, [sessionId]);
 
-  return { session, messages, runState, sending, sendMessage, submit, reload, abort };
+  return { session, patchSession, messages, runState, sending, sendMessage, submit, reload, abort };
 }

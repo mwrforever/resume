@@ -12,6 +12,7 @@ import { Paperclip, Send, Square, Sparkles, X, Check, Loader2, AlertCircle } fro
 import type { WorkflowType, WorkspaceSession } from '@/types/agent';
 import { WORKFLOW_LABELS } from '@/types/agent';
 import { employeeAgentApi } from '@/api/employee/agent';
+import { AgentModelPicker } from './agent-model-picker';
 
 export interface AgentComposerProps {
   session: WorkspaceSession;
@@ -153,21 +154,25 @@ export function AgentComposer({
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={() => void toggleThinking()}
-            aria-pressed={session.enable_thinking}
-            title={session.enable_thinking ? '点击关闭思考模式' : '点击开启思考模式（更慢但更深入）'}
-            className={`flex items-center gap-1.5 h-7 px-3 rounded-full text-xs font-medium
-                        transition-all duration-150 ${
-              session.enable_thinking
-                ? 'bg-[#7C3AED] text-white shadow-sm shadow-purple-300'
-                : 'bg-[#F1F5F9] text-[#94A3B8] hover:bg-[#E8ECF1] hover:text-[#64748B]'
-            }`}
-          >
-            <Sparkles size={12} className={session.enable_thinking ? 'fill-white' : ''} />
-            <span>{session.enable_thinking ? '深度思考·开' : '深度思考·关'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* 模型选择：懒加载 /llm-model-options，更换后立即同步会话状态 */}
+            <AgentModelPicker session={session} onSessionUpdate={onSessionUpdate} />
+            <button
+              type="button"
+              onClick={() => void toggleThinking()}
+              aria-pressed={session.enable_thinking}
+              title={session.enable_thinking ? '点击关闭思考模式' : '点击开启思考模式（更慢但更深入）'}
+              className={`flex items-center gap-1.5 h-7 px-3 rounded-full text-xs font-medium
+                          transition-all duration-150 ${
+                session.enable_thinking
+                  ? 'bg-[#7C3AED] text-white shadow-sm shadow-purple-300'
+                  : 'bg-[#F1F5F9] text-[#94A3B8] hover:bg-[#E8ECF1] hover:text-[#64748B]'
+              }`}
+            >
+              <Sparkles size={12} className={session.enable_thinking ? 'fill-white' : ''} />
+              <span>{session.enable_thinking ? '深度思考·开' : '深度思考·关'}</span>
+            </button>
+          </div>
         </div>
 
         {/* 上传反馈 chip */}

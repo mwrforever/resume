@@ -57,9 +57,14 @@ class InterviewQuestionService:
         return {"resume_text": text}
 
     async def suggest_dimensions(self, state, ctx: WorkflowRuntimeContext) -> dict:
-        """AI 提议维度；失败兜底为内置维度。"""
+        """AI 提议维度；失败兜底为内置维度。
+
+        说明：维度提议属于**内部 JSON 生成调用**，不应作为可见文本/思考内容
+        推送给前端 UI。这里改为静默调用 LLM，仅当解析成功后通过 interaction
+        卡片让用户选择维度。
+        """
         prompt = _pm.render("interview_questions/dimension_suggest", resume_text=state["resume_text"])
-        text, _thinking = await self._stream_text_with_optional_thinking(prompt, ctx)
+        text = await self._silent_complete(prompt, ctx)
         dims = self._parse_dimensions(text)
         if not dims:
             logger.warning("AI 维度提议失败/为空，使用内置维度兜底")
@@ -83,7 +88,8 @@ class InterviewQuestionService:
             resume_text=state["resume_text"],
             dimensions=json.dumps(state.get("selected_dimensions") or [], ensure_ascii=False),
         )
-        text, _ = await self._stream_text_with_optional_thinking(prompt, ctx)
+        # 出题计划同样属于内部 JSON 生成，不向前端 UI 推流
+        text = await self._silent_complete(prompt, ctx)
         plan = self._parse_plan(text) or self._fallback_plan(state.get("selected_dimensions") or BUILTIN_DIMENSIONS)
         return {"question_plan": plan}
 
@@ -139,42 +145,31 @@ class InterviewQuestionService:
 
     # ---------- 内部 ----------
 
-    async def _stream_text_with_optional_thinking(
+    async def _silent_complete(
         self, prompt: str, ctx: WorkflowRuntimeContext,
-    ) -> tuple[str, str]:
-        """LLM 流式调用，按 enable_thinking 分流 thinking/text block。"""
-        writer = get_stream_writer()
-        text_idx = ctx.emitter.next_block_index()
-        thinking_idx: int | None = None
-        if ctx.runtime_config.enable_thinking:
-            thinking_idx = ctx.emitter.next_block_index()
-            writer(ctx.emitter.emit_block_start(index=thinking_idx,
-                                                 block={"type": "thinking", "text": ""}))
-        writer(ctx.emitter.emit_block_start(index=text_idx, block={"type": "text", "text": ""}))
+    ) -> str:
+        """LLM 调用（内部 JSON 生成场景）：不 emit 任何 block 事件，仅返回纯文本。
+
+        为什么需要这条通道：维度提议、出题计划、题目生成都是结构化 JSON 调用，
+        其文本是给后端解析用的，不应作为 UI 文本/思考内容推流给前端，否则前端
+        会把 JSON 字面量当正文渲染，且会产生空内容的 thinking block。
+
+        采用流式 API 是为了与 stream_text 共用同一 model_router；这里对 chunk
+        只累加正文，丢弃 reasoning_content。
+        """
         text_buf: list[str] = []
-        thinking_buf: list[str] = []
         try:
             async for chunk in self._router.stream(prompt, ctx.runtime_config):
-                if chunk.kind == "thinking" and thinking_idx is not None:
-                    writer(ctx.emitter.emit_block_delta(index=thinking_idx,
-                                                         delta={"text_delta": chunk.text_delta}))
-                    thinking_buf.append(chunk.text_delta)
-                elif chunk.kind == "text":
-                    writer(ctx.emitter.emit_block_delta(index=text_idx,
-                                                         delta={"text_delta": chunk.text_delta}))
+                if chunk.kind == "text":
                     text_buf.append(chunk.text_delta)
         except Exception:
-            logger.exception("LLM 流式失败")
-        finally:
-            if thinking_idx is not None:
-                writer(ctx.emitter.emit_block_stop(index=thinking_idx))
-            writer(ctx.emitter.emit_block_stop(index=text_idx))
-        return "".join(text_buf), "".join(thinking_buf)
+            logger.exception("LLM 内部 JSON 调用失败")
+        return "".join(text_buf)
 
     async def _generate_for_dimension(
         self, plan_item: dict, resume_text: str, ctx: WorkflowRuntimeContext,
     ) -> list[dict[str, Any]]:
-        """为单个维度生成题目。"""
+        """为单个维度生成题目（内部 JSON 调用，不向前端推流）。"""
         prompt = _pm.render(
             "interview_questions/question_generate",
             dimension=plan_item.get("dimension"),
@@ -183,7 +178,7 @@ class InterviewQuestionService:
             focus=plan_item.get("focus", ""),
             resume_text=resume_text,
         )
-        text, _ = await self._stream_text_with_optional_thinking(prompt, ctx)
+        text = await self._silent_complete(prompt, ctx)
         try:
             parsed = json.loads(text)
             return list(parsed) if isinstance(parsed, list) else []

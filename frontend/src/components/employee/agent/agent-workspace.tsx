@@ -45,7 +45,7 @@ function WorkspaceInner({
   onSessionUpdate: (s: WorkspaceSession) => void;
   onRequestNewSession: (workflow: WorkflowType) => Promise<void>;
 }) {
-  const { session, messages, runState, sending, sendMessage, submit, abort } = useAgentRun(sessionId);
+  const { session, patchSession, messages, runState, sending, sendMessage, submit, abort } = useAgentRun(sessionId);
   const [prefilledPrompt, setPrefilledPrompt] = useState<string | null>(null);
 
   if (!session) {
@@ -55,6 +55,12 @@ function WorkspaceInner({
       </main>
     );
   }
+
+  // 同时同步上层 sessions 数组与 hook 内 session（hook 内的才是 Composer 的渲染源）
+  const handleSessionUpdate = (next: WorkspaceSession) => {
+    patchSession(next);
+    onSessionUpdate(next);
+  };
 
   return (
     <main className="flex-1 flex flex-col min-w-0">
@@ -72,7 +78,7 @@ function WorkspaceInner({
         onPrefillConsumed={() => setPrefilledPrompt(null)}
         onSend={(input) => void sendMessage({ ...input, enable_thinking: session.enable_thinking })}
         onAbort={abort}
-        onSessionUpdate={onSessionUpdate}
+        onSessionUpdate={handleSessionUpdate}
         onRequestNewSession={onRequestNewSession}
       />
     </main>

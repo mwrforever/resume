@@ -29,7 +29,34 @@
       "Bash(pip list *)",
       "Bash(ls -d .venv venv env)",
       "Bash(which python *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(sed -i 's|from app.llm.prompts.prompts import get_prompt|from app.llm.prompts.prompts import prompt_manager as _pm|' app/services/resume_evaluation_service.py)",
+      "Bash(sed -i 's/get_prompt\\(/_pm.render\\(/g' app/services/resume_evaluation_service.py)",
+      "Bash(head -30 frontend/src/api/client.ts)",
+      "Bash(head -30 frontend/src/api/request.ts)",
+      "Skill(claude-hud:setup)",
+      "Bash(git *)",
+      "Bash(npm *)",
+      "Skill(claude-api)",
+      "Bash(/d/code/py/project/resume/.venv/Scripts/python -m pytest tests/services/test_agent_resume_service.py -v)",
+      "Bash(/d/code/py/project/resume/.venv/Scripts/python -c \"from app.api.v1.endpoints import agent; print\\('agent endpoint import OK'\\); print\\('AgentResumeService:', agent.AgentResumeService\\)\")",
+      "Bash(.venv/Scripts/pip.exe show *)",
+      "Bash(.venv/Scripts/python.exe *)",
+      "Bash(../.venv/Scripts/python.exe -c ' *)",
+      "Bash(../.venv/Scripts/pip.exe index *)",
+      "Bash(../.venv/Scripts/pip.exe install *)",
+      "Bash(rm -rf app/llm/tools)",
+      "Bash(rm -rf app/schemas/dto)",
+      "Bash(rm -f app/schemas/vo/request/agent_request.py)",
+      "Bash(rm -f app/schemas/vo/response/agent_response.py)",
+      "Bash(rm -f app/utils/http_client.py)",
+      "Bash(../.venv/Scripts/python.exe -m pytest tests/services/test_agent_resume_service.py -q)",
+      "Bash(../.venv/Scripts/python.exe -m pytest tests/services/test_agent_stream_events.py tests/services/test_agent_stream_emitter.py tests/services/test_agent_resume_service.py -q)"
     ]
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-dev": true,
+    "claude-hud@claude-hud": true,
+    "personskills@personskills": true
   }
 }

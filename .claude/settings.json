@@ -1,15 +1,77 @@
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Skill",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/check-gstack.sh\""
-          }
-        ]
-      }
+   "permissions": {
+    "allow": [
+      "Read",
+      "Bash(ls *)",
+      "Bash(cd *)",
+      "Bash(pwd)",
+      "Bash(tree *)",
+      "Bash(find *)",
+      "Bash(du *)",
+      "Bash(df *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(file *)",
+      "Bash(diff *)",
+      "Bash(grep *)",
+      "Bash(rg *)",
+      "Bash(ag *)",
+      "Bash(ack *)",
+      "Bash(sed *)",
+      "Bash(awk *)",
+      "Bash(sort *)",
+      "Bash(uniq *)",
+      "Bash(echo *)",
+      "Bash(printf *)",
+      "Bash(which *)",
+      "Bash(whereis *)",
+      "Bash(env)",
+      "Bash(printenv)",
+      "Bash(whoami)",
+      "Bash(uname *)",
+      "Bash(ps *)",
+      "Bash(top *)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git add *)",
+      "Bash(git commit*)",
+      "Bash(git stash*)",
+      "Bash(git tag*)",
+      "Bash(git remote*)",
+      "Bash(node *)",
+      "Bash(npm run *)",
+      "Bash(npm list *)",
+      "Bash(npm view *)",
+      "Bash(npx *)",
+      "Bash(pnpm run *)",
+      "Bash(pnpm list *)",
+      "Bash(yarn run *)",
+      "Bash(yarn list *)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(pip list *)",
+      "Bash(pip freeze *)",
+      "Bash(pip show *)",
+      "Bash(go build *)",
+      "Bash(go run *)",
+      "Bash(go test *)",
+      "Bash(go mod tidy *)",
+      "Bash(make *)",
+      "Bash(cargo build *)",
+      "Bash(cargo run *)",
+      "Bash(cargo test *)",
+      "Bash(tar *)",
+      "Bash(unzip *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(touch *)",
+      "Bash(ln *)"
     ]
   }
 }

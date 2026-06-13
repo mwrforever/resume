@@ -90,11 +90,15 @@ InteractionType = Literal["dimension_selection", "plan_approval", "job_selection
 
 class InteractionRequestData(_AllowExtra):
     """`interaction.request` 事件 data，对应 graph interrupt 出口。"""
+    # 内部字段叫 form_schema，避免 shadow BaseModel.schema()；
+    # 对外仍以 alias="schema" 输出，保持线协议与前端 types 一致。
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
     request_id: str
     interaction_type: InteractionType
     title: str
     prompt: str
-    schema: dict[str, Any] = Field(default_factory=dict)
+    form_schema: dict[str, Any] = Field(default_factory=dict, alias="schema")
     data: dict[str, Any] = Field(default_factory=dict)
 
 

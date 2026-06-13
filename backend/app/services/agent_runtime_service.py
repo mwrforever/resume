@@ -207,7 +207,17 @@ class AgentRuntimeService:
     async def _resolve_resume_ref(
         self, session_id: int, body: AgentMessageCreate,
     ) -> dict[str, Any] | None:
-        """解析简历引用：前端 context_refs 优先，否则从 Redis 会话引用读取。"""
+        """解析简历引用：本次请求 → Redis 会话引用 → 历史消息上下文。
+
+        三层 fallback 的语义：
+        1. 本次请求 `context_refs` 显式携带 → 优先使用本次附件
+        2. Redis 会话引用（30 分钟内同会话上传过的最新简历）
+        3. 历史消息中已成功 load_resume 过的 resume_id（兜底）
+
+        第 3 层是关键——使简历"存在性"基于会话上下文而非单次请求是否携带，
+        即使 Redis 引用过期、用户没再次上传，只要同会话历史里有简历就能继续。
+        """
+        # 1) 本次请求显式携带
         for ref in body.context_refs or []:
             if str(ref.get("type") or "").lower() == "resume":
                 if not ref.get("resume_id"):
@@ -217,7 +227,42 @@ class AgentRuntimeService:
                     "job_id": int(ref["job_id"]) if ref.get("job_id") is not None else None,
                     "file_name": str(ref.get("file_name") or ""),
                 }
-        return await self._agent_resume.get_session_ref(session_id=session_id)
+        # 2) Redis 会话级引用
+        cached = await self._agent_resume.get_session_ref(session_id=session_id)
+        if cached:
+            return cached
+        # 3) 历史消息上下文：扫描最近一次 load_resume tool_use block
+        return await self._resolve_resume_ref_from_history(session_id)
+
+    async def _resolve_resume_ref_from_history(
+        self, session_id: int,
+    ) -> dict[str, Any] | None:
+        """扫描历史消息，从最近一次 load_resume tool_use block 还原 resume_ref。
+
+        只识别 tool_name == "load_resume" 的 tool_use block，
+        其 input 字段在 InterviewQuestionService.load_resume 中固定写为 {"resume_id": ...}。
+        """
+        try:
+            messages = await self._repo.list_messages(session_id)
+        except Exception:
+            logger.exception("读取历史消息失败：session_id=%s", session_id)
+            return None
+        # 倒序扫描，取最近一次成功的 load_resume
+        for msg in reversed(messages):
+            content = msg.content or {}
+            for block in content.get("blocks") or []:
+                if (
+                    block.get("type") == "tool_use"
+                    and block.get("tool_name") == "load_resume"
+                    and (block.get("input") or {}).get("resume_id")
+                ):
+                    resume_id = int(block["input"]["resume_id"])
+                    logger.info(
+                        "从历史消息上下文恢复简历引用：session_id=%s resume_id=%s",
+                        session_id, resume_id,
+                    )
+                    return {"resume_id": resume_id, "job_id": None, "file_name": ""}
+        return None
 
     async def _build_graph_input(
         self, body: AgentMessageCreate, resume_ref: dict | None,

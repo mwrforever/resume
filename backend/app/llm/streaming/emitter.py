@@ -134,7 +134,7 @@ class AgentStreamEmitter:
             request_id=request_id, interaction_type=interaction_type,
             title=title, prompt=prompt,
             schema=schema or {}, data=data or {},
-        ).model_dump(mode="json")
+        ).model_dump(mode="json", by_alias=True)
         return self._wrap(type="interaction.request", data=payload)
 
     def emit_interaction_resolve(self, *, request_id: str, values: dict[str, Any]) -> AgentStreamEnvelope:

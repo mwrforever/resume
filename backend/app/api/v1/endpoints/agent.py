@@ -16,6 +16,7 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Form, Path, Query, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
 
 from app.deps import get_cache, get_current_user, get_db
 from app.repositories.agent_repository import AgentRepository
@@ -48,6 +49,7 @@ from app.services.interview_question_service import InterviewQuestionService
 from app.services.llm_config_service import LlmConfigService
 from app.services.resume_evaluation_service import ResumeEvaluationService
 from app.services.resume_loader import ResumeLoader
+from app.services.resume_service import ResumeService
 from app.llm.graphs.workflows.runner import AgentWorkflowRunner
 from app.llm.model_router import get_default_model_router
 
@@ -79,8 +81,12 @@ def _get_resume_service(
     db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache),
 ) -> AgentResumeService:
     """Agent 简历上传服务。"""
+    # 委托底层 ResumeService 完成文件落盘+文本解析+入库，避免 Repository 越层做 I/O
+    resume_repo = ResumeRepository(db)
     return AgentResumeService(
-        resume_repo=ResumeRepository(db), job_repo=JobRepository(db), cache=cache,
+        resume_service=ResumeService(resume_repo, cache),
+        job_repo=JobRepository(db),
+        cache=cache,
     )
 
 
@@ -278,8 +284,6 @@ async def stream_message(
     llm_svc: LlmConfigService = Depends(_get_llm_service),
 ):
     """流式运行 Agent 工作流，返回 SSE 事件流。"""
-    from sse_starlette.sse import EventSourceResponse
-
     session = await session_svc._require_session(session_id, current_user)
     runtime_config = await llm_svc.get_runtime_config(current_user, session.selected_model_name)
     # thinking 开关：前端 runtime_options 优先，否则取会话持久化值
@@ -315,8 +319,6 @@ async def submit_interaction(
     llm_svc: LlmConfigService = Depends(_get_llm_service),
 ):
     """提交 interaction 卡片的用户填写，恢复 graph。"""
-    from sse_starlette.sse import EventSourceResponse
-
     session = await session_svc._require_session(session_id, current_user)
     workflow_type = await _infer_workflow_type(session_svc, session, current_user)
     runtime_config = await llm_svc.get_runtime_config(current_user, session.selected_model_name)

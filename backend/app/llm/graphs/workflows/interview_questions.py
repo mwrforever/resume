@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
