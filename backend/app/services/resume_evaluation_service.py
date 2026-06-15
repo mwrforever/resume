@@ -6,7 +6,7 @@
 - AI 结构化画像
 - 加载候选岗位（Redis 优先）
 - 严格校验岗位全名与员工归属
-- 调用 evaluation_subgraph（黑盒复用）
+- 通过 evaluation_graph.arun 跑深度评估（维度+技能匹配+加权打分）
 - 组装可视化报告 → evaluation_report block
 
 emit 协议事件统一通过 get_stream_writer + ctx.emitter；
@@ -23,9 +23,11 @@ from typing import Any
 from langgraph.config import get_stream_writer
 
 from app.core.exceptions import ValidationError
+from app.llm.graphs.evaluation_graph import EvaluationState, arun as run_evaluation_graph
 from app.llm.graphs.workflows.context import WorkflowRuntimeContext
 from app.llm.model_router import LLMModelRouter
 from app.llm.prompts.prompts import prompt_manager as _pm
+from app.repositories.evaluation_repository import EvalRepository
 from app.repositories.job_repository import JobRepository
 from app.schemas.agent.dto import ResumeEvaluationReportDTO
 from app.services.cache_service import CacheService
@@ -46,14 +48,14 @@ class ResumeEvaluationService:
         model_router: LLMModelRouter,
         resume_loader: ResumeLoader,
         job_repo: JobRepository,
+        eval_repo: EvalRepository,
         cache: CacheService,
-        evaluation_subgraph: Any,
     ) -> None:
         self._router = model_router
         self._loader = resume_loader
         self._job_repo = job_repo
+        self._eval_repo = eval_repo
         self._cache = cache
-        self._eval_subgraph = evaluation_subgraph
 
     # ---------- 节点入口 ----------
 
@@ -73,9 +75,19 @@ class ResumeEvaluationService:
         return {"resume_text": text}
 
     async def analyze_resume_profile(self, state, ctx: WorkflowRuntimeContext) -> dict:
-        """AI 分析简历画像。"""
-        prompt = _pm.render("resume_evaluation/profile_analyze", resume_text=state["resume_text"])
-        text, _ = await self._stream_text_with_optional_thinking(prompt, ctx)
+        """AI 分析简历画像；空简历跳过 LLM 调用直接返回空画像。
+
+        空简历路径（解析失败/未上传）下不浪费一次 LLM 调用，由 graph 的条件边
+        短路到 END，不再走 load_job_candidates 及后续节点。
+        """
+        resume_text = str(state.get("resume_text") or "")
+        if not resume_text.strip():
+            logger.info("简历原文为空，跳过画像分析：session_id=%s", ctx.session_id)
+            return {"resume_profile": {}}
+        prompt = _pm.render("resume_evaluation/profile_analyze", resume_text=resume_text)
+        # 静默调用：画像 JSON 是内部结构化数据，不该当正文流式展示给用户。
+        # 用户在步骤条看到"正在结构化解析简历…"即可，避免裸 JSON 泄露。
+        text = await self._call_llm_silently(prompt, ctx)
         try:
             profile = json.loads(text)
         except json.JSONDecodeError:
@@ -115,7 +127,7 @@ class ResumeEvaluationService:
         }
 
     async def validate_job(self, state, ctx: WorkflowRuntimeContext) -> dict[str, Any]:
-        """严格校验岗位全名与员工归属。"""
+        """严格校验岗位全名与员工归属，返回完整岗位信息（含评估所需 template_id/description）。"""
         name = str(state.get("selected_job_name") or "").strip()
         if not name:
             raise ValidationError("岗位名称不能为空")
@@ -123,32 +135,83 @@ class ResumeEvaluationService:
         match = next((j for j in jobs if str(j.name) == name), None)
         if match is None:
             raise ValidationError(f"未找到岗位 '{name}' 或不属于当前员工")
-        return {"id": match.id, "name": match.name}
+        # 返回深度评估所需字段：template_id 决定维度/技能，description 参与 prompt
+        return {
+            "id": match.id,
+            "name": match.name,
+            "template_id": match.template_id,
+            "description": str(match.description or ""),
+        }
 
     async def run_evaluation_subgraph(self, state, ctx: WorkflowRuntimeContext) -> dict:
-        """复用既有 evaluation_graph 子图。"""
-        eval_input = {
-            "resume_text": state["resume_text"],
-            "resume_profile": state["resume_profile"],
-            "job": state["job_full"],
-        }
-        result = await self._eval_subgraph.ainvoke(eval_input)
-        return {"evaluation_result": result}
+        """通过 evaluation_graph.arun 跑深度评估（维度+技能匹配+加权打分）。
+
+        岗位的评估模板（template_id）决定维度与技能清单：
+        - template_id 为 None → 岗位未配置模板，无法进行深度评估，友好报错阻断
+        - dimensions 为空 → 模板无有效维度，同样阻断
+        application_id 在子图内仅用于日志/落库，此处用 0 作哨兵（Agent 场景无投递单）。
+        """
+        job = state.get("job_full") or {}
+        template_id = job.get("template_id")
+        job_id = int(job.get("id") or 0)
+        if not template_id:
+            raise ValidationError(
+                f"岗位 '{job.get('name')}' 未配置评估模板，无法进行深度评估，请联系管理员配置模板"
+            )
+        dimensions = await self._eval_repo.get_template_dimensions(int(template_id))
+        if not dimensions:
+            raise ValidationError(f"评估模板 {template_id} 无有效维度，无法进行深度评估")
+        skills = await self._eval_repo.get_template_skills(int(template_id))
+        resume_id = int((state.get("resume_ref") or {}).get("resume_id") or 0)
+        eval_state = EvaluationState(
+            application_id=0,  # Agent 场景无投递单，子图内仅用于日志
+            resume_id=resume_id,
+            job_id=job_id,
+            job_name=str(job.get("name") or ""),
+            job_description=str(job.get("description") or ""),
+            resume_text=str(state.get("resume_text") or ""),
+            dimensions=dimensions,
+            skills=skills,
+        )
+        result = await run_evaluation_graph(eval_state)
+        logger.info(
+            "深度评估完成：session_id=%s job_id=%s final_score=%.2f",
+            ctx.session_id, job_id, result.final_score,
+        )
+        return {"evaluation_result": result.model_dump(mode="json")}
 
     async def build_visualization_report(self, state, ctx: WorkflowRuntimeContext) -> dict:
-        """组装可视化报告数据。"""
-        eval_result = state.get("evaluation_result") or {}
-        report = ResumeEvaluationReportDTO(
-            final_score=float(eval_result.get("final_score") or 0),
-            final_label=str(eval_result.get("final_label") or ""),
-            decision=str(eval_result.get("decision") or ""),
-            summary=str(eval_result.get("summary") or ""),
-            match_overview=eval_result.get("match_overview") or {},
-            resume_structure=state.get("resume_profile") or {},
-            experience_timeline=eval_result.get("experience_timeline") or [],
-            skill_dimensions=eval_result.get("skill_dimensions") or [],
-            job_gaps=eval_result.get("job_gaps") or [],
-        ).model_dump(mode="json")
+        """组装可视化报告：用 visual_report prompt 把画像+岗位+评估结果合成为前端六段结构。"""
+        prompt = _pm.render(
+            "resume_evaluation/visual_report",
+            resume_profile=json.dumps(state.get("resume_profile") or {}, ensure_ascii=False),
+            selected_job=json.dumps(state.get("job_full") or {}, ensure_ascii=False),
+            evaluation_result=json.dumps(state.get("evaluation_result") or {}, ensure_ascii=False),
+        )
+        # 静默调用：报告 JSON 是结构化中间产物，不该当正文流式展示。
+        # 最终报告通过 finalize_evaluation_report 节点的 evaluation_report block 输出。
+        text = await self._call_llm_silently(prompt, ctx)
+        try:
+            report = ResumeEvaluationReportDTO.model_validate_json(text).model_dump(mode="json")
+        except (ValueError, json.JSONDecodeError):
+            # LLM 输出不符合 DTO schema 时兜底：用评估结果原始字段拼装，保证不白屏
+            logger.warning("可视化报告 JSON 解析失败，使用兜底拼装")
+            eval_result = state.get("evaluation_result") or {}
+            report = ResumeEvaluationReportDTO(
+                final_score=float(eval_result.get("final_score") or 0),
+                final_label=str(eval_result.get("final_label") or ""),
+                decision="建议人工复核",
+                summary=str(eval_result.get("advantage_comment") or ""),
+                match_overview={"advantages": [], "risks": []},
+                resume_structure=state.get("resume_profile") or {},
+                experience_timeline=[],
+                skill_dimensions=[
+                    {"dimension_name": d.get("dimension_name"), "score": d.get("score"),
+                     "advantage": d.get("advantage"), "disadvantage": d.get("disadvantage")}
+                    for d in eval_result.get("dimension_results") or []
+                ],
+                job_gaps=[],
+            ).model_dump(mode="json")
         return {"report": report}
 
     async def finalize_evaluation_report(self, state, ctx: WorkflowRuntimeContext) -> dict:
@@ -196,3 +259,20 @@ class ResumeEvaluationService:
                 writer(ctx.emitter.emit_block_stop(index=thinking_idx))
             writer(ctx.emitter.emit_block_stop(index=text_idx))
         return "".join(text_buf), "".join(thinking_buf)
+
+    async def _call_llm_silently(self, prompt: str, ctx: WorkflowRuntimeContext) -> str:
+        """静默 LLM 调用：只消费流式输出，不 emit 任何 text/thinking block。
+
+        用于产出结构化 JSON 中间数据的节点（画像分析、可视化报告）：
+        这些 JSON 是内部数据，最终通过 evaluation_report block 结构化展示，
+        不该把裸 JSON 当正文流式吐给用户。
+        步骤条（step.update）仍由 runner 翻译节点 updates 发出，用户能看到进度。
+        """
+        text_buf: list[str] = []
+        try:
+            async for chunk in self._router.stream(prompt, ctx.runtime_config):
+                if chunk.kind == "text":
+                    text_buf.append(chunk.text_delta)
+        except Exception:
+            logger.exception("LLM 静默调用失败")
+        return "".join(text_buf)

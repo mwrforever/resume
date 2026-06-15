@@ -42,7 +42,9 @@ class ResumeLoader:
         resume = await self._repo.get_by_id(resume_id)
         if resume is None:
             raise LookupError(f"简历不存在：resume_id={resume_id}")
-        text = str(getattr(resume, "parsed_text", "") or "")
+        # 注意：Resume 模型列名为 raw_text（AI 解析后的纯文本），不是 parsed_text。
+        # 早期曾误用 parsed_text 导致 getattr 永远命中默认空串，使所有简历读取返回空。
+        text = str(getattr(resume, "raw_text", "") or "")
         if text:
             await self._cache.set(key, text, CACHE_TTL)
         return text

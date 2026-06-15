@@ -7,9 +7,10 @@
 
 import { useState, useEffect } from 'react';
 import {
-  Bot, Plus, Search, Settings, PanelLeftClose, PanelLeftOpen,
+  Bot, Plus, Search, Settings, PanelLeftClose, PanelLeftOpen, Loader2,
 } from 'lucide-react';
 import type { WorkspaceSession } from '@/types/agent';
+import { useRunningSessionIds } from '@/store/agent';
 
 export interface AgentSidebarDrawerProps {
   sessions: WorkspaceSession[];
@@ -63,6 +64,7 @@ export function AgentSidebarDrawer({
     return stored === null ? true : stored === 'true';
   });
   const [keyword, setKeyword] = useState('');
+  const runningIds = useRunningSessionIds();
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, String(expanded));
@@ -119,11 +121,13 @@ export function AgentSidebarDrawer({
               <ul className="space-y-0.5">
                 {group.items.map(s => {
                   const isActive = s.id === activeId;
+                  const isRunning = runningIds.has(s.id);
                   return (
                     <li key={s.id}>
                       <button
                         type="button"
                         onClick={() => onSelect(s.id)}
+                        title={isRunning ? '正在运行…' : undefined}
                         className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left
                                     transition-colors duration-150
                                     ${isActive
@@ -131,7 +135,11 @@ export function AgentSidebarDrawer({
                                       : 'text-[#334155] hover:bg-[#F1F5F9]'
                                     }`}
                       >
-                        <Bot size={16} className={`flex-shrink-0 ${isActive ? 'text-[#0369A1]' : 'text-[#64748B]'}`} />
+                        {isRunning ? (
+                          <Loader2 size={16} className={`flex-shrink-0 animate-spin ${isActive ? 'text-[#0369A1]' : 'text-[#0EA5E9]'}`} />
+                        ) : (
+                          <Bot size={16} className={`flex-shrink-0 ${isActive ? 'text-[#0369A1]' : 'text-[#64748B]'}`} />
+                        )}
                         <span className="truncate text-sm flex-1">{s.title || '未命名会话'}</span>
                       </button>
                     </li>
@@ -177,20 +185,25 @@ export function AgentSidebarDrawer({
 
         {/* 会话图标列表 */}
         <div className="flex-1 overflow-y-auto flex flex-col items-center gap-1 px-2 w-full">
-          {sessions.slice(0, 20).map(s => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => onSelect(s.id)}
-              title={s.title || '未命名会话'}
-              className={`relative w-9 h-9 flex items-center justify-center rounded-lg transition-colors
-                          ${s.id === activeId
-                            ? 'bg-[#E0F2FE] text-[#0369A1]'
-                            : 'text-[#64748B] hover:bg-[#F1F5F9]'}`}
-            >
-              <Bot size={16} />
-            </button>
-          ))}
+          {sessions.slice(0, 20).map(s => {
+            const isRunning = runningIds.has(s.id);
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => onSelect(s.id)}
+                title={isRunning ? `正在运行 · ${s.title || '未命名会话'}` : (s.title || '未命名会话')}
+                className={`relative w-9 h-9 flex items-center justify-center rounded-lg transition-colors
+                            ${s.id === activeId
+                              ? 'bg-[#E0F2FE] text-[#0369A1]'
+                              : 'text-[#64748B] hover:bg-[#F1F5F9]'}`}
+              >
+                {isRunning
+                  ? <Loader2 size={16} className="animate-spin text-[#0EA5E9]" />
+                  : <Bot size={16} />}
+              </button>
+            );
+          })}
         </div>
 
         {/* 新建会话 FAB */}

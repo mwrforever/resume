@@ -17,10 +17,12 @@ import type { AgentBlock } from '@/types/agent';
 
 interface InteractionBlockProps {
   block: AgentBlock & { type: 'interaction' };
+  /** 是否正在提交（父级 sending）→ 禁用所有提交按钮，防止重复点击 */
+  submitting?: boolean;
   onSubmit?: (requestId: string, values: Record<string, unknown>) => void;
 }
 
-export function InteractionBlock({ block, onSubmit }: InteractionBlockProps) {
+export function InteractionBlock({ block, submitting, onSubmit }: InteractionBlockProps) {
   const { request_id, interaction_type, title, prompt, data, status } = block;
 
   // 已提交 / 已过期：统一展示
@@ -49,6 +51,7 @@ export function InteractionBlock({ block, onSubmit }: InteractionBlockProps) {
           title={title}
           prompt={prompt}
           data={data}
+          submitting={submitting}
           onSubmit={(vals) => onSubmit?.(request_id, vals)}
         />
       );
@@ -58,6 +61,7 @@ export function InteractionBlock({ block, onSubmit }: InteractionBlockProps) {
           title={title}
           prompt={prompt}
           data={data}
+          submitting={submitting}
           onSubmit={(vals) => onSubmit?.(request_id, vals)}
         />
       );
@@ -67,6 +71,7 @@ export function InteractionBlock({ block, onSubmit }: InteractionBlockProps) {
           title={title}
           prompt={prompt}
           data={data}
+          submitting={submitting}
           onSubmit={(vals) => onSubmit?.(request_id, vals)}
         />
       );
@@ -87,6 +92,8 @@ interface SectionProps {
   title: string;
   prompt: string;
   data: Record<string, unknown>;
+  /** 提交进行中：禁用提交按钮防止重复点击 */
+  submitting?: boolean;
   onSubmit: (values: Record<string, unknown>) => void;
 }
 
@@ -96,7 +103,7 @@ interface SectionProps {
  * - 自定义维度按"，"或换行切分，source 标记为 user
  * - user_feedback 透传至后端，作为 question_plan prompt 的 user_intent 注入
  */
-function DimensionSelection({ title, prompt, data, onSubmit }: SectionProps) {
+function DimensionSelection({ title, prompt, data, submitting, onSubmit }: SectionProps) {
   const candidates = (data?.candidates ?? []) as Array<{
     name?: unknown; reason?: unknown; source?: unknown;
   }>;
@@ -181,10 +188,10 @@ function DimensionSelection({ title, prompt, data, onSubmit }: SectionProps) {
         className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
                    hover:bg-[#0EA5E9] transition-colors
                    disabled:opacity-50 disabled:cursor-not-allowed"
-        disabled={!canSubmit}
+        disabled={!canSubmit || submitting}
         onClick={submit}
       >
-        确认选择 ({selected.size}{feedback.trim() ? ' + 备注' : ''})
+        {submitting ? '提交中…' : `确认选择 (${selected.size}${feedback.trim() ? ' + 备注' : ''})`}
       </button>
     </div>
   );
@@ -205,7 +212,7 @@ type PlanItem = {
 
 const DIFFICULTY_OPTIONS = ['较低', '中等', '较高'];
 
-function PlanApproval({ title, prompt, data, onSubmit }: SectionProps) {
+function PlanApproval({ title, prompt, data, submitting, onSubmit }: SectionProps) {
   const [feedback, setFeedback] = useState('');
   const initialPlan = (data?.plan ?? {}) as {
     total_questions?: number;
@@ -321,18 +328,20 @@ function PlanApproval({ title, prompt, data, onSubmit }: SectionProps) {
         <button
           type="button"
           onClick={approve}
-          disabled={!canApprove}
+          disabled={!canApprove || submitting}
           className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
                      hover:bg-[#0EA5E9] transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          批准
+          {submitting ? '提交中…' : '批准'}
         </button>
         <button
           type="button"
           onClick={reject}
+          disabled={submitting}
           className="px-4 py-1.5 rounded-md border border-[#E2E8F0] text-[#64748B] text-sm
-                     hover:bg-[#F8FAFC] transition-colors"
+                     hover:bg-[#F8FAFC] transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed"
         >
           驳回并重生成
         </button>
@@ -342,7 +351,7 @@ function PlanApproval({ title, prompt, data, onSubmit }: SectionProps) {
 }
 
 /** 岗位选择卡：提交 { selected_job_name: string } */
-function JobSelection({ title, prompt, data, onSubmit }: SectionProps) {
+function JobSelection({ title, prompt, data, submitting, onSubmit }: SectionProps) {
   const candidates = (data?.candidates ?? []) as Array<{ name?: unknown; description?: unknown }>;
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -378,10 +387,10 @@ function JobSelection({ title, prompt, data, onSubmit }: SectionProps) {
         className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
                    hover:bg-[#0EA5E9] transition-colors
                    disabled:opacity-50 disabled:cursor-not-allowed"
-        disabled={!selected}
+        disabled={!selected || submitting}
         onClick={() => selected && onSubmit({ selected_job_name: selected })}
       >
-        确认选择
+        {submitting ? '提交中…' : '确认选择'}
       </button>
     </div>
   );

@@ -29,6 +29,7 @@ export function AgentWorkspace({ sessionId, onSessionUpdate, onRequestNewSession
   }
   return (
     <WorkspaceInner
+      key={sessionId}
       sessionId={sessionId}
       onSessionUpdate={onSessionUpdate}
       onRequestNewSession={onRequestNewSession}
@@ -90,6 +91,7 @@ function WorkspaceInner({
       <AgentMessageList
         messages={messages}
         runState={runState}
+        sending={sending}
         onSubmitInteraction={submit}
         onPickPrompt={setPrefilledPrompt}
         onRetry={handleRetry}
@@ -98,6 +100,7 @@ function WorkspaceInner({
         session={session}
         sending={sending}
         hasMessages={messages.length > 0}
+        lastWorkflow={messages.length > 0 ? messages[messages.length - 1].workflow_type : 'interview_questions'}
         prefilledPrompt={prefilledPrompt}
         onPrefillConsumed={() => setPrefilledPrompt(null)}
         onSend={(input) => handleSend({ ...input, enable_thinking: session.enable_thinking })}

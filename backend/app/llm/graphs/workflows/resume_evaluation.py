@@ -42,7 +42,8 @@ async def _request_job_selection(state: ResumeEvaluationState, config) -> Comman
     ctx: WorkflowRuntimeContext = config["configurable"]["ctx"]
     payload = ctx.evaluation_service.build_job_interaction(state)
     user_values = interrupt(payload)
-    return Command(update={"selected_job_name": str(user_values.get("job_full_name") or "")})
+    # 字段名严格对齐前端 InteractionBlock JobSelection 提交的 { selected_job_name }
+    return Command(update={"selected_job_name": str(user_values.get("selected_job_name") or "")})
 
 
 async def _validate_job_full_name(state: ResumeEvaluationState, config) -> Command:
@@ -78,6 +79,17 @@ async def _finalize_evaluation_report(state: ResumeEvaluationState, config) -> d
 
 # ---------- 图构造 ----------
 
+def _route_after_profile(state: ResumeEvaluationState) -> str:
+    """画像分析后的条件路由：简历原文为空时直接短路到 END，不再加载岗位与评估。
+
+    覆盖简历解析失败/未上传场景：画像节点已对空简历跳过 LLM 直接返回 {}，
+    这里据此短路，避免后续 load_job_candidates 让用户进入一个注定失败的选岗流程。
+    """
+    if not str(state.get("resume_text") or "").strip():
+        return END
+    return "load_job_candidates"
+
+
 def build_evaluation_graph(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:
     """构造并编译图二。"""
     graph = StateGraph(ResumeEvaluationState)
@@ -92,7 +104,12 @@ def build_evaluation_graph(checkpointer: BaseCheckpointSaver) -> CompiledStateGr
 
     graph.add_edge(START, "load_resume")
     graph.add_edge("load_resume", "analyze_resume_profile")
-    graph.add_edge("analyze_resume_profile", "load_job_candidates")
+    # 简历为空时短路到 END，不再走选岗/评估（空简历兜底）
+    graph.add_conditional_edges(
+        "analyze_resume_profile",
+        _route_after_profile,
+        {END: END, "load_job_candidates": "load_job_candidates"},
+    )
     graph.add_edge("load_job_candidates", "request_job_selection")
     graph.add_edge("request_job_selection", "validate_job_full_name")
     graph.add_edge("validate_job_full_name", "run_evaluation_subgraph")

@@ -18,12 +18,14 @@ import { AgentMessageCard } from './agent-message-card';
 export interface AgentMessageListProps {
   messages: AgentMessage[];
   runState: AgentRunState;
+  /** 是否正在提交 interaction / 发送消息 → 透传给 interaction 卡片禁用按钮 */
+  sending?: boolean;
   onSubmitInteraction: (requestId: string, values: Record<string, unknown>) => void;
   onPickPrompt?: (prompt: string) => void;
   onRetry?: () => void;
 }
 
-export function AgentMessageList({ messages, runState, onSubmitInteraction, onPickPrompt, onRetry }: AgentMessageListProps) {
+export function AgentMessageList({ messages, runState, sending, onSubmitInteraction, onPickPrompt, onRetry }: AgentMessageListProps) {
   const { ref, followIfNeeded, forceSmoothToBottom } = useFollowBottom();
 
   // 流式期间新增 envelope → 触发滚动 follow
@@ -57,7 +59,12 @@ export function AgentMessageList({ messages, runState, onSubmitInteraction, onPi
     <div ref={ref} className="flex-1 overflow-y-auto bg-[#F8FAFC]">
       <div className="mx-auto max-w-[880px] px-4 py-6 space-y-6">
         {messages.map(msg => (
-          <MessageRow key={msg.id} message={msg} onSubmitInteraction={onSubmitInteraction} />
+          <MessageRow
+            key={msg.id}
+            message={msg}
+            submitting={sending}
+            onSubmitInteraction={onSubmitInteraction}
+          />
         ))}
 
         {/* 流式正在构造的 blocks */}
@@ -73,6 +80,7 @@ export function AgentMessageList({ messages, runState, onSubmitInteraction, onPi
                   <div key={b.index} className="px-4 py-3">
                     <BlockRenderer
                       block={b}
+                      submitting={sending}
                       onSubmitInteraction={
                         b.type === 'interaction' ? onSubmitInteraction : undefined
                       }
@@ -139,9 +147,11 @@ function QuestionSkeleton() {
 /** 单条消息渲染 */
 function MessageRow({
   message,
+  submitting,
   onSubmitInteraction,
 }: {
   message: AgentMessage;
+  submitting?: boolean;
   onSubmitInteraction: (id: string, v: Record<string, unknown>) => void;
 }) {
   if (message.role === 'user') {
@@ -158,6 +168,7 @@ function MessageRow({
     <AgentMessageCard
       message={message}
       runState={null}
+      submitting={submitting}
       onSubmitInteraction={onSubmitInteraction}
     />
   );

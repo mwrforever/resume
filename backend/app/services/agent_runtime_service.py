@@ -161,15 +161,30 @@ class AgentRuntimeService:
         )
         # 先回执 interaction.resolve，让前端立刻关闭卡片
         resolve_env = emitter.emit_interaction_resolve(request_id=request_id, values=body.values)
-        # 回写旧 interaction block 的 status 为 submitted
-        await self._update_old_interaction_block_status(
+        # 回写旧 interaction block 的 status 为 submitted；若已是 submitted 说明重复提交，
+        # 幂等短路：只回执 resolve 让前端关闭卡片，不再重复 resume graph。
+        is_first_submit = await self._update_old_interaction_block_status(
             session_id=session.id, request_id=request_id, values=body.values,
         )
         await self._buffer_append(session.id, run_id, resolve_env)
         yield resolve_env
+        if not is_first_submit:
+            logger.info("interaction 重复提交，幂等短路：session_id=%s request_id=%s",
+                        session.id, request_id)
+            return
+
+        # 补发 run.start：让前端把 runState.running 置 true，从而渲染
+        # 步骤条与进行中面板。否则深度评估期间前端看起来像"终止了"，
+        # 直到 run.finish + reload 才突然冒出结果。
+        start_env = emitter.emit_run_start(
+            enable_thinking=runtime_config.enable_thinking,
+            user_message_id=None,
+        )
+        await self._buffer_append(session.id, run_id, start_env)
+        yield start_env
 
         # 进入 graph 恢复（Command(resume=values)）
-        envelope_buffer: list[AgentStreamEnvelope] = [resolve_env]
+        envelope_buffer: list[AgentStreamEnvelope] = [resolve_env, start_env]
         runner = self._runner_factory(self._workflow_graphs[workflow_type])
         try:
             async for env in runner.astream(
@@ -412,26 +427,37 @@ class AgentRuntimeService:
 
     async def _update_old_interaction_block_status(
         self, *, session_id: int, request_id: str, values: dict[str, Any],
-    ) -> None:
-        """把指定 request_id 对应的旧 interaction block status 改为 submitted。"""
+    ) -> bool:
+        """把指定 request_id 对应的旧 interaction block status 改为 submitted。
+
+        @return True 表示原为 pending、本次成功转为 submitted；
+                False 表示已经是 submitted（重复提交，调用方应幂等短路）。
+        """
         try:
             messages = await self._repo.list_messages(session_id)
             for msg in reversed(messages):
                 content = msg.content or {}
                 blocks = content.get("blocks") or []
                 dirty = False
+                already_submitted = False
                 for b in blocks:
                     if (
                         b.get("type") == "interaction"
                         and b.get("request_id") == request_id
-                        and b.get("status") == "pending"
                     ):
-                        b["status"] = "submitted"
-                        b["values"] = values
-                        dirty = True
+                        if b.get("status") == "pending":
+                            b["status"] = "submitted"
+                            b["values"] = values
+                            dirty = True
+                        else:
+                            # 已是 submitted/其他终态 → 重复提交，幂等标记
+                            already_submitted = True
                 if dirty:
                     await self._repo.update_message_content(msg.id, content)
                     await self._repo.commit()
-                    return
+                    return True
+                if already_submitted:
+                    return False
         except Exception:
             logger.exception("更新旧 interaction block status 失败")
+        return True

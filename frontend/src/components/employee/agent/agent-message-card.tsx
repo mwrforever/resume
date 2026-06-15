@@ -12,10 +12,12 @@ import { StepStrip } from './step-strip';
 export interface AgentMessageCardProps {
   message: AgentMessage;
   runState: AgentRunState | null;
+  /** interaction 提交进行中：禁用提交按钮防重复点击 */
+  submitting?: boolean;
   onSubmitInteraction: (requestId: string, values: Record<string, unknown>) => void;
 }
 
-export function AgentMessageCard({ message, runState, onSubmitInteraction }: AgentMessageCardProps) {
+export function AgentMessageCard({ message, runState, submitting, onSubmitInteraction }: AgentMessageCardProps) {
   const blocks = message.content.blocks ?? [];
 
   // 无 block 的 agent 消息不渲染卡片
@@ -40,6 +42,7 @@ export function AgentMessageCard({ message, runState, onSubmitInteraction }: Age
           <div key={block.index} className="px-4 py-3">
             <BlockRenderer
               block={block}
+              submitting={submitting}
               onSubmitInteraction={
                 block.type === 'interaction' ? onSubmitInteraction : undefined
               }

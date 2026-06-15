@@ -22,6 +22,7 @@ from app.deps import get_cache, get_current_user, get_db
 from app.repositories.agent_repository import AgentRepository
 from app.repositories.dept_repository import DeptRepository
 from app.repositories.employee_repository import EmployeeRepository
+from app.repositories.evaluation_repository import EvalRepository
 from app.repositories.job_repository import JobRepository
 from app.repositories.llm_config_repository import LlmConfigRepository
 from app.repositories.resume_repository import ResumeRepository
@@ -101,11 +102,9 @@ def _get_runtime_service(
     model_router = get_default_model_router()
     resume_loader = ResumeLoader(cache=cache, resume_repo=ResumeRepository(db))
     interview_svc = InterviewQuestionService(model_router=model_router, resume_loader=resume_loader)
-    eval_subgraph = getattr(request.app.state, "evaluation_subgraph", None)
     evaluation_svc = ResumeEvaluationService(
         model_router=model_router, resume_loader=resume_loader,
-        job_repo=JobRepository(db), cache=cache,
-        evaluation_subgraph=eval_subgraph,
+        job_repo=JobRepository(db), eval_repo=EvalRepository(db), cache=cache,
     )
     return AgentRuntimeService(
         repo=repo, cache=cache,

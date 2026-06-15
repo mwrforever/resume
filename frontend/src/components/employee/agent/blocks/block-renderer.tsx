@@ -14,10 +14,12 @@ import { EvaluationReportCard } from './evaluation-report-card';
 
 export interface BlockRendererProps {
   block: AgentBlock;
+  /** interaction 提交进行中：禁用提交按钮防重复点击 */
+  submitting?: boolean;
   onSubmitInteraction?: (requestId: string, values: Record<string, unknown>) => void;
 }
 
-export function BlockRenderer({ block, onSubmitInteraction }: BlockRendererProps) {
+export function BlockRenderer({ block, submitting, onSubmitInteraction }: BlockRendererProps) {
   switch (block.type) {
     case 'text':
       return <TextBlock block={block} />;
@@ -26,7 +28,13 @@ export function BlockRenderer({ block, onSubmitInteraction }: BlockRendererProps
     case 'tool_use':
       return <ToolUseBlock block={block} />;
     case 'interaction':
-      return <InteractionBlock block={block} onSubmit={onSubmitInteraction} />;
+      return (
+        <InteractionBlock
+          block={block}
+          submitting={submitting}
+          onSubmit={onSubmitInteraction}
+        />
+      );
     case 'interview_questions':
       return <InterviewQuestionsCard block={block} />;
     case 'evaluation_report':
