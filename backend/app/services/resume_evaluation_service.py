@@ -187,6 +187,12 @@ class ResumeEvaluationService:
             logger.exception("LLM 流式失败")
         finally:
             if thinking_idx is not None:
+                # 兜底：开启思考但模型未返回任何 reasoning_content（BUG-3B）
+                if not "".join(thinking_buf).strip():
+                    writer(ctx.emitter.emit_block_delta(
+                        index=thinking_idx,
+                        delta={"text_delta": "（当前模型未返回推理过程）"},
+                    ))
                 writer(ctx.emitter.emit_block_stop(index=thinking_idx))
             writer(ctx.emitter.emit_block_stop(index=text_idx))
         return "".join(text_buf), "".join(thinking_buf)

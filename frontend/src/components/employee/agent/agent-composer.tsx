@@ -218,27 +218,21 @@ export function AgentComposer({
 
           <span className="hidden sm:block text-[11px] text-[#94A3B8]">Ctrl+Enter 发送</span>
 
-          <div className="flex items-center gap-2">
-            {sending && (
-              <button type="button" onClick={onAbort}
-                      className="h-9 px-4 rounded-lg border border-[#E2E8F0] text-xs text-[#64748B]
-                                 hover:bg-[#F1F5F9] transition-colors inline-flex items-center gap-1.5">
-                <Square size={12} />
-                <span>停止</span>
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!content.trim() || sending}
-              className="h-9 px-5 rounded-lg bg-[#0369A1] text-white text-xs font-medium
-                         hover:bg-[#0EA5E9] disabled:opacity-40 disabled:cursor-not-allowed
-                         transition-all active:scale-[0.97] inline-flex items-center gap-1.5"
-            >
-              <Send size={13} />
-              <span>发送</span>
-            </button>
-          </div>
+          {/* 主操作按钮 morph：运行中变红色"停止"，否则蓝色"发送" */}
+          <button
+            type="button"
+            onClick={sending ? onAbort : submit}
+            disabled={!sending && !content.trim()}
+            className={`h-9 px-5 rounded-lg text-xs font-medium transition-all active:scale-[0.97]
+                        inline-flex items-center gap-1.5 ${
+              sending
+                ? 'border border-[#DC2626] text-[#DC2626] hover:bg-[#FEE2E2] bg-white'
+                : 'bg-[#0369A1] text-white hover:bg-[#0EA5E9] disabled:opacity-40 disabled:cursor-not-allowed'
+            }`}
+          >
+            {sending ? <Square size={13} className="fill-current" /> : <Send size={13} />}
+            <span>{sending ? '停止' : '发送'}</span>
+          </button>
         </div>
       </div>
     </div>

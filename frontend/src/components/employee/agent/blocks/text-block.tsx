@@ -44,9 +44,10 @@ function renderInline(text: string) {
       parts.push(text.slice(lastIdx, match.index));
     }
     if (match[2]) {
-      parts.push(<strong key={key++}>{match[2]}</strong>);
+      // 品牌蓝强调粗体
+      parts.push(<strong key={key++} className="font-semibold text-[#0369A1]">{match[2]}</strong>);
     } else if (match[3]) {
-      parts.push(<code key={key++} className="bg-surfaceMuted text-foreground px-1 rounded font-mono text-xs">{match[3]}</code>);
+      parts.push(<code key={key++} className="bg-[#F1F5F9] text-[#0F172A] px-1 rounded font-mono text-xs">{match[3]}</code>);
     }
     lastIdx = match.index + match[0].length;
   }
@@ -68,12 +69,12 @@ export function TextBlock({ block }: TextBlockProps) {
 
   return (
     <div
-      className="text-foreground text-base leading-normal whitespace-pre-wrap"
+      className="text-[#020617] text-base leading-relaxed whitespace-pre-wrap"
       aria-live="polite"
     >
       {content}
       {isStreaming && (
-        <span className="inline-block w-[2px] h-[14px] bg-primary ml-0.5 align-middle animate-pulse" />
+        <span className="inline-block w-[2px] h-[16px] bg-[#0369A1] ml-0.5 align-middle animate-pulse rounded-sm" />
       )}
     </div>
   );

@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { ChevronDown, Check, X, Loader2 } from 'lucide-react';
 import type { AgentStep } from '@/types/agent';
+import { WaveText } from './wave-text';
 
 export interface StepStripProps {
   steps: AgentStep[];
@@ -18,7 +19,10 @@ export interface StepStripProps {
 export function StepStrip({ steps, running }: StepStripProps) {
   const [expanded, setExpanded] = useState(false);
   const successCount = steps.filter(s => s.status === 'success').length;
-  const runningStep = steps.find(s => s.status === 'running');
+  // 当前活跃步骤：最后一个 step（runner emit 时 status=success，
+  // 但 detail 用 running_detail 表达"该步骤在工作"）。前端把最后一个
+  // step 视为当前进度做波浪动画。
+  const activeStep = steps.length > 0 ? steps[steps.length - 1] : null;
   if (steps.length === 0) return null;
 
   return (
@@ -36,9 +40,19 @@ export function StepStrip({ steps, running }: StepStripProps) {
           <Check size={14} className="text-[#16A34A]" />
         )}
         <span>
-          {running
-            ? `运行中 · ${successCount} / ${steps.length} 步${runningStep ? ` · ${runningStep.title}` : ''}`
-            : `已完成 ${successCount} / ${steps.length} 步`}
+          {running ? (
+            <>
+              运行中 · {successCount} / {steps.length} 步
+              {activeStep && (
+                <span className="text-[#64748B]"> · </span>
+              )}
+              {activeStep && (
+                <WaveText text={activeStep.title} />
+              )}
+            </>
+          ) : (
+            `已完成 ${successCount} / ${steps.length} 步`
+          )}
         </span>
         <ChevronDown size={14} className={`ml-auto transition-transform duration-150 ${expanded ? 'rotate-180' : ''}`} />
       </button>
@@ -48,15 +62,19 @@ export function StepStrip({ steps, running }: StepStripProps) {
         expanded ? 'max-h-60 opacity-100 mt-2' : 'max-h-0 opacity-0'
       }`}>
         <ul className="flex flex-wrap gap-x-4 gap-y-1.5">
-          {steps.map(s => (
-            <li key={s.step_id} className="flex items-center gap-1.5">
-              <StepIcon status={s.status} />
-              <span className={s.status === 'pending' ? 'text-[#94A3B8]' : 'text-[#334155]'}>
-                {s.title}
-              </span>
-              {s.detail && <span className="text-[#94A3B8] ml-0.5">{s.detail}</span>}
-            </li>
-          ))}
+          {steps.map((s, i) => {
+            // 最新一个 step（且整体 running）用 WaveText 高亮，其余静态
+            const isActive = running && i === steps.length - 1;
+            return (
+              <li key={s.step_id} className="flex items-center gap-1.5">
+                <StepIcon status={s.status} />
+                <span className={s.status === 'pending' ? 'text-[#94A3B8]' : 'text-[#334155]'}>
+                  {isActive ? <WaveText text={s.title} /> : s.title}
+                </span>
+                {s.detail && <span className="text-[#94A3B8] ml-0.5">{s.detail}</span>}
+              </li>
+            );
+          })}
         </ul>
       </div>
     </div>

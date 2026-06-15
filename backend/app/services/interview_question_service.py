@@ -142,30 +142,58 @@ class InterviewQuestionService:
         }
 
     async def fanout_generate_questions(self, state, ctx: WorkflowRuntimeContext) -> dict:
-        """并发为每个维度生成题目；单分支失败不阻塞其他。"""
+        """并发为每个维度生成题目；单分支失败不阻塞其他。
+
+        为每个维度预分配一个 tool_use 进度 block，让前端在并行生成期间
+        能看到每个维度的运行状态（BUG-2：fanout 期间无反馈）。
+        """
+        writer = get_stream_writer()
         plan: dict = state.get("question_plan") or {}
         items = plan.get("items") or []
+        if not items:
+            return {"generated_questions": []}
+        # 预分配每个维度对应的 tool_use block index，在并发任务里复用
+        dim_indices = {i: ctx.emitter.next_block_index() for i in range(len(items))}
+        for i, item in enumerate(items):
+            dim_name = str(item.get("dimension") or f"维度{i + 1}")
+            writer(ctx.emitter.emit_block_start(index=dim_indices[i], block={
+                "type": "tool_use", "tool_name": "generate_questions",
+                "display_name": f"生成【{dim_name}】题目",
+                "input": {"dimension": dim_name, "count": item.get("question_count")},
+                "status": "streaming",
+            }))
         # 一次 fanout 内的所有 LLM 调用共享 ctx；单维度异常被 gather 捕获
-        tasks = [self._generate_for_dimension(item, state["resume_text"], ctx) for item in items]
+        tasks = [
+            self._generate_for_dimension(item, state["resume_text"], ctx)
+            for item in items
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         all_questions: list[dict[str, Any]] = []
-        for r in results:
+        for i, r in enumerate(results):
             if isinstance(r, Exception):
                 logger.exception("生成单维度题目失败：%s", r)
+                writer(ctx.emitter.emit_block_delta(index=dim_indices[i], delta={
+                    "status": "failed", "error": str(r),
+                }))
+                writer(ctx.emitter.emit_block_stop(index=dim_indices[i]))
                 continue
             all_questions.extend(r)
-        return {"_generated_questions": all_questions}
+            writer(ctx.emitter.emit_block_delta(index=dim_indices[i], delta={
+                "status": "success", "output": {"count": len(r)},
+            }))
+            writer(ctx.emitter.emit_block_stop(index=dim_indices[i]))
+        return {"generated_questions": all_questions}
 
     async def reduce_questions(self, state, ctx: WorkflowRuntimeContext) -> dict:
         """归并并保证总数在 8-12 之间。"""
-        questions: list = list(state.get("_generated_questions") or [])
+        questions: list = list(state.get("generated_questions") or [])
         if len(questions) > 12:
             questions = questions[:12]
-        return {"_generated_questions": questions}
+        return {"generated_questions": questions}
 
     async def finalize_question_set(self, state, ctx: WorkflowRuntimeContext) -> dict:
         """最终输出面试题清单，emit interview_questions block。"""
-        questions = state.get("_generated_questions") or []
+        questions = state.get("generated_questions") or []
         dimensions = sorted({q.get("dimension", "") for q in questions if q.get("dimension")})
         question_set = InterviewQuestionSetDTO(
             total_questions=len(questions),
@@ -204,18 +232,27 @@ class InterviewQuestionService:
                 index=thinking_idx, block={"type": "thinking", "text": "", "status": "streaming"},
             ))
         text_buf: list[str] = []
+        thinking_buf: list[str] = []
         try:
             async for chunk in self._router.stream(prompt, ctx.runtime_config):
                 if chunk.kind == "thinking" and thinking_idx is not None:
                     writer(ctx.emitter.emit_block_delta(
                         index=thinking_idx, delta={"text_delta": chunk.text_delta},
                     ))
+                    thinking_buf.append(chunk.text_delta)
                 elif chunk.kind == "text":
                     text_buf.append(chunk.text_delta)
         except Exception:
             logger.exception("LLM 内部 JSON 调用失败")
         finally:
             if thinking_idx is not None:
+                # 兜底：开启思考但模型未返回任何 reasoning_content，emit 一条提示
+                # 让前端 thinking block 不显示为空白（BUG-3B）
+                if not "".join(thinking_buf).strip():
+                    writer(ctx.emitter.emit_block_delta(
+                        index=thinking_idx,
+                        delta={"text_delta": "（当前模型未返回推理过程）"},
+                    ))
                 writer(ctx.emitter.emit_block_stop(index=thinking_idx))
         return "".join(text_buf)
 

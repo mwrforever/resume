@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { employeeAgentApi } from '@/api/employee/agent';
 import { INITIAL_RUN_STATE, agentRunReducer } from '@/utils/agent-run-reducer';
+import { isDefaultTitle, makeTitleFromContent } from '@/utils/title';
 import type {
   AgentEnvelope, AgentMessage, WorkflowType, WorkspaceSession,
 } from '@/types/agent';
@@ -38,9 +39,14 @@ export interface SendInput {
  * Agent Run hook。
  *
  * @param sessionId - 会话 ID
+ * @param onSessionUpdate - 可选回调：会话字段被乐观更新时（如标题）同步给上层
+ *                          侧边栏列表，避免等待 run.finish 后 reload
  * @returns 流式运行控制接口 + 实时状态
  */
-export function useAgentRun(sessionId: number): UseAgentRunResult {
+export function useAgentRun(
+  sessionId: number,
+  onSessionUpdate?: (next: WorkspaceSession) => void,
+): UseAgentRunResult {
   const [session, setSession] = useState<WorkspaceSession | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [runState, dispatch] = useReducer(agentRunReducer, INITIAL_RUN_STATE);
@@ -106,6 +112,17 @@ export function useAgentRun(sessionId: number): UseAgentRunResult {
       create_time: new Date().toISOString(),
     };
     setMessages(prev => [...prev, optimisticUserMessage]);
+    // 标题乐观更新：首条消息时若会话仍是默认空标题，本地算标题立即更新
+    // 让 Composer/Topbar/侧边栏同步显示，无需等待 run.finish 后 reload
+    setSession(prev => {
+      if (!prev) return prev;
+      if (!isDefaultTitle(prev.title)) return prev;
+      const optimisticTitle = makeTitleFromContent(input.content);
+      if (!optimisticTitle) return prev;
+      const next = { ...prev, title: optimisticTitle };
+      onSessionUpdate?.(next);
+      return next;
+    });
     try {
       const iter = employeeAgentApi.streamMessage(
         sessionId,
@@ -122,7 +139,7 @@ export function useAgentRun(sessionId: number): UseAgentRunResult {
     } finally {
       setSending(false);
     }
-  }, [sessionId, runEnvelopes]);
+  }, [sessionId, runEnvelopes, onSessionUpdate]);
 
   /** 提交 interaction 卡片 */
   const submit = useCallback(async (requestId: string, values: Record<string, unknown>) => {

@@ -23,6 +23,9 @@ class InterviewQuestionState(TypedDict, total=False):
     dimension_feedback: str
     question_plan: dict[str, Any]
     plan_approved: bool
+    # fanout 产出的原始题目列表，供 reduce / finalize 读取
+    # ⚠️ 必须在 schema 内声明，否则 LangGraph（TypedDict total=False）会静默丢弃
+    generated_questions: list[dict[str, Any]]
     question_set: dict[str, Any] | None
 
 

@@ -20,6 +20,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Interrupt
 
 from app.llm.graphs.workflows.context import WorkflowRuntimeContext
+from app.llm.graphs.workflows.step_labels import get_step_label
 from app.schemas.agent.stream import AgentStreamEnvelope
 
 logger = logging.getLogger(__name__)
@@ -63,10 +64,14 @@ class AgentWorkflowRunner:
                     # 一次 interrupt 可能产出多条事件：block.start(interaction) + interaction.request
                     events.extend(self._translate_interrupt(item, ctx))
                 continue
+            # 节点名 → 中文友好提示；status=success 表示该节点已产出，
+            # detail 用 running_detail 让前端把「最后一个 step」作为当前活跃步骤高亮
+            title, running_detail, _success = get_step_label(node_name)
             events.append(ctx.emitter.emit_step(
                 step_id=str(node_name),
-                title=str(node_name),
+                title=title,
                 status="success",
+                detail=running_detail,
             ))
         return events
 

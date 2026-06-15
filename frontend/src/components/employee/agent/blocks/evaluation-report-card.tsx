@@ -1,9 +1,9 @@
 /**
  * EvaluationReportCard：简历评估报告业务卡。
  *
- * - 总分 + 决策标签（推荐/不推荐/待定）
- * - 匹配概览、技能维度、经验时间线、岗位差距
- * - 折叠面板式布局
+ * - 顶部：SVG 分数环（颜色随分数变化）+ 决策标签
+ * - 技能维度：横向条形可视化
+ * - 经验时间线 / 岗位差距折叠面板
  */
 
 import { useState } from 'react';
@@ -15,69 +15,112 @@ interface EvaluationReportCardProps {
 
 /** 决策颜色映射 */
 const DECISION_STYLES: Record<string, string> = {
-  '推荐': 'bg-success/10 text-success border-success/30',
-  '不推荐': 'bg-destructive/10 text-destructive border-destructive/30',
-  '待定': 'bg-warning/10 text-warning border-warning/30',
+  '推荐': 'bg-[#DCFCE7] text-[#16A34A] border-[#16A34A]/30',
+  '不推荐': 'bg-[#FEE2E2] text-[#DC2626] border-[#DC2626]/30',
+  '待定': 'bg-[#FEF3C7] text-[#D97706] border-[#D97706]/30',
 };
 
-/** 分数颜色 */
-function scoreColor(score: number): string {
-  if (score >= 80) return 'text-success';
-  if (score >= 60) return 'text-warning';
-  return 'text-destructive';
+/** 分数 → 环色 */
+function ringColor(score: number): string {
+  if (score >= 80) return '#16A34A';
+  if (score >= 60) return '#D97706';
+  return '#DC2626';
+}
+
+/** SVG 分数环 */
+function ScoreRing({ score, color }: { score: number; color: string }) {
+  const radius = 28;
+  const circ = 2 * Math.PI * radius;
+  const pct = Math.max(0, Math.min(100, score)) / 100;
+  const offset = circ * (1 - pct);
+  return (
+    <div className="relative w-[72px] h-[72px] shrink-0">
+      <svg className="w-full h-full -rotate-90" viewBox="0 0 72 72">
+        <circle cx="36" cy="36" r={radius} fill="none" stroke="#E2E8F0" strokeWidth="6" />
+        <circle
+          cx="36" cy="36" r={radius} fill="none" stroke={color} strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray={circ} strokeDashoffset={offset}
+          style={{ transition: 'stroke-dashoffset 0.6s ease' }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-xl font-bold text-[#020617] leading-none">{score.toFixed(0)}</span>
+        <span className="text-[10px] text-[#94A3B8]">/100</span>
+      </div>
+    </div>
+  );
+}
+
+/** 维度分数条 */
+function DimensionBar({ name, score }: { name: string; score: number }) {
+  const num = Number(score);
+  const valid = Number.isFinite(num) ? Math.max(0, Math.min(100, num)) : 0;
+  const color = valid >= 80 ? '#16A34A' : valid >= 60 ? '#D97706' : '#DC2626';
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-28 shrink-0 text-xs text-[#64748B] truncate">{name}</span>
+      <div className="flex-1 h-2 rounded-full bg-[#F1F5F9] overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${valid}%`, backgroundColor: color }}
+        />
+      </div>
+      <span className="w-8 text-right text-xs font-mono text-[#334155]">
+        {Number.isFinite(num) ? num.toFixed(0) : '-'}
+      </span>
+    </div>
+  );
 }
 
 export function EvaluationReportCard({ block }: EvaluationReportCardProps) {
   const report: EvaluationReport = block.report ?? ({} as EvaluationReport);
   const { final_score = 0, final_label = '', decision = '', summary = '' } = report;
   const [showDetail, setShowDetail] = useState(false);
-  const decisionStyle = DECISION_STYLES[decision] ?? 'bg-surfaceMuted text-mutedText border-border';
+  const decisionStyle = DECISION_STYLES[decision] ?? 'bg-[#F1F5F9] text-[#64748B] border-[#CBD5E1]';
+  const color = ringColor(final_score);
 
   return (
-    <div className="rounded-lg border border-border bg-surface shadow-sm">
-      {/* 头部：总分 + 决策 */}
-      <div className="px-4 py-4 border-b border-border">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-md font-semibold text-foreground">简历评估报告</h3>
-            {final_label && <p className="text-sm text-mutedText mt-0.5">{final_label}</p>}
-          </div>
-          <div className="text-right">
-            <span className={`text-3xl font-bold ${scoreColor(final_score)}`}>
-              {final_score.toFixed(0)}
+    <div>
+      {/* 头部：分数环 + 决策 */}
+      <div className="flex items-center gap-4 mb-3">
+        <ScoreRing score={final_score} color={color} />
+        <div className="flex-1 min-w-0">
+          <h3 className="text-base font-semibold text-[#020617]">简历评估报告</h3>
+          {final_label && <p className="text-sm text-[#64748B] mt-0.5">{final_label}</p>}
+          {decision && (
+            <span className={`inline-block mt-1.5 px-2.5 py-0.5 rounded-md border text-xs font-medium ${decisionStyle}`}>
+              {decision}
             </span>
-            <span className="text-sm text-subtleText">/100</span>
-          </div>
+          )}
         </div>
-        {decision && (
-          <span className={`inline-block mt-2 px-2.5 py-0.5 rounded-md border text-xs font-medium ${decisionStyle}`}>
-            {decision}
-          </span>
-        )}
-        {summary && <p className="mt-3 text-sm text-mutedText leading-normal">{summary}</p>}
       </div>
+
+      {summary && <p className="text-sm text-[#64748B] leading-relaxed mb-3">{summary}</p>}
 
       {/* 详细面板折叠 */}
       <button
         type="button"
-        className="w-full px-4 py-2 text-xs text-primary font-medium text-left hover:bg-surfaceMuted transition-colors"
+        className="w-full px-3 py-1.5 text-xs text-[#0369A1] font-medium text-left
+                   hover:bg-[#F1F5F9] rounded-md transition-colors"
         onClick={() => setShowDetail(s => !s)}
       >
         {showDetail ? '收起详情 ↑' : '展开详情 ↓'}
       </button>
 
       {showDetail && (
-        <div className="px-4 pb-4 space-y-4 text-sm">
-          {/* 技能维度 */}
+        <div className="mt-2 space-y-4 text-sm">
+          {/* 技能维度条形 */}
           {report.skill_dimensions?.length > 0 && (
             <section>
-              <h4 className="font-medium text-foreground mb-2">技能维度</h4>
-              <div className="space-y-1">
+              <h4 className="font-medium text-[#020617] mb-2 text-sm">技能维度</h4>
+              <div className="space-y-1.5">
                 {report.skill_dimensions.map((dim: Record<string, unknown>, i: number) => (
-                  <div key={i} className="flex items-center gap-2 text-mutedText">
-                    <span className="flex-1">{String(dim.name ?? `维度${i + 1}`)}</span>
-                    <span className="font-mono">{String(dim.score ?? '-')}</span>
-                  </div>
+                  <DimensionBar
+                    key={i}
+                    name={String(dim.name ?? `维度${i + 1}`)}
+                    score={Number(dim.score ?? 0)}
+                  />
                 ))}
               </div>
             </section>
@@ -86,8 +129,8 @@ export function EvaluationReportCard({ block }: EvaluationReportCardProps) {
           {/* 岗位差距 */}
           {report.job_gaps?.length > 0 && (
             <section>
-              <h4 className="font-medium text-foreground mb-2">岗位差距</h4>
-              <ul className="list-disc ml-4 text-mutedText space-y-0.5">
+              <h4 className="font-medium text-[#020617] mb-2 text-sm">岗位差距</h4>
+              <ul className="list-disc ml-4 text-[#64748B] space-y-0.5 text-xs">
                 {report.job_gaps.map((gap: Record<string, unknown>, i: number) => (
                   <li key={i}>{String(gap.description ?? gap.gap ?? JSON.stringify(gap))}</li>
                 ))}

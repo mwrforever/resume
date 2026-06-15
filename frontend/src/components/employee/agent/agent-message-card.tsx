@@ -22,7 +22,11 @@ export function AgentMessageCard({ message, runState, onSubmitInteraction }: Age
   if (blocks.length === 0) return null;
 
   return (
-    <div className="border border-[#E2E8F0] rounded-xl bg-white shadow-sm">
+    <div className="relative border border-[#E2E8F0] rounded-xl bg-white shadow-md
+                    overflow-hidden animate-[fadeSlideUp_0.3s_ease]">
+      {/* 左侧 3px 品牌蓝 accent 条 */}
+      <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#0369A1]" />
+
       {/* StepStrip（仅当前 run 中显示） */}
       {runState && runState.steps.length > 0 && (
         <div className="border-b border-[#E2E8F0]">
@@ -46,7 +50,7 @@ export function AgentMessageCard({ message, runState, onSubmitInteraction }: Age
 
       {/* 元信息 Footer */}
       {(message.model_name || message.token_count || message.create_time) && (
-        <div className="flex items-center justify-between px-4 py-2 bg-[#F8FAFC] rounded-b-xl border-t border-[#E2E8F0]">
+        <div className="flex items-center justify-between px-4 py-2 bg-[#F8FAFC] border-t border-[#E2E8F0]">
           <div className="flex items-center gap-3 text-xs text-[#64748B]">
             {message.model_name && <span>{message.model_name}</span>}
             {message.token_count != null && <span>{message.token_count} token</span>}
