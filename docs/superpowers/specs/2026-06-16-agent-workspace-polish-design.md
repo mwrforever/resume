@@ -18,7 +18,7 @@
 
 | # | 需求 | 决策 | 依据 |
 |---|------|------|------|
-| 1 | 关联简历展示名字 + 可取消 | **仅优化消息级 chip**（不发新增后端接口） | 调查发现 chip 已持久显示且 X 已能取消；仅需修复"发送后未重置"的脏状态。`context_refs` 不持久化，故无法回看历史消息的关联。 |
+| 1 | 关联简历展示名字 + 可取消 | **纯前端：`react-file-icon` 按扩展名展示图标 + 发送后清除，无预览、无后端改动** | 需求方明确：不需要预览（故无需落库 `context_refs`）、不改关联作用域；仅要文件图标展示 + 发送后输入框清除。 |
 | 2 | 侧栏收起→单图标 + 悬浮列表 + 时间降序 | **方案 A：Popover 白卡片** + 显式按 `last_message_time` 降序排序 | 现状是收起态一排 20 个图标，且 `groupSessions()` 只分组不组内排序。 |
 | 3 | 动画字体看不见 | 加纯色 fallback + 修正 Tailwind 任意值动画类 purge 风险 | `wave-text.tsx` 用 `bg-clip-text text-transparent` + `animate-[shimmer_...]`，动画失效时文字全透明。 |
 | 4 | 评估报告技能维度写成"维度1/维度2" | Agent 报告链路用真实维度名兜底 + prompt 约束 | `evaluation_graph.py:296` 已携带 `dimension_name`，但最终报告是单独 LLM 调用可能生成占位名；需后端用评估结果的维度名兜底覆盖。 |
@@ -109,16 +109,21 @@ for sd in report.get("skill_dimensions") or []:
 4. 复用现有 `useState(false)` + 折叠按钮模式（参照 `evaluation-report-card.tsx:79,102-109`）。
 5. 无需改后端（原始 `data` 已在 `agent_message.content.blocks` 保留）。
 
-### 3.6 [#1] 关联简历 chip 优化（消息级，无后端改动）
+### 3.6 [#1] 关联简历展示（文件图标 + 发送后清除，纯前端）
 
-**调查结论（重要）：** 当前 chip 已持久显示文件名、X 按钮已能取消。真正的 bug 是 `agent-composer.tsx:73-81` 的 `submit()` 发送后**未重置 `upload`**，导致同一份简历被错误地附带到下一条消息。且 `context_refs` 不持久化（见 `agent_runtime_service.py:387-394`），无法回看历史消息的关联——本项不补这个（需求方选"仅消息级"）。
+**需求方最终决策（已确认）：**
+1. 文件图标用 `react-file-icon` 按文件名扩展名匹配展示（替代现状 chip 里的纯文字 + `Check` 图标）。
+2. **不需要预览**——点击图标无动作。因此 **`context_refs` 无需落库**，无需回看历史消息的关联。
+3. **关联作用域不改**：不把 Redis 会话引用改成 task_id 作用域（预览/落库取消后，作用域问题随之消失）。
+4. **发送完成后，消息输入框的文件名展示自动消除**（修复 `submit()` 未重置 `upload` 的脏携带 bug）。
 
-**改动（`agent-composer.tsx`）：**
-1. `submit()` 发送成功后 `setUpload({ kind: 'idle' })`，避免脏携带——这是本项的核心修复。
-2. 保持 chip 在 composer 内的显眼展示（已是现状，需求方要的"像上传后那样展示"即指此 chip），X 按钮语义保持"取消本条关联"。
-3. 不改后端、不加接口、不动模型。
+> 说明：本项原计划含"预览 + context_refs 落库 + task_id 作用域"三块后端改动，需求方评估后认为预览价值有限、且已有 `ResumePreviewDialog` 在简历库等页面可用，Agent 工作台仅需图标即可，故全部砍掉，回归纯前端。
 
-> 若后续需求方想"会话顶部固定 badge + 一键解绑 Redis 会话引用"，那是另一项（需新增 `GET /sessions/{id}/resume` 读 Redis ref + `DELETE /sessions/{id}/resumes` 清 key + 前端顶部 badge），不在本设计范围。
+**改动（`agent-composer.tsx` + 新增依赖）：**
+1. 新增依赖 `react-file-icon`（当前 `package.json` 未安装），封装一个 `ResumeFileIcon`：按 `upload.fileName` 的扩展名（pdf/doc/docx）匹配 `react-file-icon` 的 `FileIcon` + `defaultColors`/`defaultStyles` 渲染对应文件类型图标。
+2. `UploadChip`（约 238-282 行）的 success 分支：用 `<ResumeFileIcon fileName={...} />` 替换现有 `Check` 图标；文件名文本保留，X 按钮语义不变（取消本次关联）。
+3. `submit()`（约 73-81 行）发送成功后 `setUpload({ kind: 'idle' })`，使输入框的文件名/图标在发送后自动清除——这是本项核心修复，同时杜绝脏携带。
+4. **不改后端、不加接口、不动模型、不落库 context_refs。**
 
 ### 3.7 [#8 续 + #展示] 思考内容嵌入对应节点组件（不单独卡片）
 
@@ -167,7 +172,7 @@ for sd in report.get("skill_dimensions") or []:
 4. **#7** 评估报告含：画像摘要、维度命中技能标签+权重+点评、面试建议、综合评语；兜底路径不白屏。
 5. **#2** 侧栏收起态显示单图标，悬浮弹出白卡片会话列表，按 `last_message_time` 降序（组内也是新的在上）。
 6. **#5** 已提交/已驳回/已过期步骤显示状态徽标 + 可展开回看原文（维度候选/计划/岗位），终态无操作按钮。
-7. **#1** 发送消息后 composer 的简历 chip 重置为 idle；chip 在 composer 内正确显示文件名，X 可取消。
+7. **#1** composer 内简历附件用 `react-file-icon` 按扩展名（pdf/doc/docx）展示对应文件图标（非纯文字/通用图标）；X 按钮可取消本次关联；**发送消息后输入框的文件名/图标自动清除**，不会脏携带到下一条消息。无预览、无后端改动。
 8. **#3** 会话中 WaveText 动画文字始终可见（动画失效也有蓝色 fallback）。
 9. **#6** 面试问答结果每题展开后有"参考答案（仅供参考）"块。
 
