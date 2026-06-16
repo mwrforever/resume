@@ -64,6 +64,8 @@ class AgentSessionItem(BaseModel):
 
     id: int
     session_key: str
+    # 当前运行任务的 thread_id（模型上下文隔离）；工作流正常 END 时由后端推进
+    current_task_id: str = ""
     employee_id: int
     title: str | None = None
     status: int

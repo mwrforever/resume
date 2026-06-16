@@ -65,3 +65,11 @@ def test_interaction_request_minimum_fields():
 def test_interaction_resolve_carries_values():
     data = InteractionResolveData(request_id="req_x", values={"job_full_name": "高级算法工程师"})
     assert data.values["job_full_name"] == "高级算法工程师"
+
+
+def test_run_finish_data_optional_next_task_id():
+    """RunFinishData 的 next_task_id 可选，默认 None。"""
+    d1 = RunFinishData(agent_message_id=10)
+    assert d1.next_task_id is None
+    d2 = RunFinishData(agent_message_id=10, next_task_id="abc123")
+    assert d2.next_task_id == "abc123"

@@ -43,8 +43,13 @@ class RunStartData(_AllowExtra):
 
 
 class RunFinishData(_AllowExtra):
-    """`run.finish` 事件 data，agent_message_id 是本 run 落库消息 ID。"""
+    """`run.finish` 事件 data，agent_message_id 是本 run 落库消息 ID。
+
+    next_task_id：工作流正常走到 END 时生成的新 task_id，供下一轮隔离上下文使用。
+    驳回（graph 内循环）/ run.error 时不携带。
+    """
     agent_message_id: int
+    next_task_id: str | None = None
 
 
 class RunErrorData(_AllowExtra):
