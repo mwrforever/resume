@@ -25,29 +25,15 @@ interface InteractionBlockProps {
 export function InteractionBlock({ block, submitting, onSubmit }: InteractionBlockProps) {
   const { request_id, interaction_type, title, prompt, data, status } = block;
 
-  // 已提交 / 已驳回 / 已过期：统一展示终态
-  if (status === 'submitted') {
+  // 终态（已提交/已驳回/已过期）：折叠回看原文 data，不渲染操作按钮
+  if (status === 'submitted' || status === 'rejected' || status === 'expired') {
     return (
-      <div className="rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
-        <p className="text-sm font-medium text-[#64748B]">{title}</p>
-        <p className="text-xs text-[#16A34A] mt-1">✓ 已提交</p>
-      </div>
-    );
-  }
-  if (status === 'rejected') {
-    return (
-      <div className="rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
-        <p className="text-sm font-medium text-[#64748B]">{title}</p>
-        <p className="text-xs text-[#D97706] mt-1">↻ 已驳回，重新生成中…</p>
-      </div>
-    );
-  }
-  if (status === 'expired') {
-    return (
-      <div className="rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
-        <p className="text-sm font-medium text-[#64748B]">{title}</p>
-        <p className="text-xs text-[#94A3B8] mt-1">已过期</p>
-      </div>
+      <ResolvedInteraction
+        title={title}
+        status={status}
+        interactionType={interaction_type}
+        data={data}
+      />
     );
   }
 
@@ -92,6 +78,49 @@ export function InteractionBlock({ block, submitting, onSubmit }: InteractionBlo
         </div>
       );
   }
+}
+
+/** 终态交互卡：状态徽标 + 标题 + 一句摘要 + 可展开只读回看原文 data。无操作按钮。 */
+function ResolvedInteraction({
+  title, status, interactionType, data,
+}: {
+  title: string;
+  status: 'submitted' | 'rejected' | 'expired';
+  interactionType: string;
+  data: Record<string, unknown>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const badge =
+    status === 'submitted' ? { txt: '✓ 已提交', cls: 'bg-[#DCFCE7] text-[#16A34A]' } :
+    status === 'rejected'  ? { txt: '↻ 已驳回', cls: 'bg-[#FEF3C7] text-[#D97706]' } :
+                             { txt: '已过期', cls: 'bg-[#F1F5F9] text-[#94A3B8]' };
+  // 摘要：按交互类型取一行概括
+  const summary =
+    interactionType === 'dimension_selection'
+      ? `已选 ${(data?.selected_dimensions as unknown[] | undefined)?.length ?? 0} 项`
+      : interactionType === 'plan_approval'
+        ? `总题量 ${(data?.plan as { total_questions?: number } | undefined)?.total_questions ?? 0}`
+        : interactionType === 'job_selection'
+          ? `岗位：${String((data?.selected_job_name as string | undefined) ?? '—')}`
+          : '';
+
+  return (
+    <div className="rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+      <button type="button" onClick={() => setExpanded(v => !v)} className="w-full flex items-center justify-between">
+        <span className="flex items-center gap-2">
+          <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${badge.cls}`}>{badge.txt}</span>
+          <span className="text-sm font-semibold text-[#334155]">{title}</span>
+        </span>
+        <span className="text-xs text-[#64748B]">{summary} · {expanded ? '收起 ▴' : '展开回看 ▾'}</span>
+      </button>
+      {expanded && (
+        <div className="mt-2 text-xs text-[#475569]">
+          {/* 只读回看原文 data：先用 JSON 兜底，保证能回看不报错 */}
+          <pre className="whitespace-pre-wrap break-words font-sans">{JSON.stringify(data, null, 2)}</pre>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------- 子组件 ----------
