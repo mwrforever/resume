@@ -35,7 +35,11 @@ const GROUP_LABELS: Record<GroupKey, string> = {
   earlier: '更早',
 };
 
-function groupSessions(sessions: WorkspaceSession[]): Array<{ key: GroupKey; items: WorkspaceSession[] }> {
+/** 按时间段分组（今天/昨天/本周更早/更早），组内按 last_message_time 降序（新的在上）。
+ *
+ * 导出供单测与收起态 Popover 复用。
+ */
+export function groupSessionsByTime(sessions: WorkspaceSession[]): Array<{ key: GroupKey; items: WorkspaceSession[] }> {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterdayStart = new Date(todayStart.getTime() - 86400000);
@@ -56,9 +60,13 @@ function groupSessions(sessions: WorkspaceSession[]): Array<{ key: GroupKey; ite
     else { groups.earlier.push(s); }
   }
 
+  // 组内按 last_message_time 降序（新的在上）；空时间视为最早
+  const desc = (a: WorkspaceSession, b: WorkspaceSession) =>
+    (b.last_message_time ?? '').localeCompare(a.last_message_time ?? '');
+
   return (['today', 'yesterday', 'this-week', 'earlier'] as GroupKey[])
     .filter(k => groups[k].length > 0)
-    .map(key => ({ key, items: groups[key] }));
+    .map(key => ({ key, items: groups[key].sort(desc) }));
 }
 
 export function AgentSidebarDrawer({
@@ -96,7 +104,7 @@ export function AgentSidebarDrawer({
     await onDelete(id);
   };
 
-  const grouped = groupSessions(sessions);
+  const grouped = groupSessionsByTime(sessions);
 
   return (
     <nav

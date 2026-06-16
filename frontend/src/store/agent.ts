@@ -94,6 +94,8 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     });
     const data = resp.data?.data ?? resp.data;
     const items = (data?.items ?? []) as WorkspaceSession[];
+    // 兜底降序：即便后端未排序，前端也保证新的在上（按 last_message_time）
+    items.sort((a, b) => (b.last_message_time ?? '').localeCompare(a.last_message_time ?? ''));
     set((s) => {
       // 首次加载且无 activeId 时，默认激活第一个会话
       const activeId = s.activeId ?? (items.length ? items[0].id : null);
