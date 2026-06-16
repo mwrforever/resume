@@ -54,6 +54,10 @@ interface AgentStoreState {
   createSession: (workflow?: WorkflowType) => Promise<void>;
   /** 局部更新会话字段（如切换模型/思考开关），同步 sessions 与 runs[id].session */
   updateSession: (patch: Partial<WorkspaceSession> & { id?: number }) => void;
+  /** 软删除会话（先中止其进行中的流，再调后端删除并从列表移除） */
+  deleteSession: (id: number) => Promise<void>;
+  /** 重命名会话（调后端 update，同步 sessions 与 runs[id].session） */
+  renameSession: (id: number, title: string) => Promise<void>;
   sendMessage: (sessionId: number, input: SendInput) => Promise<void>;
   submitInteraction: (sessionId: number, requestId: string, values: Record<string, unknown>) => Promise<void>;
   abort: (sessionId: number) => void;
@@ -212,16 +216,50 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
   },
 
   submitInteraction: async (sessionId, requestId, values) => {
+    // 取该会话自身的 workflow_type（最后一条消息 / runState），不串台其它会话
+    const entry = get().runs[sessionId];
+    const lastMsg = entry?.messages?.[entry.messages.length - 1];
+    const workflowType: WorkflowType =
+      lastMsg?.workflow_type
+      ?? entry?.runState.workflow_type
+      ?? 'interview_questions';
     const ac = new AbortController();
     abortControllers.set(sessionId, ac);
     set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true } } }));
     try {
-      const iter = employeeAgentApi.submitInteraction(sessionId, requestId, values, ac.signal);
+      const iter = employeeAgentApi.submitInteraction(sessionId, requestId, values, workflowType, ac.signal);
       await runEnvelopes(sessionId, iter);
     } finally {
       set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: false } } }));
       abortControllers.delete(sessionId);
     }
+  },
+
+  deleteSession: async (id) => {
+    // 先中止该会话进行中的流，避免删除后流仍悬挂
+    abortControllers.get(id)?.abort();
+    abortControllers.delete(id);
+    await employeeAgentApi.deleteSession(id);
+    set((s) => {
+      const sessions = s.sessions.filter((x) => x.id !== id);
+      const activeId = s.activeId === id
+        ? (sessions[0]?.id ?? null)
+        : s.activeId;
+      const runs = { ...s.runs };
+      delete runs[id];
+      return { sessions, activeId, runs };
+    });
+  },
+
+  renameSession: async (id, title) => {
+    await employeeAgentApi.updateSession(id, { title });
+    set((s) => {
+      const sessions = s.sessions.map((x) => (x.id === id ? { ...x, title } : x));
+      const runs = { ...s.runs };
+      const entry = runs[id];
+      if (entry?.session) runs[id] = { ...entry, session: { ...entry.session, title } };
+      return { sessions, runs };
+    });
   },
 
   abort: (sessionId) => {
@@ -263,14 +301,19 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
     // 强制重新拉取落库消息（覆盖乐观消息），再清空流式状态
     const resp = await employeeAgentApi.getSession(sessionId);
     const detail = resp.data?.data ?? resp.data;
+    // run.finish 携带的 next_task_id：后端在 graph 正常 END 时已 update session 表；
+    // 这里以前端 envelope 为准同步（二者一致），保证下一轮用新 task_id 隔离上下文。
+    const nextTaskId = (pendingFinish.data as { next_task_id?: string }).next_task_id ?? null;
     useAgentStore.setState((s) => {
       const entry = getRun(s.runs, sessionId);
+      const session = (detail?.session ?? entry.session) as WorkspaceSession | null;
+      if (session && nextTaskId) session.current_task_id = nextTaskId;
       return {
         runs: {
           ...s.runs,
           [sessionId]: {
             ...entry,
-            session: detail?.session ?? entry.session,
+            session,
             messages: detail?.messages ?? entry.messages,
             loaded: true,
             runState: agentRunReducer(entry.runState, pendingFinish!),

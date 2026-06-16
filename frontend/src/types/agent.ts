@@ -56,7 +56,7 @@ export type AgentEnvelope =
       type: 'run.start'; data: { run_id: string; workflow_type: WorkflowType;
                                   enable_thinking: boolean; user_message_id: number | null } }
   | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
-      type: 'run.finish'; data: { agent_message_id: number } }
+      type: 'run.finish'; data: { agent_message_id: number; next_task_id?: string } }
   | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
       type: 'run.error'; data: { code: string; message: string; retriable: boolean } }
   | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
@@ -100,6 +100,8 @@ export interface AgentMessage {
 export interface WorkspaceSession {
   id: number;
   session_key: string;
+  /** 当前运行任务的 thread_id（模型上下文隔离）；工作流正常 END 时由后端推进 */
+  current_task_id: string;
   employee_id: number;
   title: string | null;
   selected_model_name: string | null;

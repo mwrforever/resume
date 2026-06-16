@@ -87,16 +87,21 @@ export const employeeAgentApi = {
     );
   },
 
-  /** 提交 interaction（返回 AsyncIterableIterator） */
+  /** 提交 interaction（返回 AsyncIterableIterator）
+   *
+   * workflowType 由前端显式携带（对齐后端 AgentInteractionSubmit.workflow_type），
+   * 后端不再从历史消息推断路由（内容不当下文原则）。
+   */
   submitInteraction: (
     sessionId: number,
     requestId: string,
     values: Record<string, unknown>,
+    workflowType: WorkflowType,
     signal?: AbortSignal,
   ): AsyncIterableIterator<AgentEnvelope> => {
     return openAgentStream(
       `/api/v1/employee/agent/sessions/${sessionId}/interactions/${requestId}`,
-      { values },
+      { values, workflow_type: workflowType },
       { signal },
     );
   },
