@@ -46,6 +46,8 @@ interface AgentStoreState {
   sessions: WorkspaceSession[];
   activeId: number | null;
   runs: Record<number, RunEntry>;
+  /** 正在创建新会话（重入守护 + 侧栏按钮 loading/disabled） */
+  creating: boolean;
   // ---------- actions ----------
   refreshSessions: (keyword?: string) => Promise<void>;
   setActive: (id: number) => void;
@@ -87,6 +89,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
   sessions: [],
   activeId: null,
   runs: {},
+  creating: false,
 
   refreshSessions: async (keyword) => {
     const resp = await employeeAgentApi.listSessions({
@@ -132,13 +135,20 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
   },
 
   createSession: async () => {
-    const resp = await employeeAgentApi.createSession({ title: undefined });
-    const s = (resp.data?.data ?? resp.data) as WorkspaceSession;
-    set((state) => ({
-      sessions: [s, ...state.sessions],
-      activeId: s.id,
-    }));
-    void get().ensureLoaded(s.id);
+    // 重入守护：创建中再点击直接返回，避免多次点击创建出多个会话
+    if (get().creating) return;
+    set({ creating: true });
+    try {
+      const resp = await employeeAgentApi.createSession({ title: undefined });
+      const s = (resp.data?.data ?? resp.data) as WorkspaceSession;
+      set((state) => ({
+        sessions: [s, ...state.sessions],
+        activeId: s.id,
+      }));
+      void get().ensureLoaded(s.id);
+    } finally {
+      set({ creating: false });
+    }
   },
 
   updateSession: (patch) => {

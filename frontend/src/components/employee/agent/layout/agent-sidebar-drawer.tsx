@@ -11,7 +11,7 @@ import {
   Pencil, Trash2,
 } from 'lucide-react';
 import type { WorkspaceSession } from '@/types/agent';
-import { useRunningSessionIds } from '@/store/agent';
+import { useRunningSessionIds, useAgentStore } from '@/store/agent';
 import { CollapsedSessionPopover } from './collapsed-session-popover';
 
 export interface AgentSidebarDrawerProps {
@@ -81,6 +81,8 @@ export function AgentSidebarDrawer({
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const runningIds = useRunningSessionIds();
+  // 创建中状态：禁用新建按钮 + 显示 loading，避免多次点击创建多个会话
+  const creating = useAgentStore((s) => s.creating);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, String(expanded));
@@ -229,12 +231,14 @@ export function AgentSidebarDrawer({
           <button
             type="button"
             onClick={() => onCreate()}
+            disabled={creating}
             className="w-full flex items-center justify-center gap-2 h-10 rounded-lg
                        bg-[#0369A1] text-white text-sm font-medium
-                       hover:bg-[#0EA5E9] transition-colors duration-150"
+                       hover:bg-[#0EA5E9] transition-colors duration-150
+                       disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <Plus size={16} />
-            <span>新建会话</span>
+            {creating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+            <span>{creating ? '创建中…' : '新建会话'}</span>
           </button>
         </div>
       </div>
@@ -265,10 +269,11 @@ export function AgentSidebarDrawer({
         </div>
 
         {/* 新建会话 FAB */}
-        <button type="button" onClick={() => onCreate()} title="新建会话"
+        <button type="button" onClick={() => onCreate()} title="新建会话" disabled={creating}
                 className="w-9 h-9 flex items-center justify-center rounded-full
-                           bg-[#16A34A] text-white hover:bg-[#15803D] shadow-sm transition-colors">
-          <Plus size={16} />
+                           bg-[#16A34A] text-white hover:bg-[#15803D] shadow-sm transition-colors
+                           disabled:opacity-60 disabled:cursor-not-allowed">
+          {creating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
         </button>
 
         {/* 设置 */}
