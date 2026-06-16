@@ -8,6 +8,7 @@
 import { useState, useEffect } from 'react';
 import {
   Bot, Plus, Search, Settings, PanelLeftClose, PanelLeftOpen, Loader2,
+  Pencil, Trash2,
 } from 'lucide-react';
 import type { WorkspaceSession } from '@/types/agent';
 import { useRunningSessionIds } from '@/store/agent';
@@ -18,6 +19,10 @@ export interface AgentSidebarDrawerProps {
   onSelect: (id: number) => void;
   onCreate: () => void;
   onSearch: (keyword: string) => void;
+  /** 重命名会话（inline 编辑提交时触发） */
+  onRename: (id: number, title: string) => Promise<void>;
+  /** 删除会话（确认后触发软删除） */
+  onDelete: (id: number) => Promise<void>;
 }
 
 const STORAGE_KEY = 'agent-sidebar-expanded';
@@ -57,18 +62,39 @@ function groupSessions(sessions: WorkspaceSession[]): Array<{ key: GroupKey; ite
 }
 
 export function AgentSidebarDrawer({
-  sessions, activeId, onSelect, onCreate, onSearch,
+  sessions, activeId, onSelect, onCreate, onSearch, onRename, onDelete,
 }: AgentSidebarDrawerProps) {
   const [expanded, setExpanded] = useState<boolean>(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     return stored === null ? true : stored === 'true';
   });
   const [keyword, setKeyword] = useState('');
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
   const runningIds = useRunningSessionIds();
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, String(expanded));
   }, [expanded]);
+
+  // 进入 inline 重命名
+  const startRename = (s: WorkspaceSession) => {
+    setEditingId(s.id);
+    setEditingTitle(s.title ?? '');
+  };
+  // 提交重命名（回车/失焦）
+  const commitRename = async (id: number) => {
+    const t = editingTitle.trim();
+    setEditingId(null);
+    if (!t) return;
+    await onRename(id, t);
+  };
+  // 删除会话（二次确认）
+  const handleDelete = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
+    if (!window.confirm('删除该会话？')) return;
+    await onDelete(id);
+  };
 
   const grouped = groupSessions(sessions);
 
@@ -122,26 +148,62 @@ export function AgentSidebarDrawer({
                 {group.items.map(s => {
                   const isActive = s.id === activeId;
                   const isRunning = runningIds.has(s.id);
+                  const isEditing = editingId === s.id;
                   return (
-                    <li key={s.id}>
-                      <button
-                        type="button"
-                        onClick={() => onSelect(s.id)}
-                        title={isRunning ? '正在运行…' : undefined}
-                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left
-                                    transition-colors duration-150
-                                    ${isActive
-                                      ? 'bg-[#E0F2FE] text-[#020617] font-medium'
-                                      : 'text-[#334155] hover:bg-[#F1F5F9]'
-                                    }`}
-                      >
-                        {isRunning ? (
-                          <Loader2 size={16} className={`flex-shrink-0 animate-spin ${isActive ? 'text-[#0369A1]' : 'text-[#0EA5E9]'}`} />
-                        ) : (
-                          <Bot size={16} className={`flex-shrink-0 ${isActive ? 'text-[#0369A1]' : 'text-[#64748B]'}`} />
-                        )}
-                        <span className="truncate text-sm flex-1">{s.title || '未命名会话'}</span>
-                      </button>
+                    <li key={s.id} className="group relative">
+                      {isEditing ? (
+                        <div className="flex items-center gap-1 px-2 py-1.5">
+                          <input
+                            autoFocus
+                            value={editingTitle}
+                            onChange={e => setEditingTitle(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') void commitRename(s.id);
+                              else if (e.key === 'Escape') setEditingId(null);
+                            }}
+                            onBlur={() => void commitRename(s.id)}
+                            className="flex-1 h-8 px-2 rounded border border-[#0EA5E9] text-sm outline-none bg-white"
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onSelect(s.id)}
+                            title={isRunning ? '正在运行…' : undefined}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left
+                                        transition-colors duration-150
+                                        ${isActive
+                                          ? 'bg-[#E0F2FE] text-[#020617] font-medium'
+                                          : 'text-[#334155] hover:bg-[#F1F5F9]'
+                                        }`}
+                          >
+                            {isRunning ? (
+                              <Loader2 size={16} className={`flex-shrink-0 animate-spin ${isActive ? 'text-[#0369A1]' : 'text-[#0EA5E9]'}`} />
+                            ) : (
+                              <Bot size={16} className={`flex-shrink-0 ${isActive ? 'text-[#0369A1]' : 'text-[#64748B]'}`} />
+                            )}
+                            <span className="truncate text-sm flex-1">{s.title || '未命名会话'}</span>
+                          </button>
+                          {/* hover 操作区：重命名 + 删除 */}
+                          <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5">
+                            <button
+                              type="button" title="重命名"
+                              onClick={(e) => { e.stopPropagation(); startRename(s); }}
+                              className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#0369A1] bg-white/80 backdrop-blur-sm transition-colors"
+                            >
+                              <Pencil size={12} />
+                            </button>
+                            <button
+                              type="button" title="删除"
+                              onClick={(e) => void handleDelete(e, s.id)}
+                              className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#DC2626] bg-white/80 backdrop-blur-sm transition-colors"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </li>
                   );
                 })}

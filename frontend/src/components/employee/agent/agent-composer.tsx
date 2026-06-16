@@ -17,7 +17,6 @@ import { AgentModelPicker } from './agent-model-picker';
 export interface AgentComposerProps {
   session: WorkspaceSession;
   sending: boolean;
-  hasMessages: boolean;
   /** 最近一条消息的 workflow_type；用于回显当前会话已选模式（空会话回退默认值） */
   lastWorkflow: WorkflowType;
   prefilledPrompt: string | null;
@@ -29,7 +28,6 @@ export interface AgentComposerProps {
   }) => void;
   onAbort: () => void;
   onSessionUpdate: (next: WorkspaceSession) => void;
-  onRequestNewSession: (workflow: WorkflowType) => Promise<void>;
 }
 
 const WORKFLOWS: WorkflowType[] = ['interview_questions', 'resume_evaluation'];
@@ -41,18 +39,16 @@ type UploadState =
   | { kind: 'error'; message: string };
 
 export function AgentComposer({
-  session, sending, hasMessages, lastWorkflow, prefilledPrompt, onPrefillConsumed,
-  onSend, onAbort, onSessionUpdate, onRequestNewSession,
+  session, sending, lastWorkflow, prefilledPrompt, onPrefillConsumed,
+  onSend, onAbort, onSessionUpdate,
 }: AgentComposerProps) {
   const [content, setContent] = useState('');
   // 初始模式取最近一条消息的 workflow_type；空会话回退默认 interview_questions。
   // WorkspaceInner 的 key={sessionId} 保证切会话时重挂载，useState 初值按会话回显正确模式，
-  // 不会用上一个会话的模式覆盖当前会话。
+  // 不会用上一个会话的模式覆盖当前会话（多会话模式隔离）。
   const [workflow, setWorkflow] = useState<WorkflowType>(lastWorkflow);
   const [upload, setUpload] = useState<UploadState>({ kind: 'idle' });
   const [focused, setFocused] = useState(false);
-  // 跨模式新建会话中：禁用切换按钮防抖点
-  const [creatingSession, setCreatingSession] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -118,24 +114,10 @@ export function AgentComposer({
     }
   };
 
-  const handleWorkflowClick = async (next: WorkflowType) => {
-    if (next === workflow || creatingSession) return;
-    if (hasMessages) {
-      const ok = window.confirm(
-        '切换到不同模式将创建一个新会话来保持上下文整洁，是否继续？',
-      );
-      if (!ok) return;
-      // 先翻转 UI 让模式标签立即切换，再后台创建会话，避免肉眼可感的卡顿
-      setWorkflow(next);
-      setCreatingSession(true);
-      try {
-        await onRequestNewSession(next);
-      } finally {
-        setCreatingSession(false);
-      }
-    } else {
-      setWorkflow(next);
-    }
+  const handleWorkflowClick = (next: WorkflowType) => {
+    if (next === workflow) return;
+    // workflow 仅随本次发送的消息走，不绑定会话；直接切换模式标签即可，不强制新建会话
+    setWorkflow(next);
   };
 
   const placeholderText = session.enable_thinking
@@ -156,9 +138,8 @@ export function AgentComposer({
               <button
                 key={wf}
                 type="button"
-                disabled={creatingSession}
-                onClick={() => void handleWorkflowClick(wf)}
-                className={`relative px-3 h-7 rounded-full text-xs font-medium transition-all duration-150 disabled:opacity-60 disabled:cursor-not-allowed ${
+                onClick={() => handleWorkflowClick(wf)}
+                className={`relative px-3 h-7 rounded-full text-xs font-medium transition-all duration-150 ${
                   workflow === wf
                     ? 'bg-white text-[#020617] shadow-sm'
                     : 'text-[#64748B] hover:text-[#334155]'

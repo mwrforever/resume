@@ -3,7 +3,6 @@
  *
  * 持有 prefilledPrompt 状态：EmptyState 点击卡片 → setPrefilledPrompt(prompt)
  * Composer 消费后调用 onPrefillConsumed 清除。
- * 跨模式新建会话由 onRequestNewSession 触发上层 layout 创建并切换。
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -11,15 +10,14 @@ import { AgentMessageList } from './agent-message-list';
 import { AgentComposer } from './agent-composer';
 import { useAgentRun } from '@/hooks/use-agent-run';
 import type { SendInput } from '@/hooks/use-agent-run';
-import type { WorkflowType, WorkspaceSession } from '@/types/agent';
+import type { WorkspaceSession } from '@/types/agent';
 
 export interface AgentWorkspaceProps {
   sessionId: number | null;
   onSessionUpdate: (s: WorkspaceSession) => void;
-  onRequestNewSession: (workflow: WorkflowType) => Promise<void>;
 }
 
-export function AgentWorkspace({ sessionId, onSessionUpdate, onRequestNewSession }: AgentWorkspaceProps) {
+export function AgentWorkspace({ sessionId, onSessionUpdate }: AgentWorkspaceProps) {
   if (sessionId === null) {
     return (
       <main className="flex-1 flex items-center justify-center text-sm text-[#94A3B8]">
@@ -32,7 +30,6 @@ export function AgentWorkspace({ sessionId, onSessionUpdate, onRequestNewSession
       key={sessionId}
       sessionId={sessionId}
       onSessionUpdate={onSessionUpdate}
-      onRequestNewSession={onRequestNewSession}
     />
   );
 }
@@ -41,11 +38,9 @@ export function AgentWorkspace({ sessionId, onSessionUpdate, onRequestNewSession
 function WorkspaceInner({
   sessionId,
   onSessionUpdate,
-  onRequestNewSession,
 }: {
   sessionId: number;
   onSessionUpdate: (s: WorkspaceSession) => void;
-  onRequestNewSession: (workflow: WorkflowType) => Promise<void>;
 }) {
   // 标题乐观更新回调：sendMessage 时由 hook 触发，同步到侧边栏 sessions 列表
   // （hook 内已 patchSession 更新本地 session，这里只负责同步上层 sessions）
@@ -99,14 +94,12 @@ function WorkspaceInner({
       <AgentComposer
         session={session}
         sending={sending}
-        hasMessages={messages.length > 0}
         lastWorkflow={messages.length > 0 ? messages[messages.length - 1].workflow_type : 'interview_questions'}
         prefilledPrompt={prefilledPrompt}
         onPrefillConsumed={() => setPrefilledPrompt(null)}
         onSend={(input) => handleSend({ ...input, enable_thinking: session.enable_thinking })}
         onAbort={abort}
         onSessionUpdate={handleSessionUpdate}
-        onRequestNewSession={onRequestNewSession}
       />
     </main>
   );

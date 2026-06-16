@@ -183,16 +183,28 @@ function DimensionSelection({ title, prompt, data, submitting, onSubmit }: Secti
                    outline-none focus:border-[#0EA5E9] resize-none"
       />
 
-      <button
-        type="button"
-        className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
-                   hover:bg-[#0EA5E9] transition-colors
-                   disabled:opacity-50 disabled:cursor-not-allowed"
-        disabled={!canSubmit || submitting}
-        onClick={submit}
-      >
-        {submitting ? '提交中…' : `确认选择 (${selected.size}${feedback.trim() ? ' + 备注' : ''})`}
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
+                     hover:bg-[#0EA5E9] transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={!canSubmit || submitting}
+          onClick={submit}
+        >
+          {submitting ? '提交中…' : `确认选择 (${selected.size}${feedback.trim() ? ' + 备注' : ''})`}
+        </button>
+        <button
+          type="button"
+          className="px-3 py-1.5 rounded-md border border-[#E2E8F0] text-[#64748B] text-sm
+                     hover:bg-[#F8FAFC] transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={submitting}
+          onClick={() => onSubmit({ regenerate: true, feedback: feedback.trim() })}
+        >
+          驳回重新建议
+        </button>
+      </div>
     </div>
   );
 }
@@ -354,6 +366,7 @@ function PlanApproval({ title, prompt, data, submitting, onSubmit }: SectionProp
 function JobSelection({ title, prompt, data, submitting, onSubmit }: SectionProps) {
   const candidates = (data?.candidates ?? []) as Array<{ name?: unknown; description?: unknown }>;
   const [selected, setSelected] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState('');
 
   return (
     <div className="rounded-md border border-[#0EA5E9]/40 bg-white shadow-sm px-4 py-3">
@@ -382,16 +395,38 @@ function JobSelection({ title, prompt, data, submitting, onSubmit }: SectionProp
         })}
       </div>
 
-      <button
-        type="button"
-        className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
-                   hover:bg-[#0EA5E9] transition-colors
-                   disabled:opacity-50 disabled:cursor-not-allowed"
-        disabled={!selected || submitting}
-        onClick={() => selected && onSubmit({ selected_job_name: selected })}
-      >
-        {submitting ? '提交中…' : '确认选择'}
-      </button>
+      {/* 驳回反馈输入框（与维度/计划卡统一） */}
+      <textarea
+        value={feedback}
+        onChange={e => setFeedback(e.target.value)}
+        placeholder="如需驳回重新选岗，可填写反馈意见（可选）"
+        rows={2}
+        className="w-full text-xs border border-[#E2E8F0] rounded px-2 py-1.5 mb-2
+                   outline-none focus:border-[#0EA5E9] resize-none"
+      />
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
+                     hover:bg-[#0EA5E9] transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={!selected || submitting}
+          onClick={() => selected && onSubmit({ selected_job_name: selected })}
+        >
+          {submitting ? '提交中…' : '确认选择'}
+        </button>
+        <button
+          type="button"
+          className="px-3 py-1.5 rounded-md border border-[#E2E8F0] text-[#64748B] text-sm
+                     hover:bg-[#F8FAFC] transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={submitting}
+          onClick={() => onSubmit({ regenerate: true, feedback: feedback.trim() })}
+        >
+          驳回重新选岗
+        </button>
+      </div>
     </div>
   );
 }
