@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { WorkspaceSession } from '@/types/agent';
 import { useRunningSessionIds } from '@/store/agent';
+import { CollapsedSessionPopover } from './collapsed-session-popover';
 
 export interface AgentSidebarDrawerProps {
   sessions: WorkspaceSession[];
@@ -253,27 +254,14 @@ export function AgentSidebarDrawer({
           <PanelLeftOpen size={16} />
         </button>
 
-        {/* 会话图标列表 */}
+        {/* 会话入口：单图标按钮，悬浮弹出会话列表（按时间降序） */}
         <div className="flex-1 overflow-y-auto flex flex-col items-center gap-1 px-2 w-full">
-          {sessions.slice(0, 20).map(s => {
-            const isRunning = runningIds.has(s.id);
-            return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => onSelect(s.id)}
-                title={isRunning ? `正在运行 · ${s.title || '未命名会话'}` : (s.title || '未命名会话')}
-                className={`relative w-9 h-9 flex items-center justify-center rounded-lg transition-colors
-                            ${s.id === activeId
-                              ? 'bg-[#E0F2FE] text-[#0369A1]'
-                              : 'text-[#64748B] hover:bg-[#F1F5F9]'}`}
-              >
-                {isRunning
-                  ? <Loader2 size={16} className="animate-spin text-[#0EA5E9]" />
-                  : <Bot size={16} />}
-              </button>
-            );
-          })}
+          <CollapsedSessionPopover
+            sessions={sessions}
+            activeId={activeId}
+            runningIds={runningIds}
+            onSelect={onSelect}
+          />
         </div>
 
         {/* 新建会话 FAB */}
