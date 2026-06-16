@@ -8,11 +8,12 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Paperclip, Send, Square, Sparkles, X, Check, Loader2, AlertCircle } from 'lucide-react';
+import { Paperclip, Send, Square, Sparkles, X, Loader2, AlertCircle } from 'lucide-react';
 import type { WorkflowType, WorkspaceSession } from '@/types/agent';
 import { WORKFLOW_LABELS } from '@/types/agent';
 import { employeeAgentApi } from '@/api/employee/agent';
 import { AgentModelPicker } from './agent-model-picker';
+import { ResumeFileIcon } from './resume-file-icon';
 
 export interface AgentComposerProps {
   session: WorkspaceSession;
@@ -78,6 +79,8 @@ export function AgentComposer({
       : undefined;
     onSend({ content: trimmed, workflow_type: workflow, context_refs: ctxRefs });
     setContent('');
+    // 发送后清除附件展示，避免脏携带到下一条消息
+    setUpload({ kind: 'idle' });
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -255,7 +258,7 @@ function UploadChip({
     return (
       <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg
                       bg-[#E0F2FE] text-[#0369A1] text-xs font-medium border border-[#0EA5E9]/20">
-        <Check size={12} className="text-[#16A34A]" />
+        <ResumeFileIcon fileName={state.fileName} size={16} />
         <span className="truncate max-w-[260px]">已附上 · {state.fileName}</span>
         <span className="text-[#64748B] font-normal">{(state.size / 1024).toFixed(0)} KB</span>
         <button type="button" onClick={onClear}
