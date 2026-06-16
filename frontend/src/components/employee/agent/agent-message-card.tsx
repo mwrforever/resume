@@ -7,6 +7,7 @@
 
 import type { AgentMessage, AgentRunState } from '@/types/agent';
 import { BlockRenderer } from './blocks/block-renderer';
+import { attachReasoning } from './blocks/group-blocks';
 import { StepStrip } from './step-strip';
 
 export interface AgentMessageCardProps {
@@ -18,7 +19,7 @@ export interface AgentMessageCardProps {
 }
 
 export function AgentMessageCard({ message, runState, submitting, onSubmitInteraction }: AgentMessageCardProps) {
-  const blocks = message.content.blocks ?? [];
+  const blocks = attachReasoning(message.content.blocks ?? []);
 
   // 无 block 的 agent 消息不渲染卡片
   if (blocks.length === 0) return null;

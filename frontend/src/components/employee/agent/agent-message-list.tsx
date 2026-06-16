@@ -10,6 +10,7 @@ import { useEffect } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import type { AgentMessage, AgentRunState } from '@/types/agent';
 import { BlockRenderer } from './blocks/block-renderer';
+import { attachReasoning } from './blocks/group-blocks';
 import { StepStrip } from './step-strip';
 import { useFollowBottom } from '@/hooks/use-follow-bottom';
 import { EmptyState } from './empty-state';
@@ -76,7 +77,7 @@ export function AgentMessageList({ messages, runState, sending, onSubmitInteract
               {/* 左侧 3px 品牌蓝 accent 条 */}
               <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#0369A1]" />
               <div className="divide-y divide-[#E2E8F0]">
-                {runState.current_blocks.map(b => (
+                {attachReasoning(runState.current_blocks).map(b => (
                   <div key={b.index} className="px-4 py-3">
                     <BlockRenderer
                       block={b}

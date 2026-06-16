@@ -8,9 +8,12 @@
 
 import { useState } from 'react';
 import type { AgentBlock, EvaluationReport } from '@/types/agent';
+import { ReasoningSection } from './reasoning-section';
 
 interface EvaluationReportCardProps {
   block: AgentBlock & { type: 'evaluation_report' };
+  /** 吸附到本卡的思考内容（若有），嵌入默认收起的折叠区 */
+  reasoning?: string;
 }
 
 /** 决策颜色映射 */
@@ -73,7 +76,7 @@ function DimensionBar({ name, score }: { name: string; score: number }) {
   );
 }
 
-export function EvaluationReportCard({ block }: EvaluationReportCardProps) {
+export function EvaluationReportCard({ block, reasoning }: EvaluationReportCardProps) {
   const report: EvaluationReport = block.report ?? ({} as EvaluationReport);
   const { final_score = 0, final_label = '', decision = '', summary = '' } = report;
   const [showDetail, setShowDetail] = useState(false);
@@ -139,6 +142,7 @@ export function EvaluationReportCard({ block }: EvaluationReportCardProps) {
           )}
         </div>
       )}
+      {reasoning !== undefined && <ReasoningSection reasoning={reasoning} />}
     </div>
   );
 }

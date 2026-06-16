@@ -9,9 +9,12 @@
 
 import { useMemo, useState } from 'react';
 import type { AgentBlock, QuestionItem } from '@/types/agent';
+import { ReasoningSection } from './reasoning-section';
 
 interface InterviewQuestionsCardProps {
   block: AgentBlock & { type: 'interview_questions' };
+  /** 吸附到本卡的思考内容（若有），嵌入默认收起的折叠区 */
+  reasoning?: string;
 }
 
 /** 难度颜色映射 */
@@ -21,7 +24,7 @@ const DIFFICULTY_COLORS: Record<string, string> = {
   '困难': 'bg-[#FEE2E2] text-[#DC2626]',
 };
 
-export function InterviewQuestionsCard({ block }: InterviewQuestionsCardProps) {
+export function InterviewQuestionsCard({ block, reasoning }: InterviewQuestionsCardProps) {
   const { question_set, status } = block;
   const questions = question_set?.questions ?? [];
   const dimensions = question_set?.dimensions ?? [];
@@ -119,6 +122,7 @@ export function InterviewQuestionsCard({ block }: InterviewQuestionsCardProps) {
           );
         })}
       </div>
+      {reasoning !== undefined && <ReasoningSection reasoning={reasoning} />}
     </div>
   );
 }

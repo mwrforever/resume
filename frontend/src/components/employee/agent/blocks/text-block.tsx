@@ -10,9 +10,12 @@
 import { useMemo } from 'react';
 import type { AgentBlock } from '@/types/agent';
 import { useFrameBatchedText } from '@/hooks/use-frame-batched-text';
+import { ReasoningSection } from './reasoning-section';
 
 interface TextBlockProps {
   block: AgentBlock & { type: 'text' };
+  /** 吸附到本块的思考内容（若有），嵌入默认收起的折叠区 */
+  reasoning?: string;
 }
 
 /** 极简 markdown 渲染：粗体、列表、行内 code */
@@ -55,7 +58,7 @@ function renderInline(text: string) {
   return parts;
 }
 
-export function TextBlock({ block }: TextBlockProps) {
+export function TextBlock({ block, reasoning }: TextBlockProps) {
   const { displayed, flush } = useFrameBatchedText(block.text);
   const isStreaming = block.status === 'streaming';
 
@@ -76,6 +79,7 @@ export function TextBlock({ block }: TextBlockProps) {
       {isStreaming && (
         <span className="inline-block w-[2px] h-[16px] bg-[#0369A1] ml-0.5 align-middle animate-pulse rounded-sm" />
       )}
+      {reasoning !== undefined && <ReasoningSection reasoning={reasoning} />}
     </div>
   );
 }
