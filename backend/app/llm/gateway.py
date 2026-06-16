@@ -30,11 +30,14 @@ logger = logging.getLogger(__name__)
 LLM_GATEWAY_ERRORS = (OpenAIError, TimeoutError, ValueError)
 
 
-# Provider 适配表：enable_thinking=True 时注入到 ChatOpenAI extra_body 的键值
+# Provider 适配表：enable_thinking=True 时注入到 ChatOpenAI extra_body 的键值。
+# - qwen/other（阿里云 DashScope OpenAI 兼容）：enable_thinking + stream_options
+# - deepseek：DeepSeek-R1 默认输出 reasoning_content，不注入 provider 思考 key，
+#   仅靠 stream_options 保证 usage 增量回吐。
 THINKING_PARAM_MAP: dict[str, dict[str, Any]] = {
-    "deepseek": {"thinking": {"type": "enabled"}},
-    "qwen":     {"enable_thinking": True},
-    "other":    {"enable_thinking": True},
+    "deepseek": {"stream_options": {"include_usage": True}},
+    "qwen":     {"enable_thinking": True, "stream_options": {"include_usage": True}},
+    "other":    {"enable_thinking": True, "stream_options": {"include_usage": True}},
 }
 
 
@@ -65,12 +68,17 @@ class OpenAICompatibleGateway:
         return instance
 
     def _chat_kwargs(self, runtime_config: LLMRuntimeConfigDTO) -> dict[str, Any]:
-        """构造 ChatOpenAI kwargs。仅在 enable_thinking 时注入 extra_body。"""
+        """构造 ChatOpenAI kwargs。
+
+        仅在 enable_thinking 时注入 extra_body：provider 思考开关 + stream_options
+        + thinking_budget（仅 qwen/other，DeepSeek 不支持该字段）。
+        """
         extra_body: dict[str, Any] = {}
         if runtime_config.enable_thinking:
             extra_body.update(THINKING_PARAM_MAP.get(runtime_config.provider, THINKING_PARAM_MAP["other"]))
-            if runtime_config.thinking_budget_tokens:
-                extra_body["thinking_budget_tokens"] = runtime_config.thinking_budget_tokens
+            if runtime_config.thinking_budget_tokens and runtime_config.provider in ("qwen", "other"):
+                # Qwen 官方字段名为 thinking_budget（非 thinking_budget_tokens）
+                extra_body["thinking_budget"] = runtime_config.thinking_budget_tokens
 
         kwargs: dict[str, Any] = {
             "model": runtime_config.model_name,
