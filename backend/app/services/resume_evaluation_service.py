@@ -101,16 +101,19 @@ class ResumeEvaluationService:
     # ---------- 节点入口 ----------
 
     async def load_resume(self, state, ctx: WorkflowRuntimeContext) -> dict:
-        """读取简历原文，emit tool_use block。"""
+        """按 file_path 解析简历原文，emit tool_use block。
+
+        解析结果进 state.resume_text，同 task 内由 checkpoint 复用（无 Redis 缓存）。
+        """
         writer = get_stream_writer()
         idx = ctx.emitter.next_block_index()
-        resume_id = int((state.get("resume_ref") or {}).get("resume_id") or 0)
+        file_path = str((state.get("resume_ref") or {}).get("file_path") or "")
         writer(ctx.emitter.emit_block_start(index=idx, block={
             "type": "tool_use", "tool_name": "load_resume",
-            "display_name": "读取简历", "input": {"resume_id": resume_id}, "status": "running",
+            "display_name": "读取简历", "input": {"file_path": file_path}, "status": "running",
         }))
         try:
-            text = await self._loader.load(resume_id=resume_id)
+            text = await self._loader.load_by_path(file_path=file_path) if file_path else ""
         finally:
             writer(ctx.emitter.emit_block_stop(index=idx))
         return {"resume_text": text}
