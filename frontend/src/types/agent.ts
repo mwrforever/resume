@@ -88,7 +88,7 @@ export interface AgentMessage {
   role: 'user' | 'agent';
   workflow_type: WorkflowType;
   run_id: string | null;
-  content: { blocks: AgentBlock[] };
+  content: { blocks: AgentBlock[]; context_refs?: Array<Record<string, unknown>> };
   model_name: string | null;
   token_count: number | null;
   sort_order: number;

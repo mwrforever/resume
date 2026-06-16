@@ -23,9 +23,9 @@ interface InteractionBlockProps {
 }
 
 export function InteractionBlock({ block, submitting, onSubmit }: InteractionBlockProps) {
-  const { request_id, interaction_type, title, prompt, data, status } = block;
+  const { request_id, interaction_type, title, prompt, data, status, values } = block;
 
-  // 终态（已提交/已驳回/已过期）：折叠回看原文 data，不渲染操作按钮
+  // 终态（已提交/已驳回/已过期）：直接展示只读 UI（高亮用户当时的选择），不渲染操作按钮
   if (status === 'submitted' || status === 'rejected' || status === 'expired') {
     return (
       <ResolvedInteraction
@@ -33,6 +33,7 @@ export function InteractionBlock({ block, submitting, onSubmit }: InteractionBlo
         status={status}
         interactionType={interaction_type}
         data={data}
+        values={values ?? {}}
       />
     );
   }
@@ -80,45 +81,158 @@ export function InteractionBlock({ block, submitting, onSubmit }: InteractionBlo
   }
 }
 
-/** 终态交互卡：状态徽标 + 标题 + 一句摘要 + 可展开只读回看原文 data。无操作按钮。 */
+/** 终态交互卡：状态徽标 + 标题 + 只读回看原文（按类型渲染真实 UI，高亮用户当时的选择）。无操作按钮。 */
 function ResolvedInteraction({
-  title, status, interactionType, data,
+  title, status, interactionType, data, values,
 }: {
   title: string;
   status: 'submitted' | 'rejected' | 'expired';
   interactionType: string;
   data: Record<string, unknown>;
+  values: Record<string, unknown>;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const badge =
     status === 'submitted' ? { txt: '✓ 已提交', cls: 'bg-[#DCFCE7] text-[#16A34A]' } :
     status === 'rejected'  ? { txt: '↻ 已驳回', cls: 'bg-[#FEF3C7] text-[#D97706]' } :
                              { txt: '已过期', cls: 'bg-[#F1F5F9] text-[#94A3B8]' };
-  // 摘要：按交互类型取一行概括
-  const summary =
-    interactionType === 'dimension_selection'
-      ? `已选 ${(data?.selected_dimensions as unknown[] | undefined)?.length ?? 0} 项`
-      : interactionType === 'plan_approval'
-        ? `总题量 ${(data?.plan as { total_questions?: number } | undefined)?.total_questions ?? 0}`
-        : interactionType === 'job_selection'
-          ? `岗位：${String((data?.selected_job_name as string | undefined) ?? '—')}`
-          : '';
 
   return (
     <div className="rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
-      <button type="button" onClick={() => setExpanded(v => !v)} className="w-full flex items-center justify-between">
-        <span className="flex items-center gap-2">
-          <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${badge.cls}`}>{badge.txt}</span>
-          <span className="text-sm font-semibold text-[#334155]">{title}</span>
-        </span>
-        <span className="text-xs text-[#64748B]">{summary} · {expanded ? '收起 ▴' : '展开回看 ▾'}</span>
-      </button>
-      {expanded && (
-        <div className="mt-2 text-xs text-[#475569]">
-          {/* 只读回看原文 data：先用 JSON 兜底，保证能回看不报错 */}
-          <pre className="whitespace-pre-wrap break-words font-sans">{JSON.stringify(data, null, 2)}</pre>
-        </div>
+      <div className="flex items-center gap-2 mb-2">
+        <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${badge.cls}`}>{badge.txt}</span>
+        <span className="text-sm font-semibold text-[#334155]">{title}</span>
+      </div>
+      {interactionType === 'dimension_selection' && (
+        <ReadOnlyDimensionSelection data={data} values={values} />
       )}
+      {interactionType === 'plan_approval' && (
+        <ReadOnlyPlanApproval data={data} values={values} />
+      )}
+      {interactionType === 'job_selection' && (
+        <ReadOnlyJobSelection data={data} values={values} />
+      )}
+    </div>
+  );
+}
+
+/** 只读维度选择：列出候选维度，高亮用户当时选中的项。 */
+function ReadOnlyDimensionSelection({
+  data, values,
+}: {
+  data: Record<string, unknown>;
+  values: Record<string, unknown>;
+}) {
+  const candidates = (data?.candidates ?? []) as Array<{ name?: unknown; reason?: unknown }>;
+  // 用户当时选中的维度名集合
+  const selectedNames = new Set(
+    ((values?.selected_dimensions as Array<{ name?: unknown }> | undefined) ?? [])
+      .map(d => String(d.name ?? '')),
+  );
+  if (candidates.length === 0) {
+    return <p className="text-xs text-[#94A3B8]">候选维度为空</p>;
+  }
+  return (
+    <div className="space-y-1.5">
+      {candidates.map((c, i) => {
+        const name = String(c.name ?? `选项 ${i + 1}`);
+        const reason = c.reason ? String(c.reason) : null;
+        const isSelected = selectedNames.has(name);
+        return (
+          <div
+            key={i}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-md border text-sm
+              ${isSelected ? 'border-[#0EA5E9] bg-[#0EA5E9]/5 text-[#0369A1]' : 'border-[#E2E8F0] bg-white text-[#020617]'}`}
+          >
+            <span className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center text-xs
+              ${isSelected ? 'border-[#0EA5E9] bg-[#0EA5E9] text-white' : 'border-[#CBD5E1]'}`}>
+              {isSelected && '✓'}
+            </span>
+            <span className="font-medium">{name}</span>
+            {reason && <span className="text-[#94A3B8] text-xs ml-auto">{reason}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** 只读计划审批：渲染计划表（维度/题量/难度/考察重点），优先展示用户提交的 edited_plan。 */
+function ReadOnlyPlanApproval({
+  data, values,
+}: {
+  data: Record<string, unknown>;
+  values: Record<string, unknown>;
+}) {
+  // 优先用用户提交的 edited_plan（反映用户最终确认的版本），否则回退 AI 原始 plan
+  const plan = ((values?.edited_plan as Record<string, unknown> | undefined) ??
+    (data?.plan as Record<string, unknown> | undefined) ??
+    {}) as {
+      total_questions?: number;
+      items?: Array<{ dimension?: string; question_count?: number; difficulty?: string; focus?: string }>;
+      summary?: string;
+    };
+  const items = plan.items ?? [];
+  if (items.length === 0) {
+    return <p className="text-xs text-[#94A3B8]">出题计划为空</p>;
+  }
+  return (
+    <div className="text-xs">
+      <p className="text-[#64748B] mb-1.5">总题量：<span className="text-[#0369A1] font-semibold">{plan.total_questions ?? items.length}</span></p>
+      <div className="border border-[#E2E8F0] rounded overflow-hidden">
+        <div className="flex items-center gap-2 px-2 py-1.5 bg-[#F8FAFC] text-[#94A3B8] text-[11px]">
+          <span className="w-24 shrink-0">维度</span>
+          <span className="w-14 shrink-0 text-center">题量</span>
+          <span className="w-20 shrink-0">难度</span>
+          <span className="flex-1">考察重点</span>
+        </div>
+        <div className="divide-y divide-[#E2E8F0]">
+          {items.map((it, i) => (
+            <div key={i} className="flex items-center gap-2 px-2 py-1.5 text-[#020617]">
+              <span className="w-24 shrink-0 font-medium truncate" title={String(it.dimension ?? '')}>{String(it.dimension ?? '')}</span>
+              <span className="w-14 shrink-0 text-center">{String(it.question_count ?? '')}</span>
+              <span className="w-20 shrink-0">{String(it.difficulty ?? '')}</span>
+              <span className="flex-1 truncate" title={String(it.focus ?? '')}>{String(it.focus ?? '')}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      {plan.summary && <p className="text-[#64748B] mt-2">{plan.summary}</p>}
+    </div>
+  );
+}
+
+/** 只读岗位选择：列出候选岗位，高亮用户当时选中的项。 */
+function ReadOnlyJobSelection({
+  data, values,
+}: {
+  data: Record<string, unknown>;
+  values: Record<string, unknown>;
+}) {
+  const candidates = (data?.candidates ?? []) as Array<{ name?: unknown; description?: unknown }>;
+  const selectedName = String((values?.selected_job_name as string | undefined) ?? '');
+  if (candidates.length === 0) {
+    return <p className="text-xs text-[#94A3B8]">候选岗位为空</p>;
+  }
+  return (
+    <div className="space-y-1.5">
+      {candidates.map((c, i) => {
+        const name = String(c.name ?? `岗位 ${i + 1}`);
+        const desc = c.description ? String(c.description) : null;
+        const isSelected = name === selectedName;
+        return (
+          <div
+            key={i}
+            className={`flex flex-col px-3 py-1.5 rounded-md border text-sm
+              ${isSelected ? 'border-[#0EA5E9] bg-[#0EA5E9]/5 text-[#0369A1]' : 'border-[#E2E8F0] bg-white text-[#020617]'}`}
+          >
+            <span className="flex items-center gap-2 font-medium">
+              {isSelected && <span className="text-[#0EA5E9]">✓</span>}
+              {name}
+            </span>
+            {desc && <span className="text-[#94A3B8] text-xs mt-0.5">{desc}</span>}
+          </div>
+        );
+      })}
     </div>
   );
 }

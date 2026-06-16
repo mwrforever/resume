@@ -14,6 +14,7 @@ import { attachReasoning } from './blocks/group-blocks';
 import { StepStrip } from './step-strip';
 import { useFollowBottom } from '@/hooks/use-follow-bottom';
 import { EmptyState } from './empty-state';
+import { ResumeFileIcon } from './resume-file-icon';
 import { AgentMessageCard } from './agent-message-card';
 
 export interface AgentMessageListProps {
@@ -157,10 +158,31 @@ function MessageRow({
 }) {
   if (message.role === 'user') {
     const userText = (message.content.blocks?.[0] as { type: 'text'; text: string } | undefined)?.text ?? '';
+    // 本条消息附带的简历引用（后端已持久化到 content.context_refs，仅供展示文件图标）
+    const resumeRefs = (message.content.context_refs ?? []).filter(
+      r => String(r.type ?? '').toLowerCase() === 'resume',
+    ) as Array<{ resume_id?: number; file_name?: string }>;
     return (
       <div className="flex justify-end mb-4">
-        <div className="max-w-[560px] rounded-2xl rounded-br-md bg-[#0369A1] text-white px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed shadow-sm">
-          {userText}
+        <div className="max-w-[560px] flex flex-col items-end gap-1.5">
+          {userText && (
+            <div className="rounded-2xl rounded-br-md bg-[#0369A1] text-white px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed shadow-sm">
+              {userText}
+            </div>
+          )}
+          {resumeRefs.map((r, i) => {
+            const fileName = String(r.file_name ?? '');
+            return (
+              <div
+                key={i}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#E0F2FE] text-[#0369A1] text-xs font-medium border border-[#0EA5E9]/20 px-2.5 py-1.5"
+                title={fileName}
+              >
+                <ResumeFileIcon fileName={fileName} size={16} />
+                <span className="truncate max-w-[220px]">{fileName}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
     );

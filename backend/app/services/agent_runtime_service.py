@@ -389,7 +389,12 @@ class AgentRuntimeService:
             role="user",
             workflow_type=body.workflow_type,
             run_id=run_id,
-            content={"blocks": [{"type": "text", "text": body.content}]},
+            # 用户消息 content 同时承载正文 blocks 与本次附带的简历引用（context_refs）。
+            # context_refs 仅供前端展示文件图标，不反向解析为工作流上下文（遵循"内容不当下文"原则）。
+            content={
+                "blocks": [{"type": "text", "text": body.content}],
+                "context_refs": body.context_refs or [],
+            },
             sort_order=await self._repo.next_message_order(session.id),
         )
         # 仅当当前会话没有标题（None / 空 / 默认占位）时才用首条问题作为标题
