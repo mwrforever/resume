@@ -21,8 +21,12 @@ class InterviewQuestionState(TypedDict, total=False):
     selected_dimensions: list[dict[str, Any]]
     # 维度卡片提交时的"补充意见或追加维度"，作为 question_plan 的 user_intent 透传
     dimension_feedback: str
+    # 维度卡片是否被驳回（条件边路由依据）；True → 回 suggest_dimensions 重新建议
+    dimension_rejected: bool
     question_plan: dict[str, Any]
     plan_approved: bool
+    # 出题计划是否被驳回（条件边路由依据）；True → 回 build_question_plan 重新规划
+    plan_rejected: bool
     # fanout 产出的原始题目列表，供 reduce / finalize 读取
     # ⚠️ 必须在 schema 内声明，否则 LangGraph（TypedDict total=False）会静默丢弃
     generated_questions: list[dict[str, Any]]
@@ -38,6 +42,8 @@ class ResumeEvaluationState(TypedDict, total=False):
     selected_job_name: str
     # 岗位选择卡片驳回时的反馈，作为 load_job_candidates 重新加载的参考
     job_feedback: str
+    # 岗位选择是否被驳回（条件边路由依据）；True → 回 load_job_candidates 重新加载
+    job_rejected: bool
     job_full: dict[str, Any] | None
     validation_attempts: int
     evaluation_result: dict[str, Any] | None

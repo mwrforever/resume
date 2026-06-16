@@ -37,27 +37,28 @@ async def _load_job_candidates(state: ResumeEvaluationState, config) -> dict:
     return await ctx.evaluation_service.load_job_candidates(state, ctx)
 
 
-async def _request_job_selection(state: ResumeEvaluationState, config) -> Command:
+async def _request_job_selection(state: ResumeEvaluationState, config) -> dict:
     """请求用户选择岗位（interrupt）。
 
     支持两种用户回执：
-    - {selected_job_name}            → 确认选岗
-    - {regenerate: true, feedback?}  → 驳回：回 load_job_candidates 重新加载候选岗
+    - {selected_job_name}            → 确认选岗，由条件边进入 validate_job_full_name
+    - {regenerate: true, feedback?}  → 驳回：写入 job_rejected=True，
+      由条件边 _route_after_job_selection 回 load_job_candidates 重新加载候选岗
+
+    不返回 Command(goto)，原因同图一（interrupt resume 场景下 Command(goto) 被静态边抢先）。
     """
     ctx: WorkflowRuntimeContext = config["configurable"]["ctx"]
     payload = ctx.evaluation_service.build_job_interaction(state)
     user_values = interrupt(payload)
     if user_values.get("regenerate"):
-        return Command(
-            goto="load_job_candidates",
-            update={
-                "selected_job_name": "",
-                "validation_attempts": 0,
-                "job_feedback": str(user_values.get("feedback") or ""),
-            },
-        )
+        return {
+            "job_rejected": True,
+            "selected_job_name": "",
+            "validation_attempts": 0,
+            "job_feedback": str(user_values.get("feedback") or ""),
+        }
     # 字段名严格对齐前端 InteractionBlock JobSelection 提交的 { selected_job_name }
-    return Command(update={"selected_job_name": str(user_values.get("selected_job_name") or "")})
+    return {"selected_job_name": str(user_values.get("selected_job_name") or ""), "job_rejected": False}
 
 
 async def _validate_job_full_name(state: ResumeEvaluationState, config) -> Command:
@@ -104,6 +105,17 @@ def _route_after_profile(state: ResumeEvaluationState) -> str:
     return "load_job_candidates"
 
 
+def _route_after_job_selection(state: ResumeEvaluationState) -> str:
+    """岗位选择后的条件路由：驳回 → 回 load_job_candidates；确认 → validate_job_full_name。
+
+    用条件边而非节点内 Command(goto)：interrupt resume 场景下 Command(goto) 会被
+    静态边抢先执行下游节点，导致驳回失效（与图一 dimension_selection 同类问题）。
+    """
+    if state.get("job_rejected"):
+        return "load_job_candidates"
+    return "validate_job_full_name"
+
+
 def build_evaluation_graph(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:
     """构造并编译图二。"""
     graph = StateGraph(ResumeEvaluationState)
@@ -125,7 +137,12 @@ def build_evaluation_graph(checkpointer: BaseCheckpointSaver) -> CompiledStateGr
         {END: END, "load_job_candidates": "load_job_candidates"},
     )
     graph.add_edge("load_job_candidates", "request_job_selection")
-    graph.add_edge("request_job_selection", "validate_job_full_name")
+    # 岗位选择后用条件边路由（驳回/确认），而非静态边 + Command(goto)
+    graph.add_conditional_edges(
+        "request_job_selection",
+        _route_after_job_selection,
+        {"load_job_candidates": "load_job_candidates", "validate_job_full_name": "validate_job_full_name"},
+    )
     graph.add_edge("validate_job_full_name", "run_evaluation_subgraph")
     graph.add_edge("run_evaluation_subgraph", "build_visualization_report")
     graph.add_edge("build_visualization_report", "finalize_evaluation_report")

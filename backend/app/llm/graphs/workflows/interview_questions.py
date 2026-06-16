@@ -9,7 +9,7 @@ from __future__ import annotations
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command, interrupt
+from langgraph.types import interrupt
 
 from app.llm.graphs.workflows.context import WorkflowRuntimeContext
 from app.llm.graphs.workflows.state import InterviewQuestionState
@@ -29,27 +29,30 @@ async def _suggest_dimensions(state: InterviewQuestionState, config) -> dict:
     return await ctx.interview_service.suggest_dimensions(state, ctx)
 
 
-async def _request_dimension_selection(state: InterviewQuestionState, config) -> Command:
+async def _request_dimension_selection(state: InterviewQuestionState, config) -> dict:
     """请求用户选择维度（interrupt）。
 
     支持两种用户回执：
-    - {selected_dimensions, user_feedback?}    → 确认选择，进入 build_question_plan
-    - {regenerate: true, feedback?}            → 驳回：带 feedback 回 suggest_dimensions 重新建议
+    - {selected_dimensions, user_feedback?}    → 确认选择，由条件边进入 build_question_plan
+    - {regenerate: true, feedback?}            → 驳回：写入 dimension_rejected=True，
+      由条件边回到 suggest_dimensions 重新建议
+
+    不返回 Command(goto)：interrupt resume 场景下 Command(goto) 会被静态边抢先执行
+    （先跑下游节点再跳转），改用 add_conditional_edges 显式路由规避此问题。
     """
     ctx: WorkflowRuntimeContext = config["configurable"]["ctx"]
     payload = ctx.interview_service.build_dimension_interaction(state)
     user_values = interrupt(payload)
+    feedback = str(user_values.get("feedback") or user_values.get("user_feedback") or "").strip()
     if user_values.get("regenerate"):
-        # 驳回：把卡片内反馈作为重新建议的依据，回到上游重新生成维度
-        return Command(
-            goto="suggest_dimensions",
-            update={"dimension_feedback": str(user_values.get("feedback") or "")},
-        )
-    update: dict = {"selected_dimensions": user_values.get("selected_dimensions", [])}
-    feedback = str(user_values.get("user_feedback") or "").strip()
-    if feedback:
-        update["dimension_feedback"] = feedback
-    return Command(update=update)
+        # 驳回：记录标志 + feedback，由条件边 _route_after_dimension_selection 决定回 suggest_dimensions
+        return {"dimension_rejected": True, "dimension_feedback": feedback}
+    # 确认：记录所选维度，由条件边进入 build_question_plan
+    return {
+        "selected_dimensions": user_values.get("selected_dimensions", []),
+        "dimension_rejected": False,
+        **({"dimension_feedback": feedback} if feedback else {}),
+    }
 
 
 async def _build_question_plan(state: InterviewQuestionState, config) -> dict:
@@ -58,29 +61,33 @@ async def _build_question_plan(state: InterviewQuestionState, config) -> dict:
     return await ctx.interview_service.build_question_plan(state, ctx)
 
 
-async def _request_plan_approval(state: InterviewQuestionState, config) -> Command:
+async def _request_plan_approval(state: InterviewQuestionState, config) -> dict:
     """请求用户审批出题计划（interrupt）。
 
     支持三种用户回执：
-    - {approved: true}                  → 走 fanout 生成
+    - {approved: true}                  → 确认，由条件边进入 fanout_generate_questions
     - {approved: true, edited_plan}     → 用编辑后的计划替换 state.question_plan，再 fanout
-    - {approved: false, feedback: ...}  → 携反馈循环回 build_question_plan
+    - {approved: false, feedback: ...}  → 驳回：写入 plan_rejected=True，
+      由条件边回到 build_question_plan 重新规划
+
+    不返回 Command(goto)，原因同 _request_dimension_selection（条件边规避 resume 路由竞态）。
     """
     ctx: WorkflowRuntimeContext = config["configurable"]["ctx"]
     payload = ctx.interview_service.build_plan_interaction(state)
     user_values = interrupt(payload)
     if user_values.get("approved"):
-        update: dict = {"plan_approved": True}
+        update: dict = {"plan_approved": True, "plan_rejected": False}
         edited = user_values.get("edited_plan")
         if isinstance(edited, dict) and edited.get("items"):
-            # 用前端编辑后的计划覆盖原 plan，保证 fanout_generate_questions 按编辑值出题
+            # 用前端编辑后的计划覆盖原 plan，保证 fanout 按编辑值出题
             update["question_plan"] = edited
-        return Command(goto="fanout_generate_questions", update=update)
-    # 驳回：循环回 build_question_plan，携带 HR 反馈
-    return Command(
-        goto="build_question_plan",
-        update={"question_plan": {**state["question_plan"], "_feedback": user_values.get("feedback", "")}},
-    )
+        return update
+    # 驳回：携带 HR 反馈，由条件边 _route_after_plan_approval 回 build_question_plan
+    return {
+        "plan_rejected": True,
+        "plan_approved": False,
+        "question_plan": {**state["question_plan"], "_feedback": user_values.get("feedback", "")},
+    }
 
 
 async def _fanout_generate_questions(state: InterviewQuestionState, config) -> dict:
@@ -101,6 +108,26 @@ async def _finalize_question_set(state: InterviewQuestionState, config) -> dict:
     return await ctx.interview_service.finalize_question_set(state, ctx)
 
 
+# ---------- 条件路由 ----------
+
+def _route_after_dimension_selection(state: InterviewQuestionState) -> str:
+    """维度选择后的条件路由：驳回 → 回 suggest_dimensions；确认 → build_question_plan。
+
+    用条件边而非节点内 Command(goto)：interrupt resume 场景下 Command(goto) 会被
+    静态边抢先执行下游节点（实测先跑 build_question_plan 再跳转），导致驳回失效。
+    """
+    if state.get("dimension_rejected"):
+        return "suggest_dimensions"
+    return "build_question_plan"
+
+
+def _route_after_plan_approval(state: InterviewQuestionState) -> str:
+    """计划审批后的条件路由：驳回 → 回 build_question_plan；批准 → fanout_generate_questions。"""
+    if state.get("plan_rejected"):
+        return "build_question_plan"
+    return "fanout_generate_questions"
+
+
 # ---------- 图构造 ----------
 
 def build_interview_graph(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:
@@ -118,9 +145,19 @@ def build_interview_graph(checkpointer: BaseCheckpointSaver) -> CompiledStateGra
     graph.add_edge(START, "load_resume")
     graph.add_edge("load_resume", "suggest_dimensions")
     graph.add_edge("suggest_dimensions", "request_dimension_selection")
-    graph.add_edge("request_dimension_selection", "build_question_plan")
+    # 维度选择后用条件边路由（驳回/确认），而非静态边 + Command(goto)
+    graph.add_conditional_edges(
+        "request_dimension_selection",
+        _route_after_dimension_selection,
+        {"suggest_dimensions": "suggest_dimensions", "build_question_plan": "build_question_plan"},
+    )
     graph.add_edge("build_question_plan", "request_plan_approval")
-    graph.add_edge("request_plan_approval", "fanout_generate_questions")
+    # 计划审批后用条件边路由（驳回/批准），而非静态边 + Command(goto)
+    graph.add_conditional_edges(
+        "request_plan_approval",
+        _route_after_plan_approval,
+        {"build_question_plan": "build_question_plan", "fanout_generate_questions": "fanout_generate_questions"},
+    )
     graph.add_edge("fanout_generate_questions", "reduce_questions")
     graph.add_edge("reduce_questions", "finalize_question_set")
     graph.add_edge("finalize_question_set", END)
