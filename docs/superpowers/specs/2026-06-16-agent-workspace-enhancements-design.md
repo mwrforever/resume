@@ -17,6 +17,15 @@
 
 ## 二、关键决策（已与需求方确认）
 
+### 2.0 数据流原则（贯穿全局）
+
+> **`agent_message.content.blocks` 仅服务前端展示，绝不反向解析为工作流上下文。工作流的记忆一律由 LangGraph checkpoint 按 thread_id 自行管理。**
+
+据此：
+- 删除 `AgentRuntimeService._resolve_resume_ref_from_history`（扫描历史消息 `tool_use` 块重建 resume_ref 的第 3 层 fallback）——它违反本原则。
+- 删除 endpoint 层 `_infer_workflow_type`（扫描历史消息 `workflow_type` 列推断 resume 路由）——同样属于"从历史消息推导"。改为**显式携带 workflow_type**（见 4.1.h、4.2.c）。
+- 工作流 state 字段（resume_text / suggested_dimensions / question_plan / report 等）的生命周期严格绑定 thread_id，不跨 task 泄漏。
+
 | 决策点 | 结论 |
 |--------|------|
 | 「驳回重新生成」语义 | **graph 内部循环**（保持 LangGraph interrupt 机制），驳回时以"卡片内建议输入框的 feedback 内容"为依据回到上游节点重新生成；简历不调整。三类卡片（dimension_selection / plan_approval / job_selection）统一此行为。 |
@@ -25,6 +34,9 @@
 | 字段命名 | session 表字段：`current_task_id`；envelope 字段：`next_task_id`。 |
 | 标题编辑入口 | Topbar 标题 inline 编辑 + 侧栏会话项 hover 编辑图标，两处都可重命名。 |
 | 删除入口形式 | 侧栏会话项 hover 显示删除图标，点击弹 confirm 二次确认后软删除。 |
+| 跨 run 简历连续性 | **context_refs + Redis 会话级引用**。删除"扫描历史消息重建 resume_ref"的第 3 层 fallback。工作流状态一律走 checkpoint；Redis 会话引用过期或想换简历则重新附。 |
+| interaction 的 workflow 路由 | **显式携带 workflow_type**。移除 `_infer_workflow_type` 历史扫描；前端提交 interaction 时带上当前会话的 workflow_type，后端 `AgentInteractionSubmit` 扩展该字段直接使用。 |
+| 多会话模式隔离 | 切换会话时 Composer 显示的模式必须是**该会话自身的模式**（取自该会话最后一条消息的 workflow_type），不得被上一个会话的模式携带/覆盖。依赖现有 `WorkspaceInner key={sessionId}` 重挂载机制保证。 |
 
 ## 三、thread_id 隔离机制（核心架构）
 
@@ -128,12 +140,17 @@ session = await self._repo.create_session(
 1. `stream_message` 与 `resolve_interaction`：
    - `thread_id` 由 `session.session_key` 改为 `session.current_task_id`。
    - **兼容旧数据**：若 `current_task_id` 为空，运行前兜底生成并 update session（避免迁移期间旧会话报错）。
-2. graph 正常结束后（runner.astream 迭代完毕、未抛异常），在收尾处：
+2. `_resolve_resume_ref`：**删除第 3 层 `_resolve_resume_ref_from_history` 及其调用**（违反"内容不当下文"原则）。简历引用只走：
+   - ① 本轮 `context_refs`（用户显式附简历）
+   - ② Redis 会话级引用（上传时写入，30min TTL）
+
+   resume_ref 不命中时返回 None，交给工作流 checkpoint/空简历兜底（图二 `_route_after_profile` 已对空简历短路到 END，图一 load_resume 也能处理空简历）。
+3. graph 正常结束后（runner.astream 迭代完毕、未抛异常），在收尾处：
    ```python
    next_task_id = uuid.uuid4().hex
    await self._repo.update_session(session.id, current_task_id=next_task_id)
    ```
-3. `emit_run_finish` 传入 `next_task_id`。
+4. `emit_run_finish` 传入 `next_task_id`。
 
 > 关键：仅在 try 块内 graph 正常跑完才生成 next_task_id；`except` 走 run.error 分支不生成，task_id 保持不变（保证中断态仍可 resume）。
 
@@ -165,6 +182,19 @@ interaction 节点增加 regenerate 分支：
   ```
 - `_request_plan_approval`：现有 `{approved:false, feedback}` 驳回逻辑保留不变（已符合统一语义）。
 
+#### h) `api/v1/endpoints/agent.py` + `schemas/agent/request.py`（移除历史推断路由）
+- `AgentInteractionSubmit` 扩展字段（移除 `extra="forbid"` 对新字段的阻挡，或显式加字段）：
+  ```python
+  class AgentInteractionSubmit(BaseModel):
+      values: dict[str, Any] = Field(default_factory=dict)
+      workflow_type: AgentWorkflowType = "interview_questions"  # 新增：显式指定 resume 的 graph
+  ```
+- `submit_interaction` endpoint：删除 `_infer_workflow_type(session_svc, session, current_user)` 调用及其辅助函数，直接用 `body.workflow_type`：
+  ```python
+  workflow_type = body.workflow_type
+  ```
+- 同步删除 endpoint 文件内 `_infer_workflow_type` 函数定义。
+
 ### 4.2 前端
 
 #### a) `types/agent.ts`
@@ -172,26 +202,32 @@ interaction 节点增加 regenerate 分支：
 - `RunFinishData` 对应类型增加 `next_task_id?: string`（可选，仅记录用）。
 
 #### b) `api/employee/agent.ts`
+- `submitInteraction`：第三参数追加 `workflow_type`，请求体带上（对齐后端 4.1.h）：
+  ```typescript
+  submitInteraction: (sessionId, requestId, values, workflowType, signal?) =>
+    openAgentStream(`.../interactions/${requestId}`,
+      { values, workflow_type: workflowType }, { signal }),
+  ```
 - `updateSession` / `deleteSession` 已存在，无需新增。
-- 确认 `WorkspaceSession` 透传 current_task_id（前端不主动用其调接口，仅 store 内部/调试用）。
 
 #### c) `store/agent.ts`
-新增 actions：
-```typescript
-deleteSession: async (id: number) => {
-  await employeeAgentApi.deleteSession(id);
-  set((s) => ({
-    sessions: s.sessions.filter(x => x.id !== id),
-    activeId: s.activeId === id ? (s.sessions.find(x => x.id !== id)?.id ?? null) : s.activeId,
-    // 清理 runs[id]
-  }));
-};
-renameSession: async (id: number, title: string) => {
-  await employeeAgentApi.updateSession(id, { title });
-  // 同步 sessions / runs[id].session
-};
-```
-- `runEnvelopes` 处理 run.finish 时，把 `next_task_id` 同步到 `runs[id].session.current_task_id`（与后端 update 一致，保证前端状态正确）。
+- `submitInteraction(sessionId, requestId, values)`：内部**从 `runs[sessionId]` 取该会话自身的 workflow_type**（最后一条消息的 workflow_type 或 runState.workflow_type），透传给 API。保证多会话并发时不会拿错会话的模式。
+- 新增 actions：
+  ```typescript
+  deleteSession: async (id) => {
+    abort(id);  // 先中止该会话进行中的流，避免悬挂
+    await employeeAgentApi.deleteSession(id);
+    set((s) => ({
+      sessions: s.sessions.filter(x => x.id !== id),
+      activeId: s.activeId === id ? (s.sessions.find(x => x.id !== id)?.id ?? null) : s.activeId,
+    }));
+  };
+  renameSession: async (id, title) => {
+    await employeeAgentApi.updateSession(id, { title });
+    set((s) => ({ /* 同步 sessions 与 runs[id].session.title */ }));
+  };
+  ```
+- `runEnvelopes` 处理 run.finish 时，把 `next_task_id` 同步到 `runs[id].session.current_task_id`（与后端 update 一致）。
 
 #### d) `components/.../layout/agent-sidebar-drawer.tsx`
 展开态会话项改造：
@@ -212,9 +248,10 @@ renameSession: async (id: number, title: string) => {
 - `PlanApproval`：保持现有「批准 / 驳回并重生成」不变。
 - 三处驳回按钮统一次要样式（border + 灰字），主操作（确认/批准）保持主色填充。
 
-#### g) `components/.../agent-composer.tsx`
+#### g) `components/.../agent-composer.tsx` + `agent-workspace.tsx`
 - `handleWorkflowClick`：移除 `if (hasMessages) { confirm...; onRequestNewSession }` 分支，统一为 `setWorkflow(next)`。
 - 清理 `creatingSession` state；若 `onRequestNewSession` 不再有其他调用方，一并从 props 链路（Workspace / Layout）移除。
+- **多会话模式隔离（重点验证项）**：Composer 的 `workflow` 是组件内 useState，初值取 `lastWorkflow`（该会话最后一条消息的 workflow_type）。依赖 `WorkspaceInner` 现有的 `key={sessionId}` 机制——切换会话时 Composer 重挂载，useState 从目标会话自身的 `lastWorkflow` 重新初始化，**天然不会携带/覆盖上一个会话的模式**。本次改动不破坏该机制，需在验收时显式回归测试：会话A 切到「简历评估」后，切到空会话B，B 的模式应为默认「面试问答」而非「简历评估」。
 
 #### h) `components/.../layout/agent-standalone-layout.tsx`
 - 搜索防抖：`keyword` 用 300ms 防抖后再调 `refreshSessions`（用 `useRef` + `setTimeout` 或自写 `useDebouncedValue`）。
@@ -235,6 +272,8 @@ renameSession: async (id: number, title: string) => {
 5. 同一会话内切换 workflow 不再弹 confirm、不再新建会话，直接切换模式标签。
 6. 同一会话发两轮消息：第二轮运行时 thread_id 与第一轮不同（可通过日志 `current_task_id` 变化验证），且第一轮的中断态不影响第二轮。
 7. 驳回（graph 内循环）期间 task_id 不变；approve 走完 final 后 task_id 推进。
+8. **多会话模式隔离**：会话A 切到「简历评估」→ 切到空会话B → B 显示默认「面试问答」而非「简历评估」；A、B 各自的模式独立，互不携带/覆盖。
+9. **数据流原则**：确认 `_resolve_resume_ref_from_history` 与 `_infer_workflow_type` 已从代码移除；resume_ref 仅来自 context_refs + Redis 会话引用；提交 interaction 时 workflow_type 由前端显式携带。
 
 ## 七、不在本次范围
 
