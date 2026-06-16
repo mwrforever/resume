@@ -39,7 +39,7 @@ template: |-
   7. match_overview.risks 为潜在风险列表，每条不超过 30 字
   8. skill_dimensions 每条包含 dimension_name、score（0-100）、advantage、disadvantage
   9. job_gaps 列出岗位要求与候选人之间的差距，每条包含 gap 和 suggestion
-  10. 不得输出业务表写入指令，不得编造评估结果中不存在的维度或技能
+  10. skill_dimensions 的 dimension_name 必须与"评估结果"中各维度的 dimension_name 完全一致，禁止使用"维度1""维度2"等占位名；不得输出业务表写入指令，不得编造评估结果中不存在的维度或技能
 
   # 输出格式
   只输出 JSON，不要输出 Markdown、解释或代码块：

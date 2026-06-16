@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -37,6 +38,46 @@ logger = logging.getLogger(__name__)
 
 JOB_CANDIDATES_CACHE_KEY = "agent:job_candidates:{employee_id}"
 JOB_CANDIDATES_TTL = 600
+
+# 占位维度名正则：如"维度1"、"维度 2"（LLM 在 visual_report 步骤可能生成的占位名）
+_PLACEHOLDER_DIM_RE = re.compile(r"^\s*维度\s*\d+\s*$")
+
+
+def _override_dimension_names(report: dict[str, Any], eval_dimension_results: list[dict[str, Any]]) -> None:
+    """用评估结果的真实维度名覆盖报告 skill_dimensions 的占位名。
+
+    最终报告是独立 LLM 调用（visual_report prompt），可能输出"维度1/维度2"占位名。
+    评估子图的 dimension_results 携带真实 dimension_name（来自 DB 模板），是权威来源。
+
+    对齐策略：
+    1. 优先按 dimension_id 精确匹配覆盖；
+    2. 报告项缺 dimension_id 或未命中时，仅当报告名是占位（维度N）才按列表顺序兜底覆盖；
+    3. eval_dimension_results 为空则不覆盖（保留 LLM 原名）。
+
+    Args:
+        report: 可视化报告 dict（含 skill_dimensions），原地修改。
+        eval_dimension_results: 评估结果中的维度结果列表（含 dimension_id/dimension_name）。
+    """
+    if not eval_dimension_results:
+        return
+    by_id = {
+        int(d.get("dimension_id") or 0): d
+        for d in eval_dimension_results
+        if d.get("dimension_id")
+    }
+    # 顺序兜底用：尚未被 dimension_id 匹配的评估维度名，按序分配给占位报告项
+    fallback_names = [str(d.get("dimension_name") or "") for d in eval_dimension_results]
+    fallback_idx = 0
+    for sd in report.get("skill_dimensions") or []:
+        did = sd.get("dimension_id")
+        if did is not None and int(did) in by_id:
+            sd["dimension_name"] = by_id[int(did)].get("dimension_name") or sd.get("dimension_name")
+            continue
+        # 无 id 或未命中：仅当报告名是占位时才用顺序兜底覆盖
+        if _PLACEHOLDER_DIM_RE.match(str(sd.get("dimension_name") or "")):
+            if fallback_idx < len(fallback_names):
+                sd["dimension_name"] = fallback_names[fallback_idx]
+                fallback_idx += 1
 
 
 class ResumeEvaluationService:
@@ -193,6 +234,9 @@ class ResumeEvaluationService:
         text = await self._call_llm_silently(prompt, ctx)
         try:
             report = ResumeEvaluationReportDTO.model_validate_json(text).model_dump(mode="json")
+            # 兜底：用评估结果的真实维度名覆盖 LLM 可能生成的占位名（维度1/维度2）
+            eval_result = state.get("evaluation_result") or {}
+            _override_dimension_names(report, eval_result.get("dimension_results") or [])
         except (ValueError, json.JSONDecodeError):
             # LLM 输出不符合 DTO schema 时兜底：用评估结果原始字段拼装，保证不白屏
             logger.warning("可视化报告 JSON 解析失败，使用兜底拼装")
