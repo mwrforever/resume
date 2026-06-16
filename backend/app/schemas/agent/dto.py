@@ -128,3 +128,7 @@ class ResumeEvaluationReportDTO(BaseModel):
     experience_timeline: list[dict[str, Any]] = Field(default_factory=list)
     skill_dimensions: list[dict[str, Any]] = Field(default_factory=list)
     job_gaps: list[dict[str, Any]] = Field(default_factory=list)
+    # 新增（方案 B + 综合评语）：画像摘要 / 面试建议 / 综合评语
+    profile_summary: dict[str, Any] = Field(default_factory=dict)
+    interview_suggestions: list[dict[str, Any]] = Field(default_factory=list)
+    comprehensive_comment: dict[str, Any] = Field(default_factory=dict)
