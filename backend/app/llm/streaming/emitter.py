@@ -85,9 +85,16 @@ class AgentStreamEmitter:
         ).model_dump(mode="json")
         return self._wrap(type="run.start", data=data)
 
-    def emit_run_finish(self, *, agent_message_id: int) -> AgentStreamEnvelope:
-        """发射 run.finish 事件。"""
-        data = RunFinishData(agent_message_id=agent_message_id).model_dump(mode="json")
+    def emit_run_finish(
+        self, *, agent_message_id: int, next_task_id: str | None = None,
+    ) -> AgentStreamEnvelope:
+        """发射 run.finish 事件。
+
+        @param next_task_id: 工作流正常 END 时生成的新 task_id，回传前端用于下一轮隔离。
+        """
+        data = RunFinishData(
+            agent_message_id=agent_message_id, next_task_id=next_task_id,
+        ).model_dump(mode="json")
         return self._wrap(type="run.finish", data=data)
 
     def emit_run_error(self, *, code: str, message: str, retriable: bool = False) -> AgentStreamEnvelope:

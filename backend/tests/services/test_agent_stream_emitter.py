@@ -76,3 +76,19 @@ def test_block_index_independent_from_seq():
     e.emit_block_start(index=idx0, block={"type": "text", "text": ""})
     e.emit_block_stop(index=idx0)
     assert idx0 == 0  # 第一次 next_block_index 应为 0
+
+
+def test_emit_run_finish_with_next_task_id():
+    """emit_run_finish 可携带 next_task_id。"""
+    e = _new()
+    env = e.emit_run_finish(agent_message_id=5, next_task_id="task-2")
+    assert env.type == "run.finish"
+    assert env.data["agent_message_id"] == 5
+    assert env.data["next_task_id"] == "task-2"
+
+
+def test_emit_run_finish_without_next_task_id():
+    """不传 next_task_id 时为 None。"""
+    e = _new()
+    env = e.emit_run_finish(agent_message_id=5)
+    assert env.data["next_task_id"] is None
