@@ -35,7 +35,7 @@ def _runtime_cfg() -> LLMRuntimeConfigDTO:
 def _make_session() -> MagicMock:
     """构造模拟的 AgentSession ORM 对象。"""
     return MagicMock(
-        id=1, session_key="k1", employee_id=2,
+        id=1, session_key="k1", current_task_id="existing-task-id", employee_id=2,
         selected_model_name=None, enable_thinking=False,
     )
 
@@ -150,3 +150,75 @@ async def test_envelopes_to_blocks_folds_correctly():
     assert len(blocks) == 1
     assert blocks[0]["text"] == "hello world"
     assert blocks[0]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_resolve_thread_id_returns_existing():
+    """已有 current_task_id 时直接返回，不写库。"""
+    svc = AgentRuntimeService.__new__(AgentRuntimeService)  # 跳过 __init__
+    svc._repo = MagicMock()
+    svc._repo.update_session = AsyncMock()
+    session = MagicMock(current_task_id="existing-task-id")
+    tid = await svc._resolve_thread_id(session)
+    assert tid == "existing-task-id"
+    svc._repo.update_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_thread_id_generates_for_empty():
+    """空 current_task_id 时兜底生成并 update。"""
+    svc = AgentRuntimeService.__new__(AgentRuntimeService)
+    svc._repo = MagicMock()
+    svc._repo.update_session = AsyncMock()
+    session = MagicMock(current_task_id="")
+    tid = await svc._resolve_thread_id(session)
+    assert len(tid) == 32  # uuid4().hex
+    svc._repo.update_session.assert_awaited_once()
+    assert session.current_task_id == tid
+
+
+@pytest.mark.asyncio
+async def test_advance_task_id_generates_new():
+    """_advance_task_id 生成新 uuid 并 update session 表。"""
+    svc = AgentRuntimeService.__new__(AgentRuntimeService)
+    svc._repo = MagicMock()
+    svc._repo.update_session = AsyncMock()
+    session = MagicMock(current_task_id="old-task")
+    nxt = await svc._advance_task_id(session)
+    assert len(nxt) == 32
+    assert nxt != "old-task"
+    assert session.current_task_id == nxt
+    svc._repo.update_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_message_advances_task_id_on_normal_end():
+    """graph 正常结束时推进 task_id，run.finish 携带 next_task_id。"""
+    svc = _build_svc()
+    session = _make_session()
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+    finish_env = None
+    async for env in svc.stream_message(session=session, body=body, runtime_config=_runtime_cfg()):
+        if env.type == "run.finish":
+            finish_env = env
+    assert finish_env is not None
+    assert finish_env.data["next_task_id"]
+    assert len(finish_env.data["next_task_id"]) == 32
+
+
+@pytest.mark.asyncio
+async def test_stream_message_no_advance_on_graph_error():
+    """graph 异常时不推进 task_id，run.finish 的 next_task_id 为 None。"""
+    async def _failing_astream(*, thread_id, graph_input, ctx):
+        yield _envelope(ctx.emitter)
+        raise RuntimeError("graph crash")
+
+    svc = _build_svc(runner_astream_fn=_failing_astream)
+    session = _make_session()
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+    finish_env = None
+    async for env in svc.stream_message(session=session, body=body, runtime_config=_runtime_cfg()):
+        if env.type == "run.finish":
+            finish_env = env
+    assert finish_env is not None
+    assert finish_env.data["next_task_id"] is None

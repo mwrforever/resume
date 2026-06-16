@@ -102,14 +102,17 @@ class AgentRuntimeService:
 
         # 运行 graph
         runner = self._runner_factory(self._workflow_graphs[body.workflow_type])
+        thread_id = await self._resolve_thread_id(session)
+        graph_ok = True
         try:
             async for env in runner.astream(
-                thread_id=session.session_key, graph_input=graph_input, ctx=ctx,
+                thread_id=thread_id, graph_input=graph_input, ctx=ctx,
             ):
                 envelope_buffer.append(env)
                 await self._buffer_append(session.id, run_id, env)
                 yield env
         except Exception as exc:
+            graph_ok = False
             logger.exception("Graph 执行异常：session_id=%s run_id=%s", session.id, run_id)
             err_env = emitter.emit_run_error(
                 code="graph_execution_failed", message=str(exc), retriable=False,
@@ -124,7 +127,11 @@ class AgentRuntimeService:
             envelopes=envelope_buffer, runtime_config=runtime_config,
             workflow_type=body.workflow_type,
         )
-        finish_env = emitter.emit_run_finish(agent_message_id=agent_message.id)
+        # 仅 graph 正常 END 才推进 task_id（中断/异常保持不变以保证可 resume）
+        next_task_id = await self._advance_task_id(session) if graph_ok else None
+        finish_env = emitter.emit_run_finish(
+            agent_message_id=agent_message.id, next_task_id=next_task_id,
+        )
         await self._buffer_append(session.id, run_id, finish_env)
         yield finish_env
         # 清理 Redis buffer
@@ -186,9 +193,11 @@ class AgentRuntimeService:
         # 进入 graph 恢复（Command(resume=values)）
         envelope_buffer: list[AgentStreamEnvelope] = [resolve_env, start_env]
         runner = self._runner_factory(self._workflow_graphs[workflow_type])
+        thread_id = await self._resolve_thread_id(session)
+        graph_ok = True
         try:
             async for env in runner.astream(
-                thread_id=session.session_key,
+                thread_id=thread_id,
                 graph_input=Command(resume=body.values),
                 ctx=ctx,
             ):
@@ -196,6 +205,7 @@ class AgentRuntimeService:
                 await self._buffer_append(session.id, run_id, env)
                 yield env
         except Exception as exc:
+            graph_ok = False
             logger.exception("Graph 恢复失败：session_id=%s run_id=%s", session.id, run_id)
             err_env = emitter.emit_run_error(
                 code="graph_execution_failed", message=str(exc), retriable=False,
@@ -210,7 +220,11 @@ class AgentRuntimeService:
             envelopes=envelope_buffer, runtime_config=runtime_config,
             workflow_type=workflow_type,
         )
-        finish_env = emitter.emit_run_finish(agent_message_id=agent_message.id)
+        # 仅 graph 正常 END 才推进 task_id（驳回走 graph 内循环不 END，task_id 不变保证可 resume）
+        next_task_id = await self._advance_task_id(session) if graph_ok else None
+        finish_env = emitter.emit_run_finish(
+            agent_message_id=agent_message.id, next_task_id=next_task_id,
+        )
         await self._buffer_append(session.id, run_id, finish_env)
         yield finish_env
         await self._cache.client.delete(
@@ -218,6 +232,34 @@ class AgentRuntimeService:
         )
 
     # ---------- 内部 ----------
+
+    async def _resolve_thread_id(self, session) -> str:
+        """解析当前 run 的 thread_id = session.current_task_id。
+
+        兼容旧数据：若 current_task_id 为空（迁移前旧会话），兜底生成并 update。
+
+        @return 用于 graph config 的 thread_id
+        """
+        task_id = (session.current_task_id or "").strip()
+        if task_id:
+            return task_id
+        task_id = uuid.uuid4().hex
+        await self._repo.update_session(session.id, current_task_id=task_id)
+        session.current_task_id = task_id
+        logger.info("旧会话兜底生成 current_task_id：session_id=%s", session.id)
+        return task_id
+
+    async def _advance_task_id(self, session) -> str:
+        """工作流正常 END 时推进 task_id：生成新 uuid 覆盖 session 表。
+
+        保证下一轮 run 在全新隔离的 LangGraph thread 上下文中执行。
+
+        @return 新的 task_id（供 run.finish 回传）
+        """
+        next_task_id = uuid.uuid4().hex
+        await self._repo.update_session(session.id, current_task_id=next_task_id)
+        session.current_task_id = next_task_id
+        return next_task_id
 
     async def _resolve_resume_ref(
         self, session_id: int, body: AgentMessageCreate,
