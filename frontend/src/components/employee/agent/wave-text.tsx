@@ -20,8 +20,11 @@ export function WaveText({ text, className = '' }: WaveTextProps) {
   return (
     <span
       aria-label={text}
-      className={`inline-block bg-[linear-gradient(90deg,#0369A1,#0EA5E9,#38BDF8,#0EA5E9,#0369A1)]
-                  bg-[length:200%_100%] bg-clip-text text-transparent
+      // 纯色 fallback #0369A1 优先保证可读；渐变 bg-clip-text 在动画生效时覆盖外观。
+      // 动画/shimmer 失效（Tailwind purge、嵌套 inline-block 未穿透）时文字仍可见。
+      className={`inline-block text-[#0369A1]
+                  bg-[linear-gradient(90deg,#0369A1,#0EA5E9,#38BDF8,#0EA5E9,#0369A1)]
+                  bg-[length:200%_100%] bg-clip-text
                   animate-[shimmer_2.5s_linear_infinite] ${className}`}
     >
       {Array.from(text).map((ch, i) => (
