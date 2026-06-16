@@ -335,29 +335,22 @@ class AgentRuntimeService:
     async def _resolve_resume_ref(
         self, session_id: int, body: AgentMessageCreate,
     ) -> dict[str, Any] | None:
-        """解析简历引用：本轮 context_refs → Redis 会话引用。
+        """解析简历引用：仅从本轮 context_refs 取 file_path。
 
-        遵循"agent_message 内容仅供展示"原则：不从历史消息推导 resume_ref。
-        不命中返回 None，由工作流 checkpoint / 空简历兜底处理
-        （图二 _route_after_profile 对空简历短路 END，图一 load_resume 也能处理空简历）。
-
-        两层 fallback：
-        1. 本次请求 context_refs 显式携带 → 优先使用本次附件
-        2. Redis 会话引用（30 分钟内同会话上传过的最新简历）
+        遵循"agent_message 内容仅供展示"原则：不从历史消息推导，也不再使用 Redis
+        会话引用（懒建会话后无意义）。不命中返回 None，由工作流兜底处理空简历
+        （图二 _route_after_profile 对空简历短路 END，图一 load_resume 也能处理空文本）。
         """
-        # 1) 本次请求显式携带
         for ref in body.context_refs or []:
             if str(ref.get("type") or "").lower() == "resume":
-                if not ref.get("resume_id"):
-                    raise ValidationError("简历附件缺少 resume_id")
+                file_path = str(ref.get("file_path") or "").strip()
+                if not file_path:
+                    raise ValidationError("简历附件缺少 file_path")
                 return {
-                    "resume_id": int(ref["resume_id"]),
-                    "job_id": int(ref["job_id"]) if ref.get("job_id") is not None else None,
+                    "file_path": file_path,
                     "file_name": str(ref.get("file_name") or ""),
                 }
-        # 2) Redis 会话级引用
-        cached = await self._agent_resume.get_session_ref(session_id=session_id)
-        return cached
+        return None
 
     async def _build_graph_input(
         self, body: AgentMessageCreate, resume_ref: dict | None,
