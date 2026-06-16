@@ -116,6 +116,12 @@ export function InterviewQuestionsCard({ block, reasoning }: InterviewQuestionsC
                       </ul>
                     </div>
                   )}
+                  {q.reference_answer && (
+                    <div className="mt-2 rounded-md bg-[#F8FAFC] border border-[#E2E8F0] px-3 py-2">
+                      <p className="text-[11px] text-[#D97706] font-semibold mb-1">参考答案（仅供参考）</p>
+                      <p className="text-[#475569] whitespace-pre-wrap">{q.reference_answer}</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

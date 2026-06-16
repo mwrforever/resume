@@ -107,6 +107,8 @@ class InterviewQuestionItemDTO(BaseModel):
     excellent_signals: list[str] = Field(default_factory=list)
     average_signals: list[str] = Field(default_factory=list)
     risk_signals: list[str] = Field(default_factory=list)
+    # 示例参考答案（前端标注"仅供参考"，不作为标准答案）
+    reference_answer: str = ""
 
 
 class InterviewQuestionSetDTO(BaseModel):

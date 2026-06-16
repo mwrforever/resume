@@ -146,6 +146,8 @@ export interface QuestionItem {
   excellent_signals: string[];
   average_signals: string[];
   risk_signals: string[];
+  /** 示例参考答案（前端标注"仅供参考"） */
+  reference_answer?: string;
 }
 
 /** 面试题集合 */
