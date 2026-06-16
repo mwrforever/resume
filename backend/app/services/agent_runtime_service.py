@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 STREAM_BUFFER_KEY = "agent:stream_buffer:{session_id}:{run_id}"
 STREAM_BUFFER_TTL = 1800  # 30 分钟
+# 本会话已分配的最大 block index 缓存（跨 run 全局递增）。
+# 热路径：emitter 启动读此 key 决定 index_start；冷路径（miss）回退 DB last_block_index。
+BLOCK_INDEX_KEY = "agent:block_index:{session_id}"
+BLOCK_INDEX_TTL = 86400  # 1 天（会话生命周期内有效）
 
 
 class AgentRuntimeService:
@@ -59,6 +63,45 @@ class AgentRuntimeService:
         self._resume_loader = resume_loader
         self._agent_resume = agent_resume_service
 
+    async def _resolve_block_index_start(self, session) -> int:
+        """解析本 run 的 block index 起始值（跨 run 全局递增）。
+
+        优先读 Redis 缓存（热路径）；miss 则用 DB session.last_block_index（冷路径，
+        兼容 Redis 重启/丢失）。返回 last + 1 作为本 run 第一个 block 的 index。
+
+        约束：每会话同一时刻只有一个活跃 run，故读改写无并发冲突。
+
+        @param session: AgentSession ORM 对象（提供 last_block_index 作 DB 兜底）
+        """
+        key = BLOCK_INDEX_KEY.format(session_id=session.id)
+        try:
+            cached = await self._cache.client.get(key)
+            if cached is not None:
+                return int(cached) + 1
+        except Exception:
+            logger.exception("读取 block index 缓存失败：session_id=%s", session.id)
+        # Redis miss / 异常 → 回退 DB session.last_block_index
+        db_last = int(getattr(session, "last_block_index", 0) or 0)
+        return db_last + 1
+
+    async def _persist_block_index(
+        self, session_id: int, max_index: int,
+    ) -> None:
+        """run.finish 时延时落库本会话最新 block index（Redis + DB）。
+
+        Redis 设为最新值（热路径供下一 run 读）；DB session.last_block_index 同步更新
+        （冷路径兜底，保证 Redis 丢失后仍能恢复）。失败仅日志，不阻塞主流程。
+        """
+        key = BLOCK_INDEX_KEY.format(session_id=session_id)
+        try:
+            await self._cache.client.set(key, max_index, ex=BLOCK_INDEX_TTL)
+        except Exception:
+            logger.exception("写入 block index 缓存失败：session_id=%s", session_id)
+        try:
+            await self._repo.update_session(session_id, last_block_index=max_index)
+        except Exception:
+            logger.exception("延时落库 last_block_index 失败：session_id=%s", session_id)
+
     async def stream_message(
         self, *, session, body: AgentMessageCreate, runtime_config: LLMRuntimeConfigDTO,
     ) -> AsyncIterator[AgentStreamEnvelope]:
@@ -73,8 +116,11 @@ class AgentRuntimeService:
             AgentStreamEnvelope 协议事件（run.start → step/block events → run.finish）
         """
         run_id = f"run_{uuid.uuid4().hex[:12]}"
+        # 解析本 run 的 block index 起始值（跨 run 全局递增，避免驳回循环时 index 冲突/覆盖）
+        index_start = await self._resolve_block_index_start(session)
         emitter = AgentStreamEmitter(
             session_id=session.id, run_id=run_id, workflow_type=body.workflow_type,
+            index_start=index_start,
         )
         ctx = WorkflowRuntimeContext(
             emitter=emitter, runtime_config=runtime_config,
@@ -129,6 +175,8 @@ class AgentRuntimeService:
         )
         # 仅 graph 正常 END 才推进 task_id（中断/异常保持不变以保证可 resume）
         next_task_id = await self._advance_task_id(session) if graph_ok else None
+        # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
+        await self._persist_block_index(session.id, emitter.max_block_index_used)
         finish_env = emitter.emit_run_finish(
             agent_message_id=agent_message.id, next_task_id=next_task_id,
         )
@@ -156,8 +204,11 @@ class AgentRuntimeService:
             AgentStreamEnvelope 协议事件
         """
         run_id = f"run_{uuid.uuid4().hex[:12]}"
+        # 解析本 run 的 block index 起始值（跨 run 全局递增）
+        index_start = await self._resolve_block_index_start(session)
         emitter = AgentStreamEmitter(
             session_id=session.id, run_id=run_id, workflow_type=workflow_type,
+            index_start=index_start,
         )
         ctx = WorkflowRuntimeContext(
             emitter=emitter, runtime_config=runtime_config,
@@ -222,6 +273,8 @@ class AgentRuntimeService:
         )
         # 仅 graph 正常 END 才推进 task_id（驳回走 graph 内循环不 END，task_id 不变保证可 resume）
         next_task_id = await self._advance_task_id(session) if graph_ok else None
+        # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
+        await self._persist_block_index(session.id, emitter.max_block_index_used)
         finish_env = emitter.emit_run_finish(
             agent_message_id=agent_message.id, next_task_id=next_task_id,
         )

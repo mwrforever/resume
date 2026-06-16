@@ -28,5 +28,7 @@ class AgentSession(Base):
     enable_thinking: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     last_message_time: Mapped[datetime | None] = mapped_column(DateTime)
+    # 本会话已分配的最大 block index（跨 run 全局递增，保证 block index 不冲突）
+    last_block_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     update_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())

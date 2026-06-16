@@ -35,7 +35,8 @@ def _runtime_cfg() -> LLMRuntimeConfigDTO:
 def _make_session() -> MagicMock:
     """构造模拟的 AgentSession ORM 对象。"""
     return MagicMock(
-        id=1, session_key="k1", current_task_id="existing-task-id", employee_id=2,
+        id=1, session_key="k1", current_task_id="existing-task-id",
+        last_block_index=0, employee_id=2,
         selected_model_name=None, enable_thinking=False,
     )
 
@@ -59,6 +60,9 @@ def _build_svc(runner_astream_fn=None) -> AgentRuntimeService:
     cache.client.append = AsyncMock()
     cache.client.expire = AsyncMock()
     cache.client.delete = AsyncMock()
+    # block index 缓存：默认 miss（返回 None），走 DB last_block_index fallback
+    cache.client.get = AsyncMock(return_value=None)
+    cache.client.set = AsyncMock()
 
     runner = MagicMock()
     if runner_astream_fn:
@@ -222,3 +226,46 @@ async def test_stream_message_no_advance_on_graph_error():
             finish_env = env
     assert finish_env is not None
     assert finish_env.data["next_task_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_block_index_start_redis_hit():
+    """Redis 缓存命中时，index_start = 缓存值 + 1。"""
+    svc = AgentRuntimeService.__new__(AgentRuntimeService)
+    svc._cache = MagicMock()
+    svc._cache.client = MagicMock()
+    svc._cache.client.get = AsyncMock(return_value="7")  # Redis 缓存值为 7
+    svc._repo = MagicMock()
+    session = MagicMock(id=1, last_block_index=0)
+    start = await svc._resolve_block_index_start(session)
+    assert start == 8  # 7 + 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_block_index_start_redis_miss_fallback_db():
+    """Redis miss 时回退 DB session.last_block_index，index_start = db + 1。"""
+    svc = AgentRuntimeService.__new__(AgentRuntimeService)
+    svc._cache = MagicMock()
+    svc._cache.client = MagicMock()
+    svc._cache.client.get = AsyncMock(return_value=None)  # Redis miss
+    svc._repo = MagicMock()
+    session = MagicMock(id=1, last_block_index=5)
+    start = await svc._resolve_block_index_start(session)
+    assert start == 6  # 5 + 1
+
+
+@pytest.mark.asyncio
+async def test_persist_block_index_writes_redis_and_db():
+    """_persist_block_index 同时写 Redis 缓存与 DB last_block_index（延时落库）。"""
+    svc = AgentRuntimeService.__new__(AgentRuntimeService)
+    svc._cache = MagicMock()
+    svc._cache.client = MagicMock()
+    svc._cache.client.set = AsyncMock()
+    svc._repo = MagicMock()
+    svc._repo.update_session = AsyncMock()
+    await svc._persist_block_index(session_id=1, max_index=15)
+    svc._cache.client.set.assert_awaited_once()
+    svc._repo.update_session.assert_awaited_once()
+    # 验证 DB 写入 last_block_index=15
+    args, kwargs = svc._repo.update_session.call_args
+    assert kwargs.get("last_block_index") == 15

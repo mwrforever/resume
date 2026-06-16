@@ -92,3 +92,28 @@ def test_emit_run_finish_without_next_task_id():
     e = _new()
     env = e.emit_run_finish(agent_message_id=5)
     assert env.data["next_task_id"] is None
+
+
+def test_block_index_starts_from_index_start():
+    """emitter 的 block index 应从 index_start 开始（跨 run 全局递增）。"""
+    e = AgentStreamEmitter(
+        session_id=1, run_id="r1", workflow_type="interview_questions",
+        index_start=10,
+    )
+    assert e.next_block_index() == 10
+    assert e.next_block_index() == 11
+    assert e.next_block_index() == 12
+
+
+def test_max_block_index_used_tracks_allocations():
+    """max_block_index_used 反映本 run 分配到的最大 index（run.finish 延时落库用）。"""
+    e = AgentStreamEmitter(
+        session_id=1, run_id="r1", workflow_type="interview_questions",
+        index_start=20,
+    )
+    # 未分配时为 index_start - 1
+    assert e.max_block_index_used == 19
+    e.next_block_index()  # 20
+    e.next_block_index()  # 21
+    e.next_block_index()  # 22
+    assert e.max_block_index_used == 22

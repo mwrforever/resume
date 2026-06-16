@@ -48,12 +48,19 @@ class AgentStreamEmitter:
         session_id: int,
         run_id: str,
         workflow_type: Literal["interview_questions", "resume_evaluation"],
+        # 本 run block index 的起始值（跨 run 全局递增，保证 index 不冲突、时间线有序）。
+        # 由 RuntimeService 从 Redis/DB 算出后注入；默认 0 仅用于无会话上下文的测试。
+        index_start: int = 0,
     ) -> None:
         self.session_id = session_id
         self.run_id = run_id
         self.workflow_type = workflow_type
         self._seq = count(1)
-        self._block_index = count(0)
+        # block index 从 index_start 起递增；next_block_index 返回的第一个值为 index_start
+        self._block_index = count(index_start)
+        self._index_start = index_start
+        # 本 run 实际分配到的最大 index（run.finish 时回写 Redis/DB）
+        self._max_index_used = index_start - 1
 
     # ---------- 内部 ----------
 
@@ -70,8 +77,20 @@ class AgentStreamEmitter:
         )
 
     def next_block_index(self) -> int:
-        """分配下一个 block index（由 Service 持有，跨 emit_block_start 调用单调递增）。"""
-        return next(self._block_index)
+        """分配下一个 block index（由 Service 持有，跨 emit_block_start 调用单调递增）。
+
+        本 run 全局唯一：index_start 由 RuntimeService 从 Redis/DB 注入，
+        保证同会话多次 run（含驳回循环）的 block index 不冲突、按时间线有序。
+        """
+        idx = next(self._block_index)
+        if idx > self._max_index_used:
+            self._max_index_used = idx
+        return idx
+
+    @property
+    def max_block_index_used(self) -> int:
+        """本 run 分配到的最大 block index（run.finish 时回写 Redis/DB 延时落库）。"""
+        return self._max_index_used
 
     # ---------- run.* ----------
 
