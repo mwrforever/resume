@@ -171,7 +171,11 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
       role: 'user',
       workflow_type: input.workflow_type,
       run_id: null,
-      content: { blocks: [{ type: 'text', index: 0, text: input.content, status: 'success' }] },
+      content: {
+        blocks: [{ type: 'text', index: 0, text: input.content, status: 'success' }],
+        // 同步带上本次附带的简历引用，使消息列表立即展示文件图标（与后端持久化结构一致）
+        context_refs: input.context_refs,
+      },
       model_name: null,
       token_count: null,
       sort_order: 0,
