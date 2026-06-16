@@ -96,11 +96,16 @@ class AgentStreamEmitter:
 
     def emit_run_start(
         self, *, enable_thinking: bool, user_message_id: int | None,
+        resume: bool = False,
     ) -> AgentStreamEnvelope:
-        """发射 run.start 事件。"""
+        """发射 run.start 事件。
+
+        @param resume: True 表示续接（interaction 提交后），前端不清空 current_blocks。
+        """
         data = RunStartData(
             run_id=self.run_id, workflow_type=self.workflow_type,
             enable_thinking=enable_thinking, user_message_id=user_message_id,
+            resume=resume,
         ).model_dump(mode="json")
         return self._wrap(type="run.start", data=data)
 

@@ -25,12 +25,20 @@ interface InteractionBlockProps {
 export function InteractionBlock({ block, submitting, onSubmit }: InteractionBlockProps) {
   const { request_id, interaction_type, title, prompt, data, status } = block;
 
-  // 已提交 / 已过期：统一展示
+  // 已提交 / 已驳回 / 已过期：统一展示终态
   if (status === 'submitted') {
     return (
       <div className="rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
         <p className="text-sm font-medium text-[#64748B]">{title}</p>
         <p className="text-xs text-[#16A34A] mt-1">✓ 已提交</p>
+      </div>
+    );
+  }
+  if (status === 'rejected') {
+    return (
+      <div className="rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+        <p className="text-sm font-medium text-[#64748B]">{title}</p>
+        <p className="text-xs text-[#D97706] mt-1">↻ 已驳回，重新生成中…</p>
       </div>
     );
   }

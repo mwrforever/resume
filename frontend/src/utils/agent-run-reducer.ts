@@ -36,6 +36,10 @@ export function agentRunReducer(state: AgentRunState, env: AgentEnvelope): Agent
   switch (env.type) {
     case 'run.start': {
       const data = env.data;
+      // resume（续接）：interaction 提交后的 run，不清空 current_blocks 避免闪烁重建
+      if (data.resume) {
+        return { ...state, running: true, error: null };
+      }
       return {
         running: true,
         run_id: data.run_id,
@@ -152,7 +156,12 @@ function stopBlock(blocks: AgentBlock[], index: number): AgentBlock[] {
   return next;
 }
 
-/** 提交 interaction：按 request_id 找到对应 block 并标记 submitted */
+/** 提交 interaction：按 request_id 找到对应 block 并标记终态。
+ *
+ * 区分驳回与确认：
+ * - values.regenerate=true → rejected（已驳回，重新生成中）
+ * - 其它 → submitted（已提交）
+ */
 function resolveInteraction(
   blocks: AgentBlock[],
   data: { request_id: string; values: Record<string, unknown> },
@@ -161,7 +170,12 @@ function resolveInteraction(
   if (idx === -1) return blocks;
   const target = blocks[idx];
   if (target.type !== 'interaction') return blocks;
+  const isReject = data.values?.regenerate === true;
   const next = [...blocks];
-  next[idx] = { ...target, status: 'submitted', values: data.values };
+  next[idx] = {
+    ...target,
+    status: isReject ? 'rejected' : 'submitted',
+    values: data.values,
+  };
   return next;
 }

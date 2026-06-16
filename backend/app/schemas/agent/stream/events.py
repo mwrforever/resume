@@ -35,11 +35,16 @@ class _AllowExtra(BaseModel):
 # ====== run ======
 
 class RunStartData(_AllowExtra):
-    """`run.start` 事件 data。"""
+    """`run.start` 事件 data。
+
+    resume=True 表示本次 run 是 interaction 提交后的续接（驳回/确认），
+    前端 reducer 据此不清空 current_blocks，避免流式内容闪烁重建。
+    """
     run_id: str
     workflow_type: Literal["interview_questions", "resume_evaluation"]
     enable_thinking: bool
     user_message_id: int | None = None
+    resume: bool = False
 
 
 class RunFinishData(_AllowExtra):

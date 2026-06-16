@@ -19,6 +19,14 @@ def test_run_start_envelope_shape():
     assert env.data["run_id"] == "run_x"
     assert env.data["enable_thinking"] is True
     assert env.data["user_message_id"] == 99
+    assert env.data["resume"] is False  # 默认非续接
+
+
+def test_run_start_resume_flag():
+    """emit_run_start 带 resume=True 时，data.resume 为 True（续接模式）。"""
+    e = _new()
+    env = e.emit_run_start(enable_thinking=False, user_message_id=None, resume=True)
+    assert env.data["resume"] is True
 
 
 def test_seq_is_monotonic_across_emits():

@@ -20,7 +20,7 @@ BLOCK_TYPES: tuple[str, ...] = (
 
 BlockStatus = Literal[
     "streaming", "success", "failed",
-    "pending", "submitted", "expired",
+    "pending", "submitted", "rejected", "expired",
 ]
 
 InteractionType = Literal["dimension_selection", "plan_approval", "job_selection"]

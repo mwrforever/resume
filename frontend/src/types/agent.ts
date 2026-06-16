@@ -20,7 +20,7 @@ export const WORKFLOW_LABELS: Record<WorkflowType, string> = {
 /** block 状态枚举 */
 export type BlockStatus =
   | 'streaming' | 'success' | 'failed'
-  | 'pending' | 'submitted' | 'expired';
+  | 'pending' | 'submitted' | 'rejected' | 'expired';
 
 /** interaction 类型 */
 export type InteractionType =
@@ -54,7 +54,8 @@ export type AgentBlock =
 export type AgentEnvelope =
   | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
       type: 'run.start'; data: { run_id: string; workflow_type: WorkflowType;
-                                  enable_thinking: boolean; user_message_id: number | null } }
+                                  enable_thinking: boolean; user_message_id: number | null;
+                                  resume?: boolean } }
   | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
       type: 'run.finish'; data: { agent_message_id: number; next_task_id?: string } }
   | { v: 1; seq: number; ts: number; run_id: string; session_id: number;

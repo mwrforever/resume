@@ -102,6 +102,16 @@ class AgentRuntimeService:
         except Exception:
             logger.exception("延时落库 last_block_index 失败：session_id=%s", session_id)
 
+    @staticmethod
+    def _has_interrupt(envelopes: list[AgentStreamEnvelope]) -> bool:
+        """判断本 run 是否以 interrupt（人机交互卡片）结束。
+
+        LangGraph 遇到 interrupt() 时 astream 会正常结束迭代（不抛异常），
+        故不能仅凭"无异常"判定 graph 完成。通过检测是否产出 interaction.request
+        事件来区分：有 → 中断等待用户；无 → 正常走到 END。
+        """
+        return any(env.type == "interaction.request" for env in envelopes)
+
     async def stream_message(
         self, *, session, body: AgentMessageCreate, runtime_config: LLMRuntimeConfigDTO,
     ) -> AsyncIterator[AgentStreamEnvelope]:
@@ -149,7 +159,7 @@ class AgentRuntimeService:
         # 运行 graph
         runner = self._runner_factory(self._workflow_graphs[body.workflow_type])
         thread_id = await self._resolve_thread_id(session)
-        graph_ok = True
+        graph_completed = False  # 仅"无异常 且 未中断（走到 END）"才视为完成
         try:
             async for env in runner.astream(
                 thread_id=thread_id, graph_input=graph_input, ctx=ctx,
@@ -158,7 +168,7 @@ class AgentRuntimeService:
                 await self._buffer_append(session.id, run_id, env)
                 yield env
         except Exception as exc:
-            graph_ok = False
+            graph_completed = False
             logger.exception("Graph 执行异常：session_id=%s run_id=%s", session.id, run_id)
             err_env = emitter.emit_run_error(
                 code="graph_execution_failed", message=str(exc), retriable=False,
@@ -166,6 +176,9 @@ class AgentRuntimeService:
             envelope_buffer.append(err_env)
             await self._buffer_append(session.id, run_id, err_env)
             yield err_env
+        else:
+            # 无异常：还需区分 interrupt（等待用户）与 END（真正完成）
+            graph_completed = not self._has_interrupt(envelope_buffer)
 
         # 收尾：把 buffer 折叠为 blocks，落库 agent 消息
         agent_message = await self._persist_agent_message(
@@ -173,8 +186,8 @@ class AgentRuntimeService:
             envelopes=envelope_buffer, runtime_config=runtime_config,
             workflow_type=body.workflow_type,
         )
-        # 仅 graph 正常 END 才推进 task_id（中断/异常保持不变以保证可 resume）
-        next_task_id = await self._advance_task_id(session) if graph_ok else None
+        # 仅 graph 真正走到 END 才推进 task_id；interrupt/异常保持不变以保证 resume 命中正确 checkpoint
+        next_task_id = await self._advance_task_id(session) if graph_completed else None
         # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
         await self._persist_block_index(session.id, emitter.max_block_index_used)
         finish_env = emitter.emit_run_finish(
@@ -234,9 +247,11 @@ class AgentRuntimeService:
         # 补发 run.start：让前端把 runState.running 置 true，从而渲染
         # 步骤条与进行中面板。否则深度评估期间前端看起来像"终止了"，
         # 直到 run.finish + reload 才突然冒出结果。
+        # resume=True：续接模式，前端不清空 current_blocks，避免流式内容闪烁重建。
         start_env = emitter.emit_run_start(
             enable_thinking=runtime_config.enable_thinking,
             user_message_id=None,
+            resume=True,
         )
         await self._buffer_append(session.id, run_id, start_env)
         yield start_env
@@ -245,7 +260,7 @@ class AgentRuntimeService:
         envelope_buffer: list[AgentStreamEnvelope] = [resolve_env, start_env]
         runner = self._runner_factory(self._workflow_graphs[workflow_type])
         thread_id = await self._resolve_thread_id(session)
-        graph_ok = True
+        graph_completed = False  # 仅"无异常 且 未中断（走到 END）"才视为完成
         try:
             async for env in runner.astream(
                 thread_id=thread_id,
@@ -256,7 +271,7 @@ class AgentRuntimeService:
                 await self._buffer_append(session.id, run_id, env)
                 yield env
         except Exception as exc:
-            graph_ok = False
+            graph_completed = False
             logger.exception("Graph 恢复失败：session_id=%s run_id=%s", session.id, run_id)
             err_env = emitter.emit_run_error(
                 code="graph_execution_failed", message=str(exc), retriable=False,
@@ -264,6 +279,9 @@ class AgentRuntimeService:
             envelope_buffer.append(err_env)
             await self._buffer_append(session.id, run_id, err_env)
             yield err_env
+        else:
+            # 无异常：区分 interrupt（如驳回后再次到 plan 审批卡）与 END
+            graph_completed = not self._has_interrupt(envelope_buffer)
 
         # 收尾：落库新一条 agent 消息
         agent_message = await self._persist_agent_message(
@@ -271,8 +289,8 @@ class AgentRuntimeService:
             envelopes=envelope_buffer, runtime_config=runtime_config,
             workflow_type=workflow_type,
         )
-        # 仅 graph 正常 END 才推进 task_id（驳回走 graph 内循环不 END，task_id 不变保证可 resume）
-        next_task_id = await self._advance_task_id(session) if graph_ok else None
+        # 仅 graph 真正走到 END 才推进 task_id；驳回循环会再次 interrupt，task_id 不变保证 resume 命中
+        next_task_id = await self._advance_task_id(session) if graph_completed else None
         # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
         await self._persist_block_index(session.id, emitter.max_block_index_used)
         finish_env = emitter.emit_run_finish(
@@ -490,35 +508,41 @@ class AgentRuntimeService:
     async def _update_old_interaction_block_status(
         self, *, session_id: int, request_id: str, values: dict[str, Any],
     ) -> bool:
-        """把指定 request_id 对应的旧 interaction block status 改为 submitted。
+        """把指定 request_id 对应的旧 interaction block 标记为已处理。
 
-        @return True 表示原为 pending、本次成功转为 submitted；
-                False 表示已经是 submitted（重复提交，调用方应幂等短路）。
+        区分两种结果：
+        - 驳回（values.regenerate=True）→ status 置 rejected，记录 feedback
+        - 确认（approve/选择）→ status 置 submitted，记录 values
+
+        @return True 表示原为 pending、本次成功转为终态；
+                False 表示已经是终态（重复提交，调用方应幂等短路）。
         """
+        is_reject = bool(values.get("regenerate"))
+        new_status = "rejected" if is_reject else "submitted"
         try:
             messages = await self._repo.list_messages(session_id)
             for msg in reversed(messages):
                 content = msg.content or {}
                 blocks = content.get("blocks") or []
                 dirty = False
-                already_submitted = False
+                already_terminal = False
                 for b in blocks:
                     if (
                         b.get("type") == "interaction"
                         and b.get("request_id") == request_id
                     ):
                         if b.get("status") == "pending":
-                            b["status"] = "submitted"
+                            b["status"] = new_status
                             b["values"] = values
                             dirty = True
                         else:
-                            # 已是 submitted/其他终态 → 重复提交，幂等标记
-                            already_submitted = True
+                            # 已是 submitted/rejected 等终态 → 重复提交，幂等标记
+                            already_terminal = True
                 if dirty:
                     await self._repo.update_message_content(msg.id, content)
                     await self._repo.commit()
                     return True
-                if already_submitted:
+                if already_terminal:
                     return False
         except Exception:
             logger.exception("更新旧 interaction block status 失败")
