@@ -20,6 +20,8 @@ class AgentSession(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     session_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 当前运行任务的 thread_id（LangGraph 模型上下文隔离）；工作流正常 END 时由后端推进
+    current_task_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     title: Mapped[str | None] = mapped_column(String(80))
     selected_model_name: Mapped[str | None] = mapped_column(String(80))

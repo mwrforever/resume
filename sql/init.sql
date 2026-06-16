@@ -294,6 +294,7 @@ CREATE TABLE IF NOT EXISTS `agent_session`
 (
     `id`                    BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '会话ID',
     `session_key`           VARCHAR(64)  NOT NULL COMMENT '会话唯一标识',
+    `current_task_id`       VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '当前运行任务的thread_id（模型上下文隔离）',
     `employee_id`           BIGINT       NOT NULL COMMENT '员工ID',
     `title`                 VARCHAR(80)           DEFAULT NULL COMMENT '会话标题',
     `selected_model_name`   VARCHAR(80)           DEFAULT NULL COMMENT '选中模型名称',
