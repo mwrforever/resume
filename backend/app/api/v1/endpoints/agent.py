@@ -26,6 +26,7 @@ from app.repositories.evaluation_repository import EvalRepository
 from app.repositories.job_repository import JobRepository
 from app.repositories.llm_config_repository import LlmConfigRepository
 from app.repositories.resume_repository import ResumeRepository
+from app.utils.storage.registry import StorageRegistry
 from app.schemas.agent.request import (
     AgentInteractionSubmit,
     AgentMessageCreate,
@@ -100,7 +101,9 @@ def _get_runtime_service(
     """Agent SSE 编排服务。"""
     repo = AgentRepository(db)
     model_router = get_default_model_router()
-    resume_loader = ResumeLoader(cache=cache, resume_repo=ResumeRepository(db))
+    resume_loader = ResumeLoader(
+        cache=cache, resume_repo=ResumeRepository(db), storage=StorageRegistry.get(),
+    )
     interview_svc = InterviewQuestionService(model_router=model_router, resume_loader=resume_loader)
     evaluation_svc = ResumeEvaluationService(
         model_router=model_router, resume_loader=resume_loader,
