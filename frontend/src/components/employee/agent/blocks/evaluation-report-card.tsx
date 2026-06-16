@@ -144,7 +144,8 @@ export function EvaluationReportCard({ block, reasoning }: EvaluationReportCardP
                 {report.skill_dimensions.map((dim: Record<string, unknown>, i: number) => (
                   <DimensionBar
                     key={i}
-                    name={String(dim.name ?? `维度${i + 1}`)}
+                    // 后端 skill_dimensions 的维度名字段为 dimension_name（非 name）
+                    name={String(dim.dimension_name ?? dim.name ?? `维度${i + 1}`)}
                     score={Number(dim.score ?? 0)}
                   />
                 ))}
