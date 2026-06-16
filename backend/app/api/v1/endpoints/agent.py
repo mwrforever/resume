@@ -319,7 +319,7 @@ async def submit_interaction(
 ):
     """提交 interaction 卡片的用户填写，恢复 graph。"""
     session = await session_svc._require_session(session_id, current_user)
-    workflow_type = await _infer_workflow_type(session_svc, session, current_user)
+    workflow_type = body.workflow_type
     runtime_config = await llm_svc.get_runtime_config(current_user, session.selected_model_name)
     runtime_config = runtime_config.model_copy(
         update={"enable_thinking": bool(session.enable_thinking)},
@@ -333,16 +333,6 @@ async def submit_interaction(
             yield {"event": "agent", "data": env.model_dump_json()}
 
     return EventSourceResponse(_generator())
-
-
-async def _infer_workflow_type(svc, session, current_user) -> str:
-    """从历史消息推断恢复所属 workflow。"""
-    detail = await svc.get_session_detail(session_id=session.id, current_user=current_user)
-    for m in reversed(detail.messages):
-        wf = getattr(m, "workflow_type", None)
-        if wf:
-            return str(wf)
-    return "interview_questions"
 
 
 # ============================= 简历上传 =============================

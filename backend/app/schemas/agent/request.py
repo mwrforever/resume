@@ -98,8 +98,9 @@ class AgentMessageCreate(BaseModel):
 
 class AgentInteractionSubmit(BaseModel):
     """提交 interaction 卡片的用户填写。"""
-    model_config = ConfigDict(extra="forbid")
     values: dict[str, Any] = Field(default_factory=dict)
+    # 显式指定 resume 所属的 graph；后端不再从历史消息推断路由（内容不当下文原则）
+    workflow_type: AgentWorkflowType = "interview_questions"
 
 
 # ====== 向后兼容别名（旧字段名映射，阶段 7 后可删除） ======
