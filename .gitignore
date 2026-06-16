@@ -72,6 +72,9 @@ md
 # Worktrees
 .worktrees/
 worktrees/
+
+# Superpowers brainstorm (visual companion mockups)
+.superpowers/
 backend/.env
 windsurf/
 findings.md
