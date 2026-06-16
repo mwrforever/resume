@@ -38,10 +38,24 @@ async def _load_job_candidates(state: ResumeEvaluationState, config) -> dict:
 
 
 async def _request_job_selection(state: ResumeEvaluationState, config) -> Command:
-    """请求用户选择岗位（interrupt）。"""
+    """请求用户选择岗位（interrupt）。
+
+    支持两种用户回执：
+    - {selected_job_name}            → 确认选岗
+    - {regenerate: true, feedback?}  → 驳回：回 load_job_candidates 重新加载候选岗
+    """
     ctx: WorkflowRuntimeContext = config["configurable"]["ctx"]
     payload = ctx.evaluation_service.build_job_interaction(state)
     user_values = interrupt(payload)
+    if user_values.get("regenerate"):
+        return Command(
+            goto="load_job_candidates",
+            update={
+                "selected_job_name": "",
+                "validation_attempts": 0,
+                "job_feedback": str(user_values.get("feedback") or ""),
+            },
+        )
     # 字段名严格对齐前端 InteractionBlock JobSelection 提交的 { selected_job_name }
     return Command(update={"selected_job_name": str(user_values.get("selected_job_name") or "")})
 

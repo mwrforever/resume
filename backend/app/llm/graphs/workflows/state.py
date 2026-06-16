@@ -36,6 +36,8 @@ class ResumeEvaluationState(TypedDict, total=False):
     resume_profile: dict[str, Any]
     job_candidates: list[dict[str, Any]]
     selected_job_name: str
+    # 岗位选择卡片驳回时的反馈，作为 load_job_candidates 重新加载的参考
+    job_feedback: str
     job_full: dict[str, Any] | None
     validation_attempts: int
     evaluation_result: dict[str, Any] | None

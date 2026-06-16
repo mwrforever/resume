@@ -32,12 +32,19 @@ async def _suggest_dimensions(state: InterviewQuestionState, config) -> dict:
 async def _request_dimension_selection(state: InterviewQuestionState, config) -> Command:
     """请求用户选择维度（interrupt）。
 
-    用户可在卡片中携带 user_feedback 字段表达"补充意见或追加维度"，
-    将其透传至 state.dimension_feedback，供后续 build_question_plan 注入 prompt。
+    支持两种用户回执：
+    - {selected_dimensions, user_feedback?}    → 确认选择，进入 build_question_plan
+    - {regenerate: true, feedback?}            → 驳回：带 feedback 回 suggest_dimensions 重新建议
     """
     ctx: WorkflowRuntimeContext = config["configurable"]["ctx"]
     payload = ctx.interview_service.build_dimension_interaction(state)
     user_values = interrupt(payload)
+    if user_values.get("regenerate"):
+        # 驳回：把卡片内反馈作为重新建议的依据，回到上游重新生成维度
+        return Command(
+            goto="suggest_dimensions",
+            update={"dimension_feedback": str(user_values.get("feedback") or "")},
+        )
     update: dict = {"selected_dimensions": user_values.get("selected_dimensions", [])}
     feedback = str(user_values.get("user_feedback") or "").strip()
     if feedback:
