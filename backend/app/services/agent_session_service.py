@@ -56,6 +56,8 @@ class AgentSessionService:
         employee_id = self._employee_id(current_user)
         session = await self._repo.create_session(
             session_key=uuid.uuid4().hex,
+            # 首个 task_id：作为 LangGraph thread_id 实现模型上下文隔离
+            current_task_id=uuid.uuid4().hex,
             employee_id=employee_id,
             title=body.title,
             selected_model_name=body.selected_model_name,

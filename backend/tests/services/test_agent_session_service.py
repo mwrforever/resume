@@ -14,7 +14,7 @@ from app.services.agent_session_service import AgentSessionService
 def _make_session_orm(**overrides) -> MagicMock:
     """构造模拟的 AgentSession ORM 对象。"""
     defaults = dict(
-        id=1, session_key="k", employee_id=2, title="T",
+        id=1, session_key="k", current_task_id="t1", employee_id=2, title="T",
         selected_model_name=None, enable_thinking=0, status=1,
         last_message_time=None, create_time=None, update_time=None,
     )
@@ -102,3 +102,25 @@ async def test_delete_session_soft_deletes():
     )
     repo.soft_delete_session.assert_awaited_once_with(1)
     repo.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_session_generates_current_task_id():
+    """创建会话时应生成首个 current_task_id 并写入 repo。"""
+    captured: dict = {}
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        return _make_session_orm(current_task_id=kwargs.get("current_task_id", ""))
+
+    repo = MagicMock()
+    repo.create_session = fake_create
+    repo.commit = AsyncMock()
+    svc = AgentSessionService(repo)
+    await svc.create_session(
+        AgentSessionCreate(title="T"),
+        current_user={"user_type": "employee", "sub": "2"},
+    )
+    # create_session 必须传入 current_task_id（非空 uuid hex，长度 32）
+    assert captured.get("current_task_id")
+    assert len(captured["current_task_id"]) == 32
