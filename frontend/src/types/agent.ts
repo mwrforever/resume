@@ -167,6 +167,12 @@ export interface EvaluationReport {
   experience_timeline: Array<Record<string, unknown>>;
   skill_dimensions: Array<Record<string, unknown>>;
   job_gaps: Array<Record<string, unknown>>;
+  /** 方案 B 新增：候选人画像摘要 */
+  profile_summary?: { years?: number; education?: string; stack?: string[]; stability?: string };
+  /** 面试建议（重点考察项） */
+  interview_suggestions?: Array<{ focus: string; reason: string }>;
+  /** 综合评语（优势/风险总评） */
+  comprehensive_comment?: { advantages?: string; risks?: string };
 }
 
 // ====== LLM 配置（保留，供 llm-configs 页面使用） ======

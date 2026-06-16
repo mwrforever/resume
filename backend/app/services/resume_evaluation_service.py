@@ -251,10 +251,19 @@ class ResumeEvaluationService:
                 experience_timeline=[],
                 skill_dimensions=[
                     {"dimension_name": d.get("dimension_name"), "score": d.get("score"),
+                     "weight": d.get("weight"), "matched_skills": d.get("matched_skills") or [],
+                     "comment": f"{d.get('advantage') or ''} {d.get('disadvantage') or ''}".strip(),
                      "advantage": d.get("advantage"), "disadvantage": d.get("disadvantage")}
                     for d in eval_result.get("dimension_results") or []
                 ],
                 job_gaps=[],
+                # 兜底补全新字段：画像用 resume_profile；综合评语复用 advantage/disadvantage_comment
+                profile_summary=state.get("resume_profile") or {},
+                interview_suggestions=[],
+                comprehensive_comment={
+                    "advantages": str(eval_result.get("advantage_comment") or ""),
+                    "risks": str(eval_result.get("disadvantage_comment") or ""),
+                },
             ).model_dump(mode="json")
         return {"report": report}
 

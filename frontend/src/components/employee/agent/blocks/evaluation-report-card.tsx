@@ -78,7 +78,10 @@ function DimensionBar({ name, score }: { name: string; score: number }) {
 
 export function EvaluationReportCard({ block, reasoning }: EvaluationReportCardProps) {
   const report: EvaluationReport = block.report ?? ({} as EvaluationReport);
-  const { final_score = 0, final_label = '', decision = '', summary = '' } = report;
+  const {
+    final_score = 0, final_label = '', decision = '', summary = '',
+    profile_summary, interview_suggestions, comprehensive_comment,
+  } = report;
   const [showDetail, setShowDetail] = useState(false);
   const decisionStyle = DECISION_STYLES[decision] ?? 'bg-[#F1F5F9] text-[#64748B] border-[#CBD5E1]';
   const color = ringColor(final_score);
@@ -100,6 +103,26 @@ export function EvaluationReportCard({ block, reasoning }: EvaluationReportCardP
       </div>
 
       {summary && <p className="text-sm text-[#64748B] leading-relaxed mb-3">{summary}</p>}
+
+      {/* 候选人画像摘要（始终可见） */}
+      {profile_summary && (
+        <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
+          {profile_summary.years != null && (
+            <span className="px-2 py-0.5 rounded-md bg-[#F1F5F9] text-[#334155]">{profile_summary.years} 年经验</span>
+          )}
+          {profile_summary.education && (
+            <span className="px-2 py-0.5 rounded-md bg-[#F1F5F9] text-[#334155]">{profile_summary.education}</span>
+          )}
+          {profile_summary.stack && profile_summary.stack.length > 0 && (
+            <span className="px-2 py-0.5 rounded-md bg-[#E0F2FE] text-[#0369A1]">
+              {profile_summary.stack.join(' / ')}
+            </span>
+          )}
+          {profile_summary.stability && (
+            <span className="px-2 py-0.5 rounded-md bg-[#F1F5F9] text-[#64748B]">{profile_summary.stability}</span>
+          )}
+        </div>
+      )}
 
       {/* 详细面板折叠 */}
       <button
@@ -138,6 +161,33 @@ export function EvaluationReportCard({ block, reasoning }: EvaluationReportCardP
                   <li key={i}>{String(gap.description ?? gap.gap ?? JSON.stringify(gap))}</li>
                 ))}
               </ul>
+            </section>
+          )}
+
+          {/* 面试建议 */}
+          {interview_suggestions && interview_suggestions.length > 0 && (
+            <section>
+              <h4 className="font-medium text-[#020617] mb-2 text-sm">面试重点考察</h4>
+              <ul className="space-y-1 text-xs">
+                {interview_suggestions.map((s, i) => (
+                  <li key={i} className="text-[#475569]">
+                    <span className="font-medium text-[#334155]">{s.focus}</span>
+                    {s.reason && <span className="text-[#94A3B8]"> — {s.reason}</span>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {/* 综合评语 */}
+          {comprehensive_comment && (comprehensive_comment.advantages || comprehensive_comment.risks) && (
+            <section className="rounded-md bg-[#F8FAFC] border border-[#E2E8F0] px-3 py-2">
+              {comprehensive_comment.advantages && (
+                <p className="text-xs text-[#16A34A]"><span className="font-medium">优势：</span>{comprehensive_comment.advantages}</p>
+              )}
+              {comprehensive_comment.risks && (
+                <p className="text-xs text-[#D97706] mt-1"><span className="font-medium">风险：</span>{comprehensive_comment.risks}</p>
+              )}
             </section>
           )}
         </div>
