@@ -187,14 +187,54 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
   },
 
   sendMessage: async (sessionId, input) => {
+    // 虚拟会话（负 id）：先真正建会话，再发消息
+    let realSessionId = sessionId;
+    if (sessionId < 0) {
+      const virtualId = sessionId;
+      set((s) => ({ runs: { ...s.runs, [virtualId]: { ...getRun(s.runs, virtualId), sending: true } } }));
+      try {
+        const resp = await employeeAgentApi.createSession({ title: undefined });
+        const newSession = (resp.data?.data ?? resp.data) as WorkspaceSession;
+        realSessionId = newSession.id;
+        // 用真实会话替换虚拟会话：迁移 runs/sessions/activeId（保留乐观消息由下方统一追加）
+        set((s) => {
+          const prevRun = s.runs[virtualId];
+          const runs = { ...s.runs };
+          delete runs[virtualId];
+          runs[newSession.id] = {
+            ...(prevRun ?? { messages: [], runState: INITIAL_RUN_STATE, loaded: false }),
+            session: newSession, sending: true,
+          };
+          return {
+            runs,
+            sessions: [newSession, ...s.sessions.filter(x => x.id !== virtualId)],
+            activeId: newSession.id,
+          };
+        });
+      } catch (err) {
+        // 建会话失败：移除虚拟会话 + 提示，中止发送
+        set((s) => {
+          const runs = { ...s.runs };
+          delete runs[virtualId];
+          return {
+            runs,
+            sessions: s.sessions.filter(x => x.id !== virtualId),
+            activeId: s.sessions.find(x => x.id !== virtualId && x.id >= 0)?.id ?? null,
+          };
+        });
+        console.error('建会话失败', err);
+        return;
+      }
+    }
+
     const ac = new AbortController();
-    abortControllers.set(sessionId, ac);
-    set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true } } }));
+    abortControllers.set(realSessionId, ac);
+    set((s) => ({ runs: { ...s.runs, [realSessionId]: { ...getRun(s.runs, realSessionId), sending: true } } }));
 
     // 乐观追加用户消息（负数临时 id，reload 后替换）
     const optimisticUserMessage: AgentMessage = {
       id: -Date.now(),
-      session_id: sessionId,
+      session_id: realSessionId,
       parent_message_id: null,
       role: 'user',
       workflow_type: input.workflow_type,
@@ -211,28 +251,28 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     };
     // 标题乐观更新：首条消息且会话为默认空标题时，本地算标题立即同步
     const optimisticTitle = (() => {
-      const entry = get().runs[sessionId];
+      const entry = get().runs[realSessionId];
       const cur = entry?.session?.title;
       if (cur && !isDefaultTitle(cur)) return null;
       return makeTitleFromContent(input.content);
     })();
     set((s) => {
-      const entry = getRun(s.runs, sessionId);
+      const entry = getRun(s.runs, realSessionId);
       const messages = [...entry.messages, optimisticUserMessage];
       const session = optimisticTitle && entry.session
         ? { ...entry.session, title: optimisticTitle }
         : entry.session;
       const sessions = optimisticTitle
         ? s.sessions.map((sess) =>
-            sess.id === sessionId ? { ...sess, title: optimisticTitle } : sess,
+            sess.id === realSessionId ? { ...sess, title: optimisticTitle } : sess,
           )
         : s.sessions;
-      return { runs: { ...s.runs, [sessionId]: { ...entry, messages, session } }, sessions };
+      return { runs: { ...s.runs, [realSessionId]: { ...entry, messages, session } }, sessions };
     });
 
     try {
       const iter = employeeAgentApi.streamMessage(
-        sessionId,
+        realSessionId,
         {
           content: input.content,
           workflow_type: input.workflow_type,
@@ -242,10 +282,10 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
         },
         ac.signal,
       );
-      await runEnvelopes(sessionId, iter);
+      await runEnvelopes(realSessionId, iter);
     } finally {
-      set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: false } } }));
-      abortControllers.delete(sessionId);
+      set((s) => ({ runs: { ...s.runs, [realSessionId]: { ...getRun(s.runs, realSessionId), sending: false } } }));
+      abortControllers.delete(realSessionId);
     }
   },
 
