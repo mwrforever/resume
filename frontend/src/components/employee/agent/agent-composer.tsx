@@ -18,9 +18,13 @@ import { ResumeFileIcon } from './resume-file-icon';
 export interface AgentComposerProps {
   session: WorkspaceSession;
   sending: boolean;
+  /** 是否处于人机交互等待（pending interaction block）。
+   *  此时流程已暂停等用户输入，输入框不显示"停止/进行中"，应可正常输入新指令。 */
+  hasPendingInteraction: boolean;
   /** 最近一条消息的 workflow_type；用于回显当前会话已选模式（空会话回退默认值） */
   lastWorkflow: WorkflowType;
-  prefilledPrompt: string | null;
+  /** 空态快捷问答回填：prompt 必填，workflow 可选（联动切换模式） */
+  prefill: { prompt: string; workflow?: WorkflowType } | null;
   onPrefillConsumed: () => void;
   onSend: (input: {
     content: string;
@@ -45,9 +49,13 @@ type UploadState =
   | { kind: 'error'; message: string };
 
 export function AgentComposer({
-  session, sending, lastWorkflow, prefilledPrompt, onPrefillConsumed,
+  session, sending, hasPendingInteraction, lastWorkflow, prefill, onPrefillConsumed,
   onSend, onAbort, onToggleThinking, onPickModel, isEmptySession,
 }: AgentComposerProps) {
+  // sending=true 时（含人机交互等待）按钮显示红色"停止"可终止；
+  // 但纯流式运行中（非交互等待）禁用输入框，避免并发触发第二条流。
+  // 人机交互等待时流程已暂停，允许输入新指令（如补充需求/换思路）。
+  const inputLocked = sending && !hasPendingInteraction;
   const [content, setContent] = useState('');
   // 初始模式取最近一条消息的 workflow_type；空会话回退默认 interview_questions。
   // WorkspaceInner 的 key={sessionId} 保证切会话时重挂载，useState 初值按会话回显正确模式，
@@ -58,15 +66,17 @@ export function AgentComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 接收 EmptyState 的提示词
+  // 接收 EmptyState 的提示词（可携带 workflow，联动切换 Composer 模式）
   useEffect(() => {
-    if (prefilledPrompt !== null) {
-      setContent(prefilledPrompt);
+    if (prefill !== null) {
+      setContent(prefill.prompt);
+      // 评估类问答携带 workflow_type → 切换到对应模式，保证发送时路由正确
+      if (prefill.workflow) setWorkflow(prefill.workflow);
       onPrefillConsumed();
       // 等下一帧再 focus 以保证内容已渲染
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
-  }, [prefilledPrompt, onPrefillConsumed]);
+  }, [prefill, onPrefillConsumed]);
 
   // textarea 自适应高度
   useEffect(() => {
@@ -78,7 +88,8 @@ export function AgentComposer({
 
   const submit = () => {
     const trimmed = content.trim();
-    if (!trimmed || sending) return;
+    // 纯运行中禁发；人机交互等待时允许发送（流程已暂停）
+    if (!trimmed || inputLocked) return;
     const ctxRefs = upload.kind === 'success'
       ? [{ type: 'resume', file_path: upload.file_path, file_name: upload.fileName }]
       : undefined;
@@ -136,8 +147,10 @@ export function AgentComposer({
     <div className="sticky bottom-0 bg-gradient-to-t from-[#F8FAFC] via-[#F8FAFC]/95 to-transparent pt-4 pb-6 px-4">
       <div
         className={`mx-auto max-w-[880px] rounded-2xl bg-white border shadow-lg
-                    transition-shadow duration-220
-                    ${focused ? 'ring-3 ring-[#0EA5E9]/25 border-[#0EA5E9]' : 'border-[#E2E8F0] shadow-black/10'}`}
+                    transition-all duration-220 ease-[cubic-bezier(0.16,1,0.3,1)]
+                    ${focused
+                      ? 'ring-3 ring-[#0EA5E9]/20 border-[#0EA5E9] shadow-[0_1px_3px_rgba(2,6,23,0.05),0_16px_40px_-16px_rgba(3,105,161,0.22)]'
+                      : 'border-[#E2E8F0] shadow-[0_1px_2px_rgba(2,6,23,0.04),0_8px_24px_-12px_rgba(2,6,23,0.10)]'}`}
       >
         {/* 顶栏 */}
         <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#E2E8F0]">
@@ -147,9 +160,10 @@ export function AgentComposer({
                 key={wf}
                 type="button"
                 onClick={() => handleWorkflowClick(wf)}
-                className={`relative px-3 h-7 rounded-full text-xs font-medium transition-all duration-150 ${
+                className={`relative px-3 h-7 rounded-full text-xs font-medium
+                            transition-all duration-150 active:scale-[0.96] ${
                   workflow === wf
-                    ? 'bg-white text-[#020617] shadow-sm'
+                    ? 'bg-white text-[#020617] shadow-sm ring-1 ring-black/[0.04]'
                     : 'text-[#64748B] hover:text-[#334155]'
                 }`}
               >
@@ -174,9 +188,9 @@ export function AgentComposer({
                   : (session.enable_thinking ? '关闭当前会话的思考模式' : '开启当前会话的思考模式（更慢但更深入）')
               }
               className={`flex items-center gap-1.5 h-7 px-3 rounded-full text-xs font-medium
-                          transition-all duration-150 ${
+                          transition-all duration-150 active:scale-[0.96] ${
                 session.enable_thinking
-                  ? 'bg-[#7C3AED] text-white shadow-sm shadow-purple-300'
+                  ? 'bg-[#7C3AED] text-white shadow-sm shadow-purple-300/60'
                   : 'bg-[#F1F5F9] text-[#94A3B8] hover:bg-[#E8ECF1] hover:text-[#64748B]'
               }`}
             >
@@ -218,6 +232,7 @@ export function AgentComposer({
                     disabled={upload.kind === 'uploading'}
                     className="inline-flex items-center gap-1 h-8 px-2 rounded-md text-xs
                                text-[#64748B] hover:text-[#0369A1] hover:bg-[#F1F5F9]
+                               active:scale-[0.97]
                                disabled:opacity-50 disabled:cursor-not-allowed
                                transition-colors">
               <Paperclip size={13} />
@@ -229,16 +244,17 @@ export function AgentComposer({
 
           <span className="hidden sm:block text-[11px] text-[#94A3B8]">Ctrl+Enter 发送</span>
 
-          {/* 主操作按钮 morph：运行中变红色"停止"，否则蓝色"发送" */}
+          {/* 主操作按钮 morph：sending 时（含人机交互等待）红色"停止"可终止，否则蓝色"发送"。
+              停止按钮始终可点；发送按钮仅在空内容时禁用。 */}
           <button
             type="button"
             onClick={sending ? onAbort : submit}
             disabled={!sending && !content.trim()}
-            className={`h-9 px-5 rounded-lg text-xs font-medium transition-all active:scale-[0.97]
+            className={`h-9 px-5 rounded-lg text-xs font-semibold transition-all active:scale-[0.97]
                         inline-flex items-center gap-1.5 ${
               sending
-                ? 'border border-[#DC2626] text-[#DC2626] hover:bg-[#FEE2E2] bg-white'
-                : 'bg-[#0369A1] text-white hover:bg-[#0EA5E9] disabled:opacity-40 disabled:cursor-not-allowed'
+                ? 'border border-[#DC2626] text-[#DC2626] hover:bg-[#FEE2E2] bg-white shadow-[0_2px_8px_-3px_rgba(220,38,38,0.35)]'
+                : 'bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] text-white ring-1 ring-inset ring-white/15 shadow-[0_4px_12px_-4px_rgba(3,105,161,0.5)] hover:shadow-[0_6px_16px_-4px_rgba(3,105,161,0.55)] disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none'
             }`}
           >
             {sending ? <Square size={13} className="fill-current" /> : <Send size={13} />}

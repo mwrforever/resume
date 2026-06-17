@@ -39,8 +39,9 @@ export function ReasoningSection({ reasoning, streaming }: ReasoningSectionProps
   const paragraphs = empty ? [] : reasoning.split(/\n+/).filter(p => p.trim());
 
   return (
-    <div className="mt-1.5 rounded-lg overflow-hidden border border-[#EDE9FE]
-                    bg-gradient-to-b from-[#FAF5FF] to-[#F8FAFC]">
+    <div className="mt-1.5 rounded-xl overflow-hidden border border-[#EDE9FE]/80
+                    bg-gradient-to-b from-[#FAF5FF] to-[#F8FAFC]
+                    shadow-[0_1px_3px_rgba(124,58,237,0.06)]">
       {/* 折叠头 */}
       <button
         type="button"

@@ -93,6 +93,20 @@ function emptyRun(): RunEntry {
   };
 }
 
+/**
+ * 判断会话是否为「未发送任何消息的空虚拟会话」。
+ *
+ * 虚拟会话 id 为负数（store.createSession 用 -Date.now()），
+ * 且尚未发送首条消息（last_message_time 为空）。
+ * 这类会话不在侧栏展示——只有发送首条消息落库为真实会话后才出现。
+ *
+ * @param session 会话对象
+ * @returns true 表示是空虚拟会话（侧栏应过滤掉）
+ */
+export function isEmptyVirtual(session: WorkspaceSession): boolean {
+  return session.id < 0 && (session.last_message_time ?? '') === '';
+}
+
 /** 获取/创建 run entry（不可变读取，返回引用便于 set 更新） */
 function getRun(runs: Record<number, RunEntry>, id: number): RunEntry {
   return runs[id] ?? emptyRun();

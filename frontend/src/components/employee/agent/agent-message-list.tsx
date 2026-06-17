@@ -8,7 +8,7 @@
 
 import { useEffect } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
-import type { AgentMessage, AgentRunState } from '@/types/agent';
+import type { AgentMessage, AgentRunState, WorkflowType } from '@/types/agent';
 import { BlockRenderer } from './blocks/block-renderer';
 import { attachReasoning } from './blocks/group-blocks';
 import { StepStrip } from './step-strip';
@@ -23,7 +23,8 @@ export interface AgentMessageListProps {
   /** 是否正在提交 interaction / 发送消息 → 透传给 interaction 卡片禁用按钮 */
   sending?: boolean;
   onSubmitInteraction: (requestId: string, values: Record<string, unknown>) => void;
-  onPickPrompt?: (prompt: string) => void;
+  /** 选中空态快捷问答：可同时回填文案与联动切换 workflow 模式 */
+  onPickPrompt?: (prompt: string, workflow?: WorkflowType) => void;
   onRetry?: () => void;
 }
 
@@ -73,10 +74,11 @@ export function AgentMessageList({ messages, runState, sending, onSubmitInteract
         {runState.running && (
           <div className="space-y-2">
             <StepStrip steps={runState.steps} running={runState.running} />
-            <div className="relative border border-[#E2E8F0] rounded-xl bg-white shadow-md
-                            overflow-hidden animate-[fadeSlideUp_0.3s_ease]">
-              {/* 左侧 3px 品牌蓝 accent 条 */}
-              <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#0369A1]" />
+            <div className="relative border border-[#BAE6FD]/60 rounded-2xl bg-white
+                            overflow-hidden animate-[cardEnter_0.32s_cubic-bezier(0.16,1,0.3,1)]
+                            shadow-[0_1px_3px_rgba(2,6,23,0.05),0_12px_32px_-12px_rgba(3,105,161,0.14)]">
+              {/* 左侧 3px 品牌蓝 accent 条（渐变，与历史卡区分：流式更亮） */}
+              <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-[#38BDF8] via-[#0EA5E9] to-[#0369A1]" />
               <div className="divide-y divide-[#E2E8F0]">
                 {attachReasoning(runState.current_blocks).map(b => (
                   <div key={b.index} className="px-4 py-3">
@@ -100,7 +102,9 @@ export function AgentMessageList({ messages, runState, sending, onSubmitInteract
         {runState.error && (
           <div
             role="alert"
-            className="flex items-start gap-3 rounded-xl border border-[#FCA5A5] bg-[#FEF2F2] p-3 text-sm text-[#DC2626]"
+            className="flex items-start gap-3 rounded-2xl border border-[#FCA5A5]/80 bg-[#FEF2F2] p-3 text-sm text-[#DC2626]
+                       shadow-[0_1px_3px_rgba(220,38,38,0.08),0_8px_20px_-12px_rgba(220,38,38,0.16)]
+                       animate-[cardEnter_0.3s_ease]"
           >
             <AlertCircle size={16} className="mt-0.5 shrink-0" />
             <div className="flex-1">
@@ -166,7 +170,8 @@ function MessageRow({
       <div className="flex justify-end mb-4">
         <div className="max-w-[560px] flex flex-col items-end gap-1.5">
           {userText && (
-            <div className="rounded-2xl rounded-br-md bg-[#0369A1] text-white px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed shadow-sm">
+            <div className="rounded-2xl rounded-br-lg bg-gradient-to-br from-[#0EA5E9] to-[#0369A1] text-white px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed
+                            shadow-[0_2px_8px_-3px_rgba(3,105,161,0.4)] ring-1 ring-inset ring-white/10">
               {userText}
             </div>
           )}

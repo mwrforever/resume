@@ -49,7 +49,8 @@ export const agentColors = {
 } as const;
 
 export const agentTypography = {
-  fontFamily: "'Plus Jakarta Sans', -apple-system, 'PingFang SC', sans-serif",
+  fontFamily: "'Plus Jakarta Sans', -apple-system, 'PingFang SC', system-ui, sans-serif",
+  fontMono:   "'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace",
   fontSize:   { xs: 12, sm: 13, base: 14, md: 15, lg: 16, xl: 18, '2xl': 22, '3xl': 28 },
   lineHeight: { tight: 1.3, normal: 1.5, relaxed: 1.7 },
   fontWeight: { regular: 400, medium: 500, semibold: 600, bold: 700 },
@@ -63,6 +64,9 @@ export const agentShadow = {
   lg:   '0 8px 24px rgba(15,23,42,0.10)',
   xl:   '0 16px 40px rgba(15,23,42,0.14)',
   ring: '0 0 0 3px rgba(14,165,233,0.25)',
+  // 全面重设计新增：分层阴影（历史卡 flat / 流式卡 raised）
+  cardFlat:  '0 1px 2px rgba(2,6,23,0.04), 0 4px 14px -8px rgba(2,6,23,0.08)',
+  raised:    '0 1px 3px rgba(2,6,23,0.05), 0 12px 32px -12px rgba(3,105,161,0.14)',
 } as const;
 
 export const agentMotion = {
@@ -70,5 +74,7 @@ export const agentMotion = {
   easing:   {
     standard:   'cubic-bezier(0.2, 0, 0, 1)',
     emphasized: 'cubic-bezier(0.3, 0, 0, 1.2)',
+    // 全面重设计新增：spring 感缓动，用于 hover/入场
+    smooth:     'cubic-bezier(0.16, 1, 0.3, 1)',
   } as const,
 };

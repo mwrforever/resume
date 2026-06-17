@@ -82,7 +82,7 @@ export function InterviewQuestionsCard({ block, reasoning }: InterviewQuestionsC
         {questions.map((q: QuestionItem, i: number) => {
           const isExpanded = expandedQ.has(i);
           return (
-            <div key={i} className="rounded-lg border border-[#E2E8F0] hover:border-[#CBD5E1] transition-colors">
+            <div key={i} className="rounded-xl border border-[#E2E8F0]/80 hover:border-[#0EA5E9]/40 hover:bg-[#F8FAFC] transition-colors duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]">
               {/* 题目标题行 */}
               <button
                 type="button"

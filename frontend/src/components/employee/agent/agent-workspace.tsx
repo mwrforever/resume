@@ -1,17 +1,17 @@
 /**
  * AgentWorkspace：消息运行区（瘦身版）
  *
- * 持有 prefilledPrompt 状态：EmptyState 点击卡片 → setPrefilledPrompt(prompt)
- * Composer 消费后调用 onPrefillConsumed 清除。
+ * 持有 prefill 状态：EmptyState 点击卡片 → setPrefill({ prompt, workflow? })
+ * Composer 消费后调用 onPrefillConsumed 清除；workflow 可联动切换模式。
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { AgentMessageList } from './agent-message-list';
 import { AgentComposer } from './agent-composer';
 import { useAgentRun } from '@/hooks/use-agent-run';
 import { useAgentStore } from '@/store/agent';
 import type { SendInput } from '@/hooks/use-agent-run';
-import type { WorkspaceSession } from '@/types/agent';
+import type { WorkflowType, WorkspaceSession } from '@/types/agent';
 
 export interface AgentWorkspaceProps {
   sessionId: number | null;
@@ -53,9 +53,20 @@ function WorkspaceInner({
   // 思考模式/模型选择走 store action（区分空会话写全局默认 / 中途会话仅写当前会话）
   const toggleThinking = useAgentStore((s) => s.toggleThinking);
   const selectModel = useAgentStore((s) => s.selectModel);
-  const [prefilledPrompt, setPrefilledPrompt] = useState<string | null>(null);
+  /** 空态快捷问答回填：可携带 workflow（点击评估类问答联动切换 Composer 模式） */
+  const [prefill, setPrefill] = useState<{ prompt: string; workflow?: WorkflowType } | null>(null);
   // 记录最近一次发送入参，供错误态"重试"复用
   const lastInputRef = useRef<SendInput | null>(null);
+
+  // 是否处于人机交互等待（最后一条 agent 消息含未提交的 interaction block）。
+  // 此时流程已暂停在等用户输入，输入框不应显示"停止/进行中"，应可正常输入新指令。
+  const hasPendingInteraction = useMemo(() => {
+    const lastAgent = [...messages].reverse().find(m => m.role === 'agent');
+    if (!lastAgent) return false;
+    return (lastAgent.content.blocks ?? []).some(
+      b => b.type === 'interaction' && b.status === 'streaming',
+    );
+  }, [messages]);
 
   // 发送时缓存入参，供错误态"重试"复用
   const handleSend = useCallback((input: SendInput) => {
@@ -88,15 +99,16 @@ function WorkspaceInner({
         runState={runState}
         sending={sending}
         onSubmitInteraction={submit}
-        onPickPrompt={setPrefilledPrompt}
+        onPickPrompt={(prompt, workflow) => setPrefill({ prompt, workflow })}
         onRetry={handleRetry}
       />
       <AgentComposer
         session={session}
         sending={sending}
+        hasPendingInteraction={hasPendingInteraction}
         lastWorkflow={messages.length > 0 ? messages[messages.length - 1].workflow_type : 'interview_questions'}
-        prefilledPrompt={prefilledPrompt}
-        onPrefillConsumed={() => setPrefilledPrompt(null)}
+        prefill={prefill}
+        onPrefillConsumed={() => setPrefill(null)}
         onSend={(input) => handleSend({
           ...input,
           enable_thinking: session.enable_thinking,

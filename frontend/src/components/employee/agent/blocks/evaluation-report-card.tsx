@@ -39,7 +39,7 @@ function ScoreRing({ score, color }: { score: number; color: string }) {
   return (
     <div className="relative w-[72px] h-[72px] shrink-0">
       <svg className="w-full h-full -rotate-90" viewBox="0 0 72 72">
-        <circle cx="36" cy="36" r={radius} fill="none" stroke="#E2E8F0" strokeWidth="6" />
+        <circle cx="36" cy="36" r={radius} fill="none" stroke="#EEF2F6" strokeWidth="6" />
         <circle
           cx="36" cy="36" r={radius} fill="none" stroke={color} strokeWidth="6"
           strokeLinecap="round"
@@ -63,7 +63,7 @@ function DimensionBar({ name, score }: { name: string; score: number }) {
   return (
     <div className="flex items-center gap-2">
       <span className="w-28 shrink-0 text-xs text-[#64748B] truncate">{name}</span>
-      <div className="flex-1 h-2 rounded-full bg-[#F1F5F9] overflow-hidden">
+      <div className="flex-1 h-2 rounded-full bg-[#EEF2F6] overflow-hidden">
         <div
           className="h-full rounded-full transition-all duration-500"
           style={{ width: `${valid}%`, backgroundColor: color }}

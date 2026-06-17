@@ -30,7 +30,7 @@ export function ToolUseBlock({ block }: ToolUseBlockProps) {
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#F1F5F9] text-sm w-fit">
+      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#F1F5F9]/80 text-sm w-fit ring-1 ring-inset ring-black/[0.03]">
         {isRunning ? (
           <svg className="w-3.5 h-3.5 text-[#0EA5E9] animate-spin" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
