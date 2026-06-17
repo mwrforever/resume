@@ -116,6 +116,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
   setActive: (id) => set({ activeId: id }),
 
   ensureLoaded: async (id) => {
+    if (id < 0) return;  // 虚拟会话不入库，不调后端
     if (get().runs[id]?.loaded) return;
     const resp = await employeeAgentApi.getSession(id);
     const detail = resp.data?.data ?? resp.data;
@@ -135,20 +136,37 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
   },
 
   createSession: async () => {
-    // 重入守护：创建中再点击直接返回，避免多次点击创建出多个会话
+    // 重入守护：创建中再点击直接返回，避免多次点击生成多个虚拟会话
     if (get().creating) return;
     set({ creating: true });
-    try {
-      const resp = await employeeAgentApi.createSession({ title: undefined });
-      const s = (resp.data?.data ?? resp.data) as WorkspaceSession;
-      set((state) => ({
-        sessions: [s, ...state.sessions],
-        activeId: s.id,
-      }));
-      void get().ensureLoaded(s.id);
-    } finally {
-      set({ creating: false });
-    }
+    // 虚拟会话：负数临时 id，首条消息发送时才真正建会话（sendMessage 内处理）
+    const virtualSession: WorkspaceSession = {
+      id: -Date.now(),
+      session_key: '',
+      current_task_id: '',
+      employee_id: 0,
+      title: null,
+      selected_model_name: null,
+      enable_thinking: false,
+      status: 0,
+      last_message_time: null,
+      create_time: null,
+      update_time: null,
+    };
+    set((s) => {
+      // 丢弃其它未发送的虚拟会话，只保留最新一个
+      const realSessions = s.sessions.filter(x => x.id >= 0);
+      const runs = { ...s.runs };
+      for (const id of Object.keys(runs)) {
+        if (Number(id) < 0) delete runs[Number(id)];
+      }
+      runs[virtualSession.id] = {
+        session: virtualSession, messages: [], runState: INITIAL_RUN_STATE,
+        sending: false, loaded: true,  // 虚拟会话标记 loaded，避免 ensureLoaded 调后端
+      };
+      return { sessions: [virtualSession, ...realSessions], activeId: virtualSession.id, runs };
+    });
+    set({ creating: false });
   },
 
   updateSession: (patch) => {

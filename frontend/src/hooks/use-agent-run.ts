@@ -51,9 +51,9 @@ export function useAgentRun(
   const updateSession = useAgentStore((s) => s.updateSession);
   const ensureLoaded = useAgentStore((s) => s.ensureLoaded);
 
-  // mount / sessionId 切换时拉取会话详情（已 loaded 则跳过）
+  // mount / sessionId 切换时拉取会话详情（已 loaded 或虚拟会话则跳过）
   useEffect(() => {
-    void ensureLoaded(sessionId);
+    if (sessionId >= 0) void ensureLoaded(sessionId);
   }, [sessionId, ensureLoaded]);
 
   const session = run?.session ?? null;
