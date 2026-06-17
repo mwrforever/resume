@@ -161,7 +161,7 @@ function MessageRow({
     // 本条消息附带的简历引用（后端已持久化到 content.context_refs，仅供展示文件图标）
     const resumeRefs = (message.content.context_refs ?? []).filter(
       r => String(r.type ?? '').toLowerCase() === 'resume',
-    ) as Array<{ resume_id?: number; file_name?: string }>;
+    ) as Array<{ file_path?: string; file_name?: string }>;
     return (
       <div className="flex justify-end mb-4">
         <div className="max-w-[560px] flex flex-col items-end gap-1.5">
