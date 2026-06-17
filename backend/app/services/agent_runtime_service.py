@@ -27,7 +27,6 @@ from app.repositories.agent_repository import AgentRepository
 from app.schemas.agent.dto import LLMRuntimeConfigDTO
 from app.schemas.agent.request import AgentInteractionSubmit, AgentMessageCreate
 from app.schemas.agent.stream import AgentStreamEnvelope
-from app.services.agent_resume_service import AgentResumeService
 from app.services.cache_service import CacheService
 
 logger = logging.getLogger(__name__)
@@ -52,7 +51,6 @@ class AgentRuntimeService:
         interview_service,
         evaluation_service,
         resume_loader,
-        agent_resume_service: AgentResumeService,
     ) -> None:
         self._repo = repo
         self._cache = cache
@@ -61,7 +59,6 @@ class AgentRuntimeService:
         self._interview_service = interview_service
         self._evaluation_service = evaluation_service
         self._resume_loader = resume_loader
-        self._agent_resume = agent_resume_service
 
     async def _resolve_block_index_start(self, session) -> int:
         """解析本 run 的 block index 起始值（跨 run 全局递增）。

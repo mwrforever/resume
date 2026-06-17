@@ -5,7 +5,7 @@ Agent 模块 endpoint（重写版）。
 - sessions CRUD：POST/GET/PUT/DELETE /employee/agent/sessions
 - 流式消息：POST /employee/agent/sessions/{session_id}/messages/stream
 - 交互提交：POST /employee/agent/sessions/{session_id}/interactions/{request_id}
-- 简历上传：POST /employee/agent/sessions/{session_id}/resumes
+- 简历上传：POST /employee/agent/resumes（脱离 session，只存文件返回路径）
 
 不再有 actions/execute / memories。
 """
@@ -13,8 +13,10 @@ Agent 模块 endpoint（重写版）。
 from __future__ import annotations
 
 import logging
+import os
+import uuid
 
-from fastapi import APIRouter, Depends, File, Form, Path, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Path, Query, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -43,7 +45,6 @@ from app.schemas.agent.response import (
     LlmModelOption,
 )
 from app.schemas.common import ApiResponse, PageData
-from app.services.agent_resume_service import AgentResumeService
 from app.services.agent_runtime_service import AgentRuntimeService
 from app.services.agent_session_service import AgentSessionService
 from app.services.cache_service import CacheService
@@ -51,7 +52,6 @@ from app.services.interview_question_service import InterviewQuestionService
 from app.services.llm_config_service import LlmConfigService
 from app.services.resume_evaluation_service import ResumeEvaluationService
 from app.services.resume_loader import ResumeLoader
-from app.services.resume_service import ResumeService
 from app.llm.graphs.workflows.runner import AgentWorkflowRunner
 from app.llm.model_router import get_default_model_router
 
@@ -79,24 +79,10 @@ def _get_session_service(
     return AgentSessionService(AgentRepository(db))
 
 
-def _get_resume_service(
-    db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache),
-) -> AgentResumeService:
-    """Agent 简历上传服务。"""
-    # 委托底层 ResumeService 完成文件落盘+文本解析+入库，避免 Repository 越层做 I/O
-    resume_repo = ResumeRepository(db)
-    return AgentResumeService(
-        resume_service=ResumeService(resume_repo, cache),
-        job_repo=JobRepository(db),
-        cache=cache,
-    )
-
-
 def _get_runtime_service(
     request: Request,
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache),
-    agent_resume_service: AgentResumeService = Depends(_get_resume_service),
 ) -> AgentRuntimeService:
     """Agent SSE 编排服务。"""
     repo = AgentRepository(db)
@@ -116,7 +102,6 @@ def _get_runtime_service(
         interview_service=interview_svc,
         evaluation_service=evaluation_svc,
         resume_loader=resume_loader,
-        agent_resume_service=agent_resume_service,
     )
 
 
@@ -341,18 +326,21 @@ async def submit_interaction(
 # ============================= 简历上传 =============================
 
 
-@agent_router.post("/sessions/{session_id}/resumes")
+@agent_router.post("/resumes")
 async def upload_resume(
     file: UploadFile = File(...),
-    job_id: int | None = Form(None),
-    session_id: int = Path(..., ge=1),
     current_user: dict = Depends(get_current_user),
-    session_svc: AgentSessionService = Depends(_get_session_service),
-    resume_svc: AgentResumeService = Depends(_get_resume_service),
 ):
-    """上传简历到会话。"""
-    session = await session_svc._require_session(session_id, current_user)
-    out = await resume_svc.upload(
-        session_id=session.id, file=file, job_id=job_id, employee_id=session.employee_id,
-    )
-    return ApiResponse(data=out)
+    """上传简历文件（脱离 session）。
+
+    只存盘返回 file_path/file_name，不解析、不入 resume 表、不写 Redis。
+    解析在首条消息的 load_resume 节点按 file_path 进行，结果由 checkpoint 管理。
+    文件按 employee 维度隔离目录存储，保证归属。
+    """
+    employee_id = int(current_user["sub"])
+    ext = os.path.splitext(file.filename)[1] if file.filename else ""
+    relative_path = f"agent_resumes/{employee_id}/{uuid.uuid4().hex}{ext}"
+    storage = StorageRegistry.get()
+    file_path = await storage.upload(file, relative_path=relative_path)
+    logger.info("Agent 简历已上传：employee_id=%s file_path=%s", employee_id, file_path)
+    return ApiResponse(data={"file_path": file_path, "file_name": str(file.filename or "")})

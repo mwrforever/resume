@@ -81,7 +81,6 @@ def _build_svc(runner_astream_fn=None) -> AgentRuntimeService:
         runner_factory=lambda graph: runner,
         interview_service=MagicMock(), evaluation_service=MagicMock(),
         resume_loader=MagicMock(),
-        agent_resume_service=MagicMock(get_session_ref=AsyncMock(return_value=None)),
     )
 
 
