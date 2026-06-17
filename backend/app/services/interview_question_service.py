@@ -80,14 +80,17 @@ class InterviewQuestionService:
 
         渲染 prompt 时把用户的首条消息作为 user_intent 注入，避免不同问题
         都得到同样的 3 个维度。LLM 调用走 thinking-aware 通道：思考模式
-        开启时前端能看到推理过程；JSON 正文用于后端解析，不直接 emit。
+        开启时前端能看到推理过程（写入本节点 step 的 reasoning 字段）；
+        JSON 正文用于后端解析，不直接 emit。
         """
         prompt = _pm.render(
             "interview_questions/dimension_suggest",
             resume_text=state.get("resume_text") or "",
             user_intent=self._extract_user_intent(state),
         )
-        text = await self._stream_with_thinking(prompt, ctx)
+        text = await self._stream_with_thinking(
+            prompt, ctx, stage_label="分析维度",
+        )
         dims = self._parse_dimensions(text)
         if not dims:
             logger.warning(
@@ -128,7 +131,9 @@ class InterviewQuestionService:
             ),
             review_feedback=review_feedback,
         )
-        text = await self._stream_with_thinking(prompt, ctx)
+        text = await self._stream_with_thinking(
+            prompt, ctx, stage_label="规划出题",
+        )
         plan = self._parse_plan(text) or self._fallback_plan(
             state.get("selected_dimensions") or BUILTIN_DIMENSIONS,
         )
@@ -167,8 +172,8 @@ class InterviewQuestionService:
             }))
         # 一次 fanout 内的所有 LLM 调用共享 ctx；单维度异常被 gather 捕获
         tasks = [
-            self._generate_for_dimension(item, state["resume_text"], ctx)
-            for item in items
+            self._generate_for_dimension(item, state["resume_text"], ctx, dim_indices[i])
+            for i, item in enumerate(items)
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         all_questions: list[dict[str, Any]] = []
@@ -217,52 +222,77 @@ class InterviewQuestionService:
 
     async def _stream_with_thinking(
         self, prompt: str, ctx: WorkflowRuntimeContext,
+        *,
+        stage_label: str | None = None, block_index: int | None = None,
     ) -> str:
-        """LLM 流式调用：思考模式开启时把 reasoning_content emit 为 thinking block；
-        text 正文不 emit（结构化 JSON 不应当作正文展示给用户），仅累加返回。
+        """LLM 流式调用：思考模式开启时把 reasoning_content 写入指定载体；
+        text 正文不 emit（结构化 JSON 不当作正文展示），仅累加返回。
+
+        归位策略（二选一，由调用方指定）：
+        - stage_label：阶段级节点的思考写入一个新分配的 tool_use 块（display_name
+          为该阶段中文名）。块会随消息持久化，run 结束后历史消息里仍可展开查看。
+        - block_index：维度级思考写入该维度预分配的 tool_use 块（fanout 各归各位）。
 
         与 ResumeEvaluationService._stream_text_with_optional_thinking 的差异：
-        本通道**不**为正文创建 text block——这里的 text 是结构化 JSON，会被后端
+        本通道不为正文创建 text block——这里的 text 是结构化 JSON，会被后端
         解析后通过 dimension_selection / plan_approval / interview_questions 等
         专用 block 呈现，不能直接渲染为正文。
         """
+        if not ctx.runtime_config.enable_thinking:
+            # 关闭思考：静默消费，不 emit 任何 reasoning
+            text_buf: list[str] = []
+            try:
+                async for chunk in self._router.stream(prompt, ctx.runtime_config):
+                    if chunk.kind == "text":
+                        text_buf.append(chunk.text_delta)
+            except Exception:
+                logger.exception("LLM 内部 JSON 调用失败")
+            return "".join(text_buf)
+
         writer = get_stream_writer()
-        thinking_idx: int | None = None
-        # 仅当用户在前端开启思考模式时，才创建 thinking block 并推流
-        if ctx.runtime_config.enable_thinking:
-            thinking_idx = ctx.emitter.next_block_index()
-            writer(ctx.emitter.emit_block_start(
-                index=thinking_idx, block={"type": "thinking", "text": "", "status": "streaming"},
-            ))
-        text_buf: list[str] = []
-        thinking_buf: list[str] = []
+        text_parts: list[str] = []
+        thinking_parts: list[str] = []
+
+        # 阶级思考：新分配一个 tool_use 块承载（display_name 用阶段中文名）
+        stage_idx: int | None = None
+        if stage_label is not None and block_index is None:
+            stage_idx = ctx.emitter.next_block_index()
+            writer(ctx.emitter.emit_block_start(index=stage_idx, block={
+                "type": "tool_use", "tool_name": "thinking",
+                "display_name": stage_label,
+                "input": {}, "status": "streaming",
+            }))
+        target_idx = stage_idx if stage_idx is not None else block_index
+
+        def _emit_reasoning_delta(delta: str) -> None:
+            """把思考增量写入目标 tool_use 块。"""
+            if target_idx is not None:
+                writer(ctx.emitter.emit_block_delta(
+                    index=target_idx, delta={"reasoning": delta},
+                ))
+
         try:
             async for chunk in self._router.stream(prompt, ctx.runtime_config):
-                if chunk.kind == "thinking" and thinking_idx is not None:
-                    writer(ctx.emitter.emit_block_delta(
-                        index=thinking_idx, delta={"text_delta": chunk.text_delta},
-                    ))
-                    thinking_buf.append(chunk.text_delta)
+                if chunk.kind == "thinking":
+                    thinking_parts.append(chunk.text_delta)
+                    _emit_reasoning_delta(chunk.text_delta)
                 elif chunk.kind == "text":
-                    text_buf.append(chunk.text_delta)
+                    text_parts.append(chunk.text_delta)
         except Exception:
             logger.exception("LLM 内部 JSON 调用失败")
-        finally:
-            if thinking_idx is not None:
-                # 兜底：开启思考但模型未返回任何 reasoning_content，emit 一条提示
-                # 让前端 thinking block 不显示为空白（BUG-3B）
-                if not "".join(thinking_buf).strip():
-                    writer(ctx.emitter.emit_block_delta(
-                        index=thinking_idx,
-                        delta={"text_delta": "（当前模型未返回推理过程）"},
-                    ))
-                writer(ctx.emitter.emit_block_stop(index=thinking_idx))
-        return "".join(text_buf)
+        # 兜底：开启思考但模型未返回任何 reasoning_content，emit 一条提示
+        if not "".join(thinking_parts).strip():
+            _emit_reasoning_delta("（当前模型未返回推理过程）")
+        # 阶段块收尾：streaming → success（让前端 ToolUseBlock 显示绿勾）
+        if stage_idx is not None:
+            writer(ctx.emitter.emit_block_stop(index=stage_idx))
+        return "".join(text_parts)
 
     async def _generate_for_dimension(
         self, plan_item: dict, resume_text: str, ctx: WorkflowRuntimeContext,
+        block_index: int,
     ) -> list[dict[str, Any]]:
-        """为单个维度生成题目。
+        """为单个维度生成题目，思考写入该维度预分配的 tool_use 块（block_index）。
 
         模板要求 LLM 输出 {"questions": [...]}，此处对三种形态做归一化：
         顶层 list、顶层 {questions: [...]}、Markdown 代码块包裹。
@@ -272,7 +302,7 @@ class InterviewQuestionService:
             resume_text=resume_text,
             plan_item=json.dumps(plan_item, ensure_ascii=False),
         )
-        text = await self._stream_with_thinking(prompt, ctx)
+        text = await self._stream_with_thinking(prompt, ctx, block_index=block_index)
         questions = self._parse_questions(text)
         if not questions:
             logger.warning(

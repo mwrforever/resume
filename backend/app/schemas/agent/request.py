@@ -83,9 +83,10 @@ class AgentSessionModelSelect(BaseModel):
 
 
 class AgentRuntimeOptions(BaseModel):
-    """单次消息的运行时覆盖（仅 thinking 开关）。"""
+    """单次消息的运行时覆盖（思考开关 + 模型名）。"""
     model_config = ConfigDict(extra="forbid")
     enable_thinking: bool | None = None
+    model_name: str | None = Field(default=None, max_length=100)
 
 
 class AgentMessageCreate(BaseModel):
@@ -101,6 +102,8 @@ class AgentInteractionSubmit(BaseModel):
     values: dict[str, Any] = Field(default_factory=dict)
     # 显式指定 resume 所属的 graph；后端不再从历史消息推断路由（内容不当下文原则）
     workflow_type: AgentWorkflowType = "interview_questions"
+    # 思考模式为发送时动态参数（与首条消息一致），续接 run 沿用同次会话的开关状态
+    runtime_options: AgentRuntimeOptions | None = None
 
 
 # ====== 向后兼容别名（旧字段名映射，阶段 7 后可删除） ======

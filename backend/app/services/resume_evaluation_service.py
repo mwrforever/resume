@@ -131,7 +131,8 @@ class ResumeEvaluationService:
         prompt = _pm.render("resume_evaluation/profile_analyze", resume_text=resume_text)
         # 静默调用：画像 JSON 是内部结构化数据，不该当正文流式展示给用户。
         # 用户在步骤条看到"正在结构化解析简历…"即可，避免裸 JSON 泄露。
-        text = await self._call_llm_silently(prompt, ctx)
+        # 思考内容（若开启）写入 analyze_resume_profile step，供步骤展开查看。
+        text = await self._call_llm_silently(prompt, ctx, stage_label="分析画像")
         try:
             profile = json.loads(text)
         except json.JSONDecodeError:
@@ -234,7 +235,8 @@ class ResumeEvaluationService:
         )
         # 静默调用：报告 JSON 是结构化中间产物，不该当正文流式展示。
         # 最终报告通过 finalize_evaluation_report 节点的 evaluation_report block 输出。
-        text = await self._call_llm_silently(prompt, ctx)
+        # 思考内容（若开启）写入 build_visualization_report step，供步骤展开查看。
+        text = await self._call_llm_silently(prompt, ctx, stage_label="组装报告")
         try:
             report = ResumeEvaluationReportDTO.model_validate_json(text).model_dump(mode="json")
             # 兜底：用评估结果的真实维度名覆盖 LLM 可能生成的占位名（维度1/维度2）
@@ -283,52 +285,57 @@ class ResumeEvaluationService:
 
     # ---------- 内部 ----------
 
-    async def _stream_text_with_optional_thinking(self, prompt: str, ctx: WorkflowRuntimeContext) -> tuple[str, str]:
-        """LLM 流式调用，按 enable_thinking 分流。"""
-        writer = get_stream_writer()
-        text_idx = ctx.emitter.next_block_index()
-        thinking_idx = None
-        if ctx.runtime_config.enable_thinking:
-            thinking_idx = ctx.emitter.next_block_index()
-            writer(ctx.emitter.emit_block_start(index=thinking_idx, block={"type": "thinking", "text": ""}))
-        writer(ctx.emitter.emit_block_start(index=text_idx, block={"type": "text", "text": ""}))
-        text_buf: list[str] = []
-        thinking_buf: list[str] = []
-        try:
-            async for chunk in self._router.stream(prompt, ctx.runtime_config):
-                if chunk.kind == "thinking" and thinking_idx is not None:
-                    writer(ctx.emitter.emit_block_delta(index=thinking_idx, delta={"text_delta": chunk.text_delta}))
-                    thinking_buf.append(chunk.text_delta)
-                elif chunk.kind == "text":
-                    writer(ctx.emitter.emit_block_delta(index=text_idx, delta={"text_delta": chunk.text_delta}))
-                    text_buf.append(chunk.text_delta)
-        except Exception:
-            logger.exception("LLM 流式失败")
-        finally:
-            if thinking_idx is not None:
-                # 兜底：开启思考但模型未返回任何 reasoning_content（BUG-3B）
-                if not "".join(thinking_buf).strip():
-                    writer(ctx.emitter.emit_block_delta(
-                        index=thinking_idx,
-                        delta={"text_delta": "（当前模型未返回推理过程）"},
-                    ))
-                writer(ctx.emitter.emit_block_stop(index=thinking_idx))
-            writer(ctx.emitter.emit_block_stop(index=text_idx))
-        return "".join(text_buf), "".join(thinking_buf)
-
-    async def _call_llm_silently(self, prompt: str, ctx: WorkflowRuntimeContext) -> str:
-        """静默 LLM 调用：只消费流式输出，不 emit 任何 text/thinking block。
+    async def _call_llm_silently(
+        self, prompt: str, ctx: WorkflowRuntimeContext, *, stage_label: str | None = None,
+    ) -> str:
+        """静默 LLM 调用：只消费流式输出，不 emit 任何 text block。
 
         用于产出结构化 JSON 中间数据的节点（画像分析、可视化报告）：
         这些 JSON 是内部数据，最终通过 evaluation_report block 结构化展示，
-        不该把裸 JSON 当正文流式吐给用户。
-        步骤条（step.update）仍由 runner 翻译节点 updates 发出，用户能看到进度。
+        不该把裸 JSON 当正文流式吐给用户。步骤条（step.update）仍由 runner
+        翻译节点 updates 发出，用户能看到进度。
+
+        思考内容（若开启且传入 stage_label）：写入一个新分配的 tool_use 块，
+        块随消息持久化，run 结束后历史消息里仍可展开查看推理过程。
         """
         text_buf: list[str] = []
+        thinking_buf: list[str] = []
+        # 阶段思考：开启思考且指定阶段名时，新分配 tool_use 块承载（可持久化）
+        stage_idx: int | None = None
+        if ctx.runtime_config.enable_thinking and stage_label:
+            stage_idx = ctx.emitter.next_block_index()
+            writer = get_stream_writer()
+            writer(ctx.emitter.emit_block_start(index=stage_idx, block={
+                "type": "tool_use", "tool_name": "thinking",
+                "display_name": stage_label,
+                "input": {}, "status": "streaming",
+            }))
         try:
             async for chunk in self._router.stream(prompt, ctx.runtime_config):
                 if chunk.kind == "text":
                     text_buf.append(chunk.text_delta)
+                elif chunk.kind == "thinking":
+                    thinking_buf.append(chunk.text_delta)
+                    self._emit_stage_reasoning(ctx, stage_idx, chunk.text_delta)
         except Exception:
             logger.exception("LLM 静默调用失败")
+        # 兜底：开启思考但模型未返回任何 reasoning_content
+        if ctx.runtime_config.enable_thinking and stage_label and not "".join(thinking_buf).strip():
+            self._emit_stage_reasoning(ctx, stage_idx, "（当前模型未返回推理过程）")
+        # 阶段块收尾：streaming → success
+        if stage_idx is not None:
+            writer = get_stream_writer()
+            writer(ctx.emitter.emit_block_stop(index=stage_idx))
         return "".join(text_buf)
+
+    @staticmethod
+    def _emit_stage_reasoning(
+        ctx: WorkflowRuntimeContext, block_index: int | None, delta: str,
+    ) -> None:
+        """把思考增量写入指定 tool_use 块（仅当 block_index 非空时调用）。"""
+        if block_index is None:
+            return
+        writer = get_stream_writer()
+        writer(ctx.emitter.emit_block_delta(
+            index=block_index, delta={"reasoning": delta},
+        ))

@@ -20,7 +20,6 @@ from app.llm.model_router import LLMModelRouter, get_default_model_router
 from app.repositories.agent_repository import AgentRepository
 from app.schemas.agent.request import (
     AgentSessionCreate,
-    AgentSessionModelSelect,
     AgentSessionUpdate,
 )
 from app.schemas.agent.response import (
@@ -117,37 +116,6 @@ class AgentSessionService:
         updated = await self._repo.update_session(session.id, title=body.title)
         if not updated:
             raise NotFoundError("会话不存在")
-        await self._repo.commit()
-        return AgentSessionItem.model_validate(updated)
-
-    async def select_model(
-        self, *, session_id: int, body: AgentSessionModelSelect, current_user: dict,
-    ) -> AgentSessionItem:
-        """切换会话使用的模型。
-
-        Args:
-            body: 包含 model_name 的请求体
-        """
-        session = await self._require_session(session_id, current_user)
-        updated = await self._repo.update_session(session.id, selected_model_name=body.model_name)
-        if not updated:
-            raise NotFoundError("会话不存在")
-        await self._repo.commit()
-        return AgentSessionItem.model_validate(updated)
-
-    async def set_enable_thinking(
-        self, *, session_id: int, enable_thinking: bool, current_user: dict,
-    ) -> AgentSessionItem:
-        """持久化 thinking 开关。
-
-        Args:
-            enable_thinking: 是否启用思考模式
-        """
-        session = await self._require_session(session_id, current_user)
-        # enable_thinking 在数据库中存储为 int（0/1）
-        updated = await self._repo.update_session(
-            session.id, enable_thinking=1 if enable_thinking else 0,
-        )
         await self._repo.commit()
         return AgentSessionItem.model_validate(updated)
 

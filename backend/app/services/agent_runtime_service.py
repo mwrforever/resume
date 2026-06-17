@@ -469,6 +469,11 @@ class AgentRuntimeService:
                     blocks_by_index[idx]["text"] = (
                         blocks_by_index[idx].get("text") or ""
                     ) + delta["text_delta"]
+                # tool_use 思考过程累加（开启思考模式时各维度块自带的 reasoning）
+                if "reasoning" in delta:
+                    blocks_by_index[idx]["reasoning"] = (
+                        blocks_by_index[idx].get("reasoning") or ""
+                    ) + delta["reasoning"]
                 # tool_use 完成状态
                 for k in ("status", "output", "error"):
                     if k in delta:

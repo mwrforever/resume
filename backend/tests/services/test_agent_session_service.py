@@ -1,4 +1,4 @@
-"""AgentSessionService：CRUD + thinking 开关持久化。"""
+"""AgentSessionService：CRUD 测试（thinking 开关已改为发送时动态参数，不再持久化）。"""
 
 from __future__ import annotations
 
@@ -37,24 +37,6 @@ async def test_create_session_returns_item():
         current_user={"user_type": "employee", "sub": "2"},
     )
     assert item.title == "T"
-    repo.commit.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_update_enable_thinking_persists():
-    """set_enable_thinking 应持久化到数据库。"""
-    updated_orm = _make_session_orm(enable_thinking=1)
-    repo = MagicMock()
-    repo.get_session = AsyncMock(return_value=_make_session_orm())
-    repo.update_session = AsyncMock(return_value=updated_orm)
-    repo.commit = AsyncMock()
-    svc = AgentSessionService(repo)
-    item = await svc.set_enable_thinking(
-        session_id=1, enable_thinking=True,
-        current_user={"user_type": "employee", "sub": "2"},
-    )
-    assert item.enable_thinking is True
-    repo.update_session.assert_awaited_once()
     repo.commit.assert_awaited_once()
 
 

@@ -33,7 +33,6 @@ from app.schemas.agent.request import (
     AgentInteractionSubmit,
     AgentMessageCreate,
     AgentSessionCreate,
-    AgentSessionModelSelect,
     AgentSessionUpdate,
     LlmConfigCreate,
     LlmConfigUpdate,
@@ -221,32 +220,6 @@ async def update_session(
     return ApiResponse(data=item.model_dump())
 
 
-@agent_router.put("/sessions/{session_id}/model")
-async def select_model(
-    body: AgentSessionModelSelect,
-    session_id: int = Path(..., ge=1),
-    current_user: dict = Depends(get_current_user),
-    svc: AgentSessionService = Depends(_get_session_service),
-):
-    """切换会话使用的模型。"""
-    item = await svc.select_model(session_id=session_id, body=body, current_user=current_user)
-    return ApiResponse(data=item.model_dump())
-
-
-@agent_router.put("/sessions/{session_id}/thinking")
-async def set_thinking(
-    enable: bool = Query(..., description="开启/关闭思考模式"),
-    session_id: int = Path(..., ge=1),
-    current_user: dict = Depends(get_current_user),
-    svc: AgentSessionService = Depends(_get_session_service),
-):
-    """持久化 thinking 开关。"""
-    item = await svc.set_enable_thinking(
-        session_id=session_id, enable_thinking=enable, current_user=current_user,
-    )
-    return ApiResponse(data=item.model_dump())
-
-
 @agent_router.delete("/sessions/{session_id}")
 async def delete_session(
     session_id: int = Path(..., ge=1),
@@ -272,16 +245,20 @@ async def stream_message(
 ):
     """流式运行 Agent 工作流，返回 SSE 事件流。"""
     session = await session_svc._require_session(session_id, current_user)
-    runtime_config = await llm_svc.get_runtime_config(current_user, session.selected_model_name)
-    # thinking 开关：前端 runtime_options 优先，否则取会话持久化值
-    if body.runtime_options and body.runtime_options.enable_thinking is not None:
-        runtime_config = runtime_config.model_copy(
-            update={"enable_thinking": body.runtime_options.enable_thinking},
-        )
-    else:
-        runtime_config = runtime_config.model_copy(
-            update={"enable_thinking": bool(session.enable_thinking)},
-        )
+    # 模型名：前端 runtime_options 优先，否则回退会话持久化值
+    model_name = (
+        body.runtime_options.model_name
+        if body.runtime_options and body.runtime_options.model_name
+        else session.selected_model_name
+    )
+    runtime_config = await llm_svc.get_runtime_config(current_user, model_name)
+    # thinking 开关为发送时动态参数（runtime_options），不依赖会话持久化值；
+    # 前端未携带时默认关闭。
+    enable_thinking = bool(
+        body.runtime_options and body.runtime_options.enable_thinking is not None
+        and body.runtime_options.enable_thinking
+    )
+    runtime_config = runtime_config.model_copy(update={"enable_thinking": enable_thinking})
 
     async def _generator():
         async for env in runtime_svc.stream_message(
@@ -308,10 +285,19 @@ async def submit_interaction(
     """提交 interaction 卡片的用户填写，恢复 graph。"""
     session = await session_svc._require_session(session_id, current_user)
     workflow_type = body.workflow_type
-    runtime_config = await llm_svc.get_runtime_config(current_user, session.selected_model_name)
-    runtime_config = runtime_config.model_copy(
-        update={"enable_thinking": bool(session.enable_thinking)},
+    # 模型名：前端 runtime_options 优先，否则回退会话持久化值
+    model_name = (
+        body.runtime_options.model_name
+        if body.runtime_options and body.runtime_options.model_name
+        else session.selected_model_name
     )
+    runtime_config = await llm_svc.get_runtime_config(current_user, model_name)
+    # thinking 开关为发送时动态参数，续接 run 沿用前端携带的 runtime_options；缺省关闭
+    enable_thinking = bool(
+        body.runtime_options and body.runtime_options.enable_thinking is not None
+        and body.runtime_options.enable_thinking
+    )
+    runtime_config = runtime_config.model_copy(update={"enable_thinking": enable_thinking})
 
     async def _generator():
         async for env in runtime_svc.resolve_interaction(
