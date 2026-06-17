@@ -10,6 +10,7 @@ ResumeLoader：简历原文读取。
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from app.repositories.resume_repository import ResumeRepository
 from app.services.cache_service import CacheService
@@ -67,5 +68,6 @@ class ResumeLoader:
             简历纯文本；文件损坏/空时返回空串（由 graph 兜底处理）。
         """
         full_path = self._storage.get_full_path(file_path)
-        return extract_resume_text(full_path)
+        # extract_resume_text 期望 Path（内部用 .suffix 判定格式），需包装
+        return extract_resume_text(Path(full_path))
 

@@ -53,15 +53,22 @@ async def test_load_raises_when_resume_missing():
 
 @pytest.mark.asyncio
 async def test_load_by_path_parses_file(monkeypatch):
-    """load_by_path 调 extract_resume_text(full_path) 返回解析文本，不碰 cache/repo。"""
+    """load_by_path 调 extract_resume_text(Path(full_path)) 返回解析文本，不碰 cache/repo。"""
     storage = _storage_mock("/data/x.pdf")
     loader = ResumeLoader(cache=MagicMock(), resume_repo=MagicMock(), storage=storage)
-    monkeypatch.setattr(
-        "app.services.resume_loader.extract_resume_text",
-        lambda path: "解析出的简历文本",
-    )
+    captured: dict = {}
+
+    def fake_extract(path):
+        captured["path"] = path
+        return "解析出的简历文本"
+
+    monkeypatch.setattr("app.services.resume_loader.extract_resume_text", fake_extract)
     text = await loader.load_by_path(file_path="x.pdf")
-    storage.get_full_path.assert_called_once_with("x.pdf")
+    # extract_resume_text 被调用且收到 Path 对象（内部用 .suffix 判定格式）
+    from pathlib import Path
+    assert "path" in captured, "extract_resume_text 未被调用"
+    assert isinstance(captured["path"], Path)
+    assert captured["path"].name == "x.pdf"
     assert text == "解析出的简历文本"
 
 
