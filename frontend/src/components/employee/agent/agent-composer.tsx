@@ -36,7 +36,7 @@ const WORKFLOWS: WorkflowType[] = ['interview_questions', 'resume_evaluation'];
 type UploadState =
   | { kind: 'idle' }
   | { kind: 'uploading'; fileName: string }
-  | { kind: 'success'; resumeId: number; fileName: string; size: number }
+  | { kind: 'success'; file_path: string; fileName: string }
   | { kind: 'error'; message: string };
 
 export function AgentComposer({
@@ -75,7 +75,7 @@ export function AgentComposer({
     const trimmed = content.trim();
     if (!trimmed || sending) return;
     const ctxRefs = upload.kind === 'success'
-      ? [{ type: 'resume', resume_id: upload.resumeId, file_name: upload.fileName }]
+      ? [{ type: 'resume', file_path: upload.file_path, file_name: upload.fileName }]
       : undefined;
     onSend({ content: trimmed, workflow_type: workflow, context_refs: ctxRefs });
     setContent('');
@@ -99,17 +99,16 @@ export function AgentComposer({
   const onPickFile = async (file: File) => {
     setUpload({ kind: 'uploading', fileName: file.name });
     try {
-      const resp = await employeeAgentApi.uploadResume(session.id, file);
+      const resp = await employeeAgentApi.uploadResume(file);
       const data = resp.data?.data ?? resp.data;
-      if (data?.resume_id) {
+      if (data?.file_path) {
         setUpload({
           kind: 'success',
-          resumeId: data.resume_id,
+          file_path: data.file_path,
           fileName: data.file_name ?? file.name,
-          size: file.size,
         });
       } else {
-        setUpload({ kind: 'error', message: '上传失败：响应缺少 resume_id' });
+        setUpload({ kind: 'error', message: '上传失败：响应缺少 file_path' });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '上传失败';
@@ -260,7 +259,6 @@ function UploadChip({
                       bg-[#E0F2FE] text-[#0369A1] text-xs font-medium border border-[#0EA5E9]/20">
         <ResumeFileIcon fileName={state.fileName} size={16} />
         <span className="truncate max-w-[260px]">已附上 · {state.fileName}</span>
-        <span className="text-[#64748B] font-normal">{(state.size / 1024).toFixed(0)} KB</span>
         <button type="button" onClick={onClear}
                 className="ml-1 hover:text-[#DC2626] transition-colors" title="移除附件">
           <X size={12} />

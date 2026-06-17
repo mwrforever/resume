@@ -106,12 +106,11 @@ export const employeeAgentApi = {
     );
   },
 
-  /** 上传简历 */
-  uploadResume: (sessionId: number, file: File, jobId?: number) => {
+  /** 上传简历（脱离 session，只存文件返回路径） */
+  uploadResume: (file: File) => {
     const form = new FormData();
     form.append('file', file);
-    if (jobId !== undefined) form.append('job_id', String(jobId));
-    return client.post(`/employee/agent/sessions/${sessionId}/resumes`, form, {
+    return client.post('/employee/agent/resumes', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
