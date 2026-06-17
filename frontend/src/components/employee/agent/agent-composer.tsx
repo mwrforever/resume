@@ -28,7 +28,12 @@ export interface AgentComposerProps {
     context_refs?: Array<Record<string, unknown>>;
   }) => void;
   onAbort: () => void;
-  onSessionUpdate: (next: WorkspaceSession) => void;
+  /** 切换思考模式：空会话由 store 写全局默认+会话，中途会话仅写会话 */
+  onToggleThinking: () => void;
+  /** 选择模型：空会话由 store 写全局默认+会话，中途会话仅写会话 */
+  onPickModel: (modelName: string | null) => void;
+  /** 当前会话是否为空（无消息）：用于思考按钮/模型按钮 tooltip 区分作用域 */
+  isEmptySession: boolean;
 }
 
 const WORKFLOWS: WorkflowType[] = ['interview_questions', 'resume_evaluation'];
@@ -41,7 +46,7 @@ type UploadState =
 
 export function AgentComposer({
   session, sending, lastWorkflow, prefilledPrompt, onPrefillConsumed,
-  onSend, onAbort, onSessionUpdate,
+  onSend, onAbort, onToggleThinking, onPickModel, isEmptySession,
 }: AgentComposerProps) {
   const [content, setContent] = useState('');
   // 初始模式取最近一条消息的 workflow_type；空会话回退默认 interview_questions。
@@ -90,10 +95,11 @@ export function AgentComposer({
     }
   };
 
-  const toggleThinking = async () => {
-    const next = !session.enable_thinking;
-    await employeeAgentApi.setThinking(session.id, next);
-    onSessionUpdate({ ...session, enable_thinking: next });
+  const toggleThinking = () => {
+    // 空会话（无消息）切换 = 调整全局默认（且同步当前会话）；
+    // 中途会话切换 = 仅调当前会话。区分逻辑在 store.toggleThinking 内，
+    // composer 只负责触发；状态挂在 session 上，多会话并发不会串台。
+    onToggleThinking();
   };
 
   const onPickFile = async (file: File) => {
@@ -152,13 +158,21 @@ export function AgentComposer({
             ))}
           </div>
           <div className="flex items-center gap-2">
-            {/* 模型选择：懒加载 /llm-model-options，更换后立即同步会话状态 */}
-            <AgentModelPicker session={session} onSessionUpdate={onSessionUpdate} />
+            {/* 模型选择：懒加载 /llm-model-options，走 store.selectModel（空会话写全局+会话） */}
+            <AgentModelPicker
+              session={session}
+              onPickModel={onPickModel}
+              isEmptySession={isEmptySession}
+            />
             <button
               type="button"
-              onClick={() => void toggleThinking()}
+              onClick={toggleThinking}
               aria-pressed={session.enable_thinking}
-              title={session.enable_thinking ? '点击关闭思考模式' : '点击开启思考模式（更慢但更深入）'}
+              title={
+                isEmptySession
+                  ? (session.enable_thinking ? '关闭思考模式（将设为新建会话的默认）' : '开启思考模式（将设为新建会话的默认，更慢但更深入）')
+                  : (session.enable_thinking ? '关闭当前会话的思考模式' : '开启当前会话的思考模式（更慢但更深入）')
+              }
               className={`flex items-center gap-1.5 h-7 px-3 rounded-full text-xs font-medium
                           transition-all duration-150 ${
                 session.enable_thinking

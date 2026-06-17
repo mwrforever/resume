@@ -68,3 +68,18 @@
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+/* ReasoningSection 展开：内容从透明 + 上移 6px 渐入（无滚轮的"涌现"感） */
+@keyframes reasoningReveal {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* ReasoningSection 顶部渐隐遮罩（营造内容从下方"滚动涌现"的视觉，无真实滚动条） */
+.reasoning-veil::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 14px;
+  background: linear-gradient(to bottom, rgba(248,250,252,1), rgba(248,250,252,0));
+  pointer-events: none;
+  z-index: 1;
+}

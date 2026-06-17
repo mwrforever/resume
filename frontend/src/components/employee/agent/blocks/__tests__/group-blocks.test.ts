@@ -6,6 +6,9 @@ const text = (i: number, t: string): AgentBlock =>
   ({ type: 'text', index: i, text: t, status: 'success' });
 const thinking = (i: number, t: string): AgentBlock =>
   ({ type: 'thinking', index: i, text: t, status: 'success' });
+/** tool_use 块（可携带后端落库的 reasoning 字段） */
+const toolUse = (i: number, name: string, reasoning?: string): AgentBlock =>
+  ({ type: 'tool_use', index: i, tool_name: 'g', display_name: name, input: {}, status: 'success', ...(reasoning ? { reasoning } : {}) }) as AgentBlock;
 
 describe('attachReasoning', () => {
   it('thinking 吸附到其后紧跟的业务块', () => {
@@ -57,5 +60,34 @@ describe('attachReasoning', () => {
     expect(out.map(b => b.type)).toEqual(['text', 'text']);
     expect((out[0] as { reasoning?: string }).reasoning).toBe('T1');
     expect((out[1] as { reasoning?: string }).reasoning).toBe('T2');
+  });
+
+  it('保留 tool_use 块自带的 reasoning（后端已落库思考内容，不可覆盖）', () => {
+    const blocks: AgentBlock[] = [
+      toolUse(0, '生成【后端】题目', '维度块的独立思考'),
+    ];
+    const out = attachReasoning(blocks);
+    expect((out[0] as { reasoning?: string }).reasoning).toBe('维度块的独立思考');
+  });
+
+  it('前置 thinking 与 tool_use 自带 reasoning 合并（前置在前）', () => {
+    const blocks: AgentBlock[] = [
+      thinking(0, '前置思考'),
+      toolUse(1, '生成【后端】题目', '自带思考'),
+    ];
+    const out = attachReasoning(blocks);
+    // thinking 块被过滤，tool_use 在 out[0]
+    expect(out).toHaveLength(1);
+    expect((out[0] as { reasoning?: string }).reasoning).toBe('前置思考自带思考');
+  });
+
+  it('多个 tool_use 块各自保留/合并自己的 reasoning（fanout 不串台）', () => {
+    const blocks: AgentBlock[] = [
+      toolUse(0, '生成【A】题目', '思考A'),
+      toolUse(1, '生成【B】题目', '思考B'),
+    ];
+    const out = attachReasoning(blocks);
+    expect((out[0] as { reasoning?: string }).reasoning).toBe('思考A');
+    expect((out[1] as { reasoning?: string }).reasoning).toBe('思考B');
   });
 });

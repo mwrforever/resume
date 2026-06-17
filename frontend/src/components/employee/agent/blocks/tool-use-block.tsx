@@ -1,26 +1,36 @@
 /**
- * ToolUseBlock：工具调用状态块
+ * ToolUseBlock：工具调用状态块（维度/阶段）
  *
- * running → 旋转 spinner | success → 绿勾 + 可点开看 output 详情 | failed → 红 error。
+ * - running → 旋转 spinner + "运行中…"，思考区可展开看实时思考流
+ * - success → 绿勾 + 维度名 + "生成 N 题"（从 output.count 取），可展开思考过程
+ * - failed → 红 error
+ *
+ * 思考内容归位规则：
+ * - 各维度块自带 block.reasoning（后端落库），运行结束/历史消息均可展开查看。
+ * - 展开详情 = 思考内容（ReasoningSection），不再是 JSON。
+ * - 非思考模式（无 reasoning）时不显示任何展开/下拉区，只展示状态与题数。
+ *
  * 单维度失败不阻塞其他，error 内联展示。
  */
 
-import { useState } from 'react';
 import type { AgentBlock } from '@/types/agent';
+import { ReasoningSection } from './reasoning-section';
 
 interface ToolUseBlockProps {
   block: AgentBlock & { type: 'tool_use' };
 }
 
 export function ToolUseBlock({ block }: ToolUseBlockProps) {
-  const { tool_name, display_name, status, error, output } = block;
+  const { display_name, tool_name, status, error } = block;
   const isRunning = status === 'streaming';
   const isFailed = status === 'failed';
-  const [expanded, setExpanded] = useState(false);
+  // 后端 fanout 成功时 output = {"count": N}；阶段块无 output
+  const questionCount = typeof block.output?.count === 'number' ? block.output.count : null;
+  const hasReasoning = !!block.reasoning?.trim();
 
   return (
-    <div className="inline-flex flex-col gap-1">
-      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#F1F5F9] text-sm">
+    <div className="flex flex-col gap-1">
+      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#F1F5F9] text-sm w-fit">
         {isRunning ? (
           <svg className="w-3.5 h-3.5 text-[#0EA5E9] animate-spin" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -39,25 +49,20 @@ export function ToolUseBlock({ block }: ToolUseBlockProps) {
         <span className="text-[#334155] font-medium text-xs">{display_name || tool_name}</span>
 
         {isRunning && <span className="text-[#94A3B8] text-xs">运行中…</span>}
-        {/* 成功后展示产出计数，可点击展开 */}
-        {!isRunning && !isFailed && output?.count != null && (
-          <button
-            type="button"
-            onClick={() => setExpanded(e => !e)}
-            className="text-[#16A34A] hover:underline text-xs font-medium"
-          >
-            {expanded ? '收起' : `生成 ${output.count} 题`}
-          </button>
+        {/* 成功后展示生成题数 */}
+        {!isRunning && !isFailed && questionCount !== null && (
+          <span className="text-[#16A34A] text-xs font-medium">· 生成 {questionCount} 题</span>
         )}
+        {/* 失败时内联错误 */}
         {isFailed && error && <span className="text-[#DC2626] text-xs">{error}</span>}
       </div>
 
-      {/* 展开后的 output 详情 */}
-      {expanded && output && (
-        <pre className="ml-1 mt-1 p-2 rounded-md bg-[#F8FAFC] border border-[#E2E8F0]
-                        text-[11px] text-[#64748B] font-mono max-w-[520px] overflow-x-auto">
-{JSON.stringify(output, null, 2)}
-        </pre>
+      {/* 思考过程：仅当有 reasoning 时显示（非思考模式无此区域，无任何下拉框）。
+          运行中 streaming=true 自动展开+跟进；结束后默认折叠，随时可点击查看。 */}
+      {hasReasoning && (
+        <div className="ml-1">
+          <ReasoningSection reasoning={block.reasoning!} streaming={isRunning} />
+        </div>
       )}
     </div>
   );

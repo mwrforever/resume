@@ -9,6 +9,7 @@ import { useCallback, useRef, useState } from 'react';
 import { AgentMessageList } from './agent-message-list';
 import { AgentComposer } from './agent-composer';
 import { useAgentRun } from '@/hooks/use-agent-run';
+import { useAgentStore } from '@/store/agent';
 import type { SendInput } from '@/hooks/use-agent-run';
 import type { WorkspaceSession } from '@/types/agent';
 
@@ -48,7 +49,10 @@ function WorkspaceInner({
   const handleOptimisticSession = useCallback((next: WorkspaceSession) => {
     onSessionUpdate(next);
   }, [onSessionUpdate]);
-  const { session, patchSession, messages, runState, sending, sendMessage, submit, abort } = useAgentRun(sessionId, handleOptimisticSession);
+  const { session, messages, runState, sending, sendMessage, submit, abort } = useAgentRun(sessionId, handleOptimisticSession);
+  // 思考模式/模型选择走 store action（区分空会话写全局默认 / 中途会话仅写当前会话）
+  const toggleThinking = useAgentStore((s) => s.toggleThinking);
+  const selectModel = useAgentStore((s) => s.selectModel);
   const [prefilledPrompt, setPrefilledPrompt] = useState<string | null>(null);
   // 记录最近一次发送入参，供错误态"重试"复用
   const lastInputRef = useRef<SendInput | null>(null);
@@ -76,13 +80,9 @@ function WorkspaceInner({
   }
 
   // 同时同步上层 sessions 数组与 hook 内 session（hook 内的才是 Composer 的渲染源）
-  const handleSessionUpdate = (next: WorkspaceSession) => {
-    patchSession(next);
-    onSessionUpdate(next);
-  };
 
   return (
-    <main className="flex-1 flex flex-col min-w-0">
+    <main className="flex flex-1 flex-col min-w-0">
       <AgentMessageList
         messages={messages}
         runState={runState}
@@ -97,9 +97,15 @@ function WorkspaceInner({
         lastWorkflow={messages.length > 0 ? messages[messages.length - 1].workflow_type : 'interview_questions'}
         prefilledPrompt={prefilledPrompt}
         onPrefillConsumed={() => setPrefilledPrompt(null)}
-        onSend={(input) => handleSend({ ...input, enable_thinking: session.enable_thinking })}
+        onSend={(input) => handleSend({
+          ...input,
+          enable_thinking: session.enable_thinking,
+          model_name: session.selected_model_name,
+        })}
         onAbort={abort}
-        onSessionUpdate={handleSessionUpdate}
+        onToggleThinking={() => toggleThinking(sessionId)}
+        onPickModel={(modelName) => selectModel(sessionId, modelName)}
+        isEmptySession={messages.length === 0}
       />
     </main>
   );

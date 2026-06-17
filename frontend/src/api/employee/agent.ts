@@ -57,26 +57,21 @@ export const employeeAgentApi = {
   updateSession: (id: number, data: { title: string }) =>
     client.put(`/employee/agent/sessions/${id}`, data),
 
-  /** 切换会话模型 */
-  selectModel: (id: number, model_name: string | null) =>
-    client.put(`/employee/agent/sessions/${id}/model`, { model_name }),
-
-  /** 切换 thinking 开关 */
-  setThinking: (id: number, enable: boolean) =>
-    client.put(`/employee/agent/sessions/${id}/thinking`, null, { params: { enable } }),
-
   /** 软删除会话 */
   deleteSession: (id: number) =>
     client.delete(`/employee/agent/sessions/${id}`),
 
-  /** 流式发送消息（返回 AsyncIterableIterator） */
+  /** 流式发送消息（返回 AsyncIterableIterator）
+   *
+   * runtime_options 携带思考开关 + 模型名（均为发送时动态参数，不依赖会话持久化）。
+   */
   streamMessage: (
     sessionId: number,
     data: {
       content: string;
       workflow_type?: WorkflowType;
       context_refs?: Array<Record<string, unknown>>;
-      runtime_options?: { enable_thinking?: boolean };
+      runtime_options?: { enable_thinking?: boolean; model_name?: string | null };
     },
     signal?: AbortSignal,
   ): AsyncIterableIterator<AgentEnvelope> => {
@@ -91,17 +86,25 @@ export const employeeAgentApi = {
    *
    * workflowType 由前端显式携带（对齐后端 AgentInteractionSubmit.workflow_type），
    * 后端不再从历史消息推断路由（内容不当下文原则）。
+   * enableThinking/modelName 沿用当前会话设置，续接 run 保持一致。
    */
   submitInteraction: (
     sessionId: number,
     requestId: string,
     values: Record<string, unknown>,
     workflowType: WorkflowType,
+    runtimeOptions: { enableThinking: boolean; modelName: string | null },
     signal?: AbortSignal,
   ): AsyncIterableIterator<AgentEnvelope> => {
     return openAgentStream(
       `/api/v1/employee/agent/sessions/${sessionId}/interactions/${requestId}`,
-      { values, workflow_type: workflowType },
+      {
+        values, workflow_type: workflowType,
+        runtime_options: {
+          enable_thinking: runtimeOptions.enableThinking,
+          ...(runtimeOptions.modelName ? { model_name: runtimeOptions.modelName } : {}),
+        },
+      },
       { signal },
     );
   },

@@ -36,6 +36,8 @@ export type AgentBlock =
       input: Record<string, unknown>;
       output?: Record<string, unknown>;
       status: BlockStatus; error?: string;
+      /** 维度块自带的思考过程（开启思考模式时由后端 block.delta.reasoning 增量写入） */
+      reasoning?: string;
     }
   | {
       type: 'interaction'; index: number;

@@ -1,9 +1,12 @@
 /**
- * StepStrip：运行步骤条（增强版）
+ * StepStrip：运行步骤条
  *
  * 默认折叠为单行，显示"已完成 N / M 步"。
  * 展开后显示水平时间线。
  * 步骤状态：待执行(灰圈) → 进行中(蓝色旋转) → 已完成(绿勾) → 失败(红X)。
+ *
+ * 注意：思考过程不在步骤条展示——阶段/维度思考统一走 tool_use 块（可持久化），
+ * 由 ToolUseBlock 内的 ReasoningSection 承载，run 结束后历史消息仍可展开查看。
  */
 
 import { useState } from 'react';

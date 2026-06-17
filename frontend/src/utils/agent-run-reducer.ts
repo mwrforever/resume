@@ -118,11 +118,14 @@ function mergeBlockDelta(block: AgentBlock, delta: Record<string, unknown>): Age
       return { ...block, text: block.text + td };
     }
     case 'tool_use': {
+      // reasoning 增量累加（fanout 各维度块自带的思考过程）
+      const reasoningDelta = typeof delta.reasoning === 'string' ? delta.reasoning : '';
       return {
         ...block,
         ...(typeof delta.status === 'string' ? { status: delta.status as AgentBlock['status'] } : {}),
         ...(typeof delta.output === 'object' && delta.output ? { output: delta.output as Record<string, unknown> } : {}),
         ...(typeof delta.error === 'string' ? { error: delta.error } : {}),
+        ...(reasoningDelta ? { reasoning: (block.reasoning ?? '') + reasoningDelta } : {}),
       };
     }
     case 'interaction': {

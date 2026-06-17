@@ -11,12 +11,15 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Loader2, Check } from 'lucide-react';
-import { employeeAgentApi, employeeLlmApi } from '@/api/employee/agent';
+import { employeeLlmApi } from '@/api/employee/agent';
 import type { ILlmModelOption, WorkspaceSession } from '@/types/agent';
 
 export interface AgentModelPickerProps {
   session: WorkspaceSession;
-  onSessionUpdate: (next: WorkspaceSession) => void;
+  /** 选择模型回调（store.selectModel：空会话写全局+会话，中途仅写会话） */
+  onPickModel: (modelName: string | null) => void;
+  /** 当前会话是否为空（无消息）：用于 tooltip 区分作用域 */
+  isEmptySession: boolean;
 }
 
 /** 来源标签：env / employee / dept 三类，给用户辨识模型出处 */
@@ -26,11 +29,10 @@ const SOURCE_LABEL: Record<ILlmModelOption['source'], string> = {
   dept: '部门',
 };
 
-export function AgentModelPicker({ session, onSessionUpdate }: AgentModelPickerProps) {
+export function AgentModelPicker({ session, onPickModel, isEmptySession }: AgentModelPickerProps) {
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<ILlmModelOption[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [switching, setSwitching] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // 点外部关闭浮层（保持单实例点击退出体验）
@@ -65,19 +67,14 @@ export function AgentModelPicker({ session, onSessionUpdate }: AgentModelPickerP
     if (next) void ensureOptions();
   };
 
-  const onPick = async (opt: ILlmModelOption) => {
+  const onPick = (opt: ILlmModelOption) => {
     if (opt.model_name === session.selected_model_name) {
       setOpen(false);
       return;
     }
-    setSwitching(true);
-    try {
-      await employeeAgentApi.selectModel(session.id, opt.model_name);
-      onSessionUpdate({ ...session, selected_model_name: opt.model_name });
-      setOpen(false);
-    } finally {
-      setSwitching(false);
-    }
+    // 走 store action：空会话写全局默认 + 会话，中途仅写会话；不发 PUT，不落库
+    onPickModel(opt.model_name);
+    setOpen(false);
   };
 
   // 默认显示：未选模型时取列表里 source==='env' 的项作为占位（仅 UI 提示）
@@ -90,16 +87,13 @@ export function AgentModelPicker({ session, onSessionUpdate }: AgentModelPickerP
       <button
         type="button"
         onClick={toggle}
-        disabled={switching}
-        title="切换模型"
+        title={isEmptySession ? '切换模型（将设为新建会话的默认）' : '切换当前会话的模型'}
         aria-haspopup="listbox"
         aria-expanded={open}
         className={`flex items-center gap-1.5 h-7 px-3 rounded-full text-xs font-medium
                     transition-all duration-150
-                    bg-[#F1F5F9] text-[#334155] hover:bg-[#E2E8F0]
-                    disabled:opacity-60 disabled:cursor-not-allowed`}
+                    bg-[#F1F5F9] text-[#334155] hover:bg-[#E2E8F0]`}
       >
-        {switching ? <Loader2 size={12} className="animate-spin" /> : null}
         <span className="max-w-[160px] truncate">{currentLabel}</span>
         <ChevronDown size={12} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>

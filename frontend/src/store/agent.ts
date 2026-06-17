@@ -39,6 +39,7 @@ export interface SendInput {
   content: string;
   workflow_type: WorkflowType;
   enable_thinking?: boolean;
+  model_name?: string | null;
   context_refs?: Array<Record<string, unknown>>;
 }
 
@@ -48,6 +49,12 @@ interface AgentStoreState {
   runs: Record<number, RunEntry>;
   /** 正在创建新会话（重入守护 + 侧栏按钮 loading/disabled） */
   creating: boolean;
+  /** 思考模式全局默认值（仅作新建会话的初始值，localStorage 持久化）。
+   * 切换它只影响之后新建的会话，不改变已存在会话的开关。 */
+  thinkingDefault: boolean;
+  /** 模型全局默认值（仅作新建会话的初始值，localStorage 持久化）。
+   * null 表示用后端 env 默认模型。切换它只影响之后新建的会话。 */
+  modelDefault: string | null;
   // ---------- actions ----------
   refreshSessions: (keyword?: string) => Promise<void>;
   setActive: (id: number) => void;
@@ -56,6 +63,16 @@ interface AgentStoreState {
   createSession: (workflow?: WorkflowType) => Promise<void>;
   /** 局部更新会话字段（如切换模型/思考开关），同步 sessions 与 runs[id].session */
   updateSession: (patch: Partial<WorkspaceSession> & { id?: number }) => void;
+  /** 设置思考模式全局默认（同步写 localStorage，仅影响之后新建会话） */
+  setThinkingDefault: (enable: boolean) => void;
+  /** 切换思考模式：空会话（无消息）→ 写全局默认 + 当前会话；中途会话 → 仅写当前会话。
+   *  多会话并发时各会话独立，切换会话不会串台。 */
+  toggleThinking: (sessionId: number) => void;
+  /** 设置模型全局默认（同步写 localStorage，仅影响之后新建会话） */
+  setModelDefault: (modelName: string | null) => void;
+  /** 选择模型：空会话（无消息）→ 写全局默认 + 当前会话；中途会话 → 仅写当前会话。
+   *  与 toggleThinking 同构，多会话并发不会串台。 */
+  selectModel: (sessionId: number, modelName: string | null) => void;
   /** 软删除会话（先中止其进行中的流，再调后端删除并从列表移除） */
   deleteSession: (id: number) => Promise<void>;
   /** 重命名会话（调后端 update，同步 sessions 与 runs[id].session） */
@@ -85,11 +102,79 @@ function getRun(runs: Record<number, RunEntry>, id: number): RunEntry {
 
 const abortControllers = new Map<number, AbortController>();
 
+// ---------- 模块级：思考模式全局默认（localStorage 持久化） ----------
+
+const THINKING_DEFAULT_KEY = 'agent-thinking-default';
+
+/** 读取思考模式全局默认值（localStorage，缺省 false）。 */
+function loadThinkingDefault(): boolean {
+  try {
+    return localStorage.getItem(THINKING_DEFAULT_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/** 写入思考模式全局默认值（localStorage）。 */
+function saveThinkingDefault(enable: boolean): void {
+  try {
+    localStorage.setItem(THINKING_DEFAULT_KEY, String(enable));
+  } catch {
+    // localStorage 不可用时静默降级（仅当前会话内有效）
+  }
+}
+
+const MODEL_DEFAULT_KEY = 'agent-model-default';
+
+/** 读取模型全局默认值（localStorage，缺省 null=用后端 env 默认模型）。 */
+function loadModelDefault(): string | null {
+  try {
+    return localStorage.getItem(MODEL_DEFAULT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** 写入模型全局默认值（localStorage）。null 时移除键。 */
+function saveModelDefault(modelName: string | null): void {
+  try {
+    if (modelName) localStorage.setItem(MODEL_DEFAULT_KEY, modelName);
+    else localStorage.removeItem(MODEL_DEFAULT_KEY);
+  } catch {
+    // 静默降级
+  }
+}
+
+/**
+ * 后端 session 与本地前端运行时状态合并。
+ *
+ * 思考开关、模型名是前端会话级状态（随消息发送时携带，不依赖会话持久化）。
+ * 后端 session 的这两个字段是 DB 默认值（不再持久化更新），回写时会覆盖
+ * 本地值，导致发一条消息后开关/模型被重置。这里强制保留本地已设值。
+ *
+ * @param remote 后端返回的 session（权威字段：title/current_task_id/...）
+ * @param local 本地 runs[id].session（仅取 enable_thinking/selected_model_name）
+ * @returns 合并后的 session
+ */
+function mergeLocalRuntime(
+  remote: WorkspaceSession,
+  local: WorkspaceSession | null | undefined,
+): WorkspaceSession {
+  if (!local) return remote;
+  return {
+    ...remote,
+    enable_thinking: local.enable_thinking,
+    selected_model_name: local.selected_model_name,
+  };
+}
+
 export const useAgentStore = create<AgentStoreState>((set, get) => ({
   sessions: [],
   activeId: null,
   runs: {},
   creating: false,
+  thinkingDefault: loadThinkingDefault(),
+  modelDefault: loadModelDefault(),
 
   refreshSessions: async (keyword) => {
     const resp = await employeeAgentApi.listSessions({
@@ -102,11 +187,16 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     set((s) => {
       // 首次加载且无 activeId 时，默认激活第一个会话
       const activeId = s.activeId ?? (items.length ? items[0].id : null);
-      // 同步 sessions 列表里的最新字段到 runs[id].session（若已加载）
+      // 同步 sessions 列表里的最新字段到 runs[id].session（若已加载）。
+      // 思考开关/模型名是前端会话级状态，后端值是 DB 默认值，必须保留本地值不覆盖。
       const runs = { ...s.runs };
       for (const sess of items) {
-        if (runs[sess.id]?.session) {
-          runs[sess.id] = { ...runs[sess.id], session: { ...runs[sess.id].session!, ...sess } };
+        const existing = runs[sess.id];
+        if (existing?.session) {
+          runs[sess.id] = {
+            ...existing,
+            session: mergeLocalRuntime(sess, existing.session),
+          };
         }
       }
       return { sessions: items, activeId, runs };
@@ -121,12 +211,15 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     const resp = await employeeAgentApi.getSession(id);
     const detail = resp.data?.data ?? resp.data;
     if (detail?.session) {
+      // 思考开关/模型名是前端会话级状态，后端值为 DB 默认值，保留本地已设值不覆盖
+      const localSession = get().runs[id]?.session;
+      const session = mergeLocalRuntime(detail.session, localSession);
       set((s) => ({
         runs: {
           ...s.runs,
           [id]: {
             ...getRun(s.runs, id),
-            session: detail.session,
+            session,
             messages: detail.messages ?? [],
             loaded: true,
           },
@@ -140,14 +233,15 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     if (get().creating) return;
     set({ creating: true });
     // 虚拟会话：负数临时 id，首条消息发送时才真正建会话（sendMessage 内处理）
+    // 思考开关/模型继承全局默认（切换全局只影响之后新建的会话）
     const virtualSession: WorkspaceSession = {
       id: -Date.now(),
       session_key: '',
       current_task_id: '',
       employee_id: 0,
       title: null,
-      selected_model_name: null,
-      enable_thinking: false,
+      selected_model_name: get().modelDefault,
+      enable_thinking: get().thinkingDefault,
       status: 0,
       last_message_time: null,
       create_time: null,
@@ -186,6 +280,41 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     });
   },
 
+  setThinkingDefault: (enable) => {
+    saveThinkingDefault(enable);
+    set({ thinkingDefault: enable });
+  },
+
+  toggleThinking: (sessionId) => {
+    // 空会话（无任何历史消息）切换 = 调整全局默认（且同步当前会话）；
+    // 中途会话（已有消息）切换 = 仅调当前会话，不污染全局默认。
+    // 多会话并发时各会话独立（状态挂在各自 session 上），切换会话不会串台。
+    const entry = get().runs[sessionId];
+    const current = !!entry?.session?.enable_thinking;
+    const next = !current;
+    const isEmpty = (entry?.messages?.length ?? 0) === 0;
+    if (isEmpty) {
+      get().setThinkingDefault(next);
+    }
+    get().updateSession({ id: sessionId, enable_thinking: next });
+  },
+
+  setModelDefault: (modelName) => {
+    saveModelDefault(modelName);
+    set({ modelDefault: modelName });
+  },
+
+  selectModel: (sessionId, modelName) => {
+    // 与 toggleThinking 同构：空会话选择 = 写全局默认 + 当前会话；
+    // 中途会话选择 = 仅写当前会话。模型名随消息发送时携带，不落库。
+    const entry = get().runs[sessionId];
+    const isEmpty = (entry?.messages?.length ?? 0) === 0;
+    if (isEmpty) {
+      get().setModelDefault(modelName);
+    }
+    get().updateSession({ id: sessionId, selected_model_name: modelName });
+  },
+
   sendMessage: async (sessionId, input) => {
     // 虚拟会话（负 id）：先真正建会话，再发消息
     let realSessionId = sessionId;
@@ -203,7 +332,10 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
           delete runs[virtualId];
           runs[newSession.id] = {
             ...(prevRun ?? { messages: [], runState: INITIAL_RUN_STATE, loaded: false }),
-            session: newSession, sending: true,
+            // 后端返回的 newSession 的 enable_thinking/selected_model_name 是 DB 默认值；
+            // 这两个是前端会话级状态，用 mergeLocalRuntime 保留虚拟会话期间的本地值。
+            session: mergeLocalRuntime(newSession, prevRun?.session),
+            sending: true,
           };
           return {
             runs,
@@ -277,8 +409,10 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
           content: input.content,
           workflow_type: input.workflow_type,
           context_refs: input.context_refs,
-          runtime_options: input.enable_thinking !== undefined
-            ? { enable_thinking: input.enable_thinking } : undefined,
+          runtime_options: {
+            ...(input.enable_thinking !== undefined ? { enable_thinking: input.enable_thinking } : {}),
+            ...(input.model_name ? { model_name: input.model_name } : {}),
+          },
         },
         ac.signal,
       );
@@ -301,7 +435,12 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     abortControllers.set(sessionId, ac);
     set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true } } }));
     try {
-      const iter = employeeAgentApi.submitInteraction(sessionId, requestId, values, workflowType, ac.signal);
+      const enableThinking = !!entry?.session?.enable_thinking;
+      const modelName = entry?.session?.selected_model_name ?? null;
+      const iter = employeeAgentApi.submitInteraction(
+        sessionId, requestId, values, workflowType,
+        { enableThinking, modelName }, ac.signal,
+      );
       await runEnvelopes(sessionId, iter);
     } finally {
       set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: false } } }));
@@ -380,7 +519,13 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
     const nextTaskId = (pendingFinish.data as { next_task_id?: string }).next_task_id ?? null;
     useAgentStore.setState((s) => {
       const entry = getRun(s.runs, sessionId);
-      const session = (detail?.session ?? entry.session) as WorkspaceSession | null;
+      // getSession 回写的 session 来自后端，其 enable_thinking/selected_model_name 是 DB 默认值
+      // （后端已不持久化这两个运行时状态）。它们是前端会话级状态，这里必须保留本地值，
+      // 否则发送一条消息后开关/模型会被重置。
+      const remoteSession = (detail?.session ?? entry.session) as WorkspaceSession | null;
+      const session = remoteSession
+        ? mergeLocalRuntime(remoteSession, entry.session)
+        : entry.session;
       if (session && nextTaskId) session.current_task_id = nextTaskId;
       return {
         runs: {
