@@ -195,7 +195,6 @@ function MessageRow({
   return (
     <AgentMessageCard
       message={message}
-      runState={null}
       submitting={submitting}
       onSubmitInteraction={onSubmitInteraction}
     />
