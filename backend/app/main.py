@@ -18,6 +18,9 @@ from app.db.redis import redis_manager
 from app.core.exceptions import BizError
 from app.api.v1.router import api_router
 from app.services.cache_service import CacheService
+from langgraph.checkpoint.memory import MemorySaver
+from app.llm.graphs.workflows.interview_questions import build_interview_graph
+from app.llm.graphs.workflows.resume_evaluation import build_evaluation_graph
 
 settings = get_settings()
 configure_logging(settings)
@@ -40,6 +43,14 @@ async def lifespan(app: FastAPI):
     app.state.mysql = mysql_manager.engine
 
     app.state.cache = CacheService(app.state.redis)
+
+    # 编译两个 Agent 工作流图（MemorySaver checkpointer，per-process 共享）
+    checkpointer = MemorySaver()
+    app.state.agent_workflow_graphs = {
+        "interview_questions": build_interview_graph(checkpointer),
+        "resume_evaluation": build_evaluation_graph(checkpointer),
+    }
+    logging.getLogger(__name__).info("两个 Agent 工作流图已编译，使用 MemorySaver checkpointer")
 
     try:
         yield

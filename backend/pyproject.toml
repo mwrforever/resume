@@ -28,8 +28,10 @@ dependencies = [
     "aiofiles==25.1.0",
     "email-validator==2.3.0",
     "httpx==0.28.1",
+    "sse-starlette==3.0.4",
     "bcrypt==5.0.0",
     "cryptography==46.0.7",
+    "docling>=2.0.0",
 ]
 
 [project.optional-dependencies]

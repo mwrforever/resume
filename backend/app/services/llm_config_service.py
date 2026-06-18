@@ -329,34 +329,40 @@ class LlmConfigService:
 
     # 将数据库模型配置转换为实际调用模型所需的运行时配置
     def _to_runtime_config(self, config: LlmModelConfig, source: str) -> LLMRuntimeConfigDTO:
+        from pydantic import SecretStr
+        # 从 base_url 推断 provider
+        provider = self._infer_provider(config.base_url)
         return LLMRuntimeConfigDTO(
             model_name=config.model_name,
-            api_key=decrypt_secret(config.api_key_ciphertext),
+            api_key=SecretStr(decrypt_secret(config.api_key_ciphertext)),
             base_url=config.base_url,
+            provider=provider,
             fallback_model_name=config.fallback_model_name,
-            extra_body=config.extra_body,
             timeout_seconds=config.timeout_seconds,
             max_retries=config.max_retries,
-            source=source,
             enable_thinking=bool(config.enable_thinking),
-            enable_tools=bool(config.enable_tools),
-            enable_prompt_cache=bool(config.enable_prompt_cache),
-            enable_memory=bool(config.enable_memory),
             temperature=float(config.temperature),
-            top_p=float(config.top_p),
             max_tokens=int(config.max_tokens),
-            presence_penalty=float(config.presence_penalty),
-            frequency_penalty=float(config.frequency_penalty),
         )
 
     # 构建配置文件默认模型的运行时配置
     def _env_runtime_config(self) -> LLMRuntimeConfigDTO:
+        from pydantic import SecretStr
+        provider = self._infer_provider(settings.OPENAI_API_BASE)
         return LLMRuntimeConfigDTO(
             model_name=settings.OPENAI_MODEL,
-            api_key=settings.openai_api_key,
+            api_key=SecretStr(settings.openai_api_key),
             base_url=settings.OPENAI_API_BASE,
+            provider=provider,
             fallback_model_name=settings.FALLBACK_MODEL,
-            extra_body={"enable_thinking": False},
-            source="env",
-            **{key: value for key, value in DEFAULT_RUNTIME_PARAMS.items() if key != "extra_body"},
         )
+
+    @staticmethod
+    def _infer_provider(base_url: str) -> str:
+        """从 base_url 推断 LLM provider。"""
+        url_lower = base_url.lower()
+        if "deepseek" in url_lower:
+            return "deepseek"
+        elif "qwen" in url_lower or "dashscope" in url_lower:
+            return "qwen"
+        return "other"

@@ -1,0 +1,44 @@
+name: dimension_suggest
+version: "1.0"
+description: "基于候选人简历和用户意图建议面试评估维度"
+variables:
+  - name: resume_text
+    required: true
+    description: "候选人简历全文（Markdown 格式）"
+  - name: user_intent
+    required: false
+    description: "用户指定的分析方向或关注点"
+template: |-
+  # 角色
+  你是资深企业招聘面试设计专家，负责根据候选人简历和用户意图推荐面试评估维度。
+
+  # 约束
+  {% include "agent/constraints.yaml" %}
+
+  # 输入
+  - 候选人简历：
+    ```{{ resume_text }}```
+  {% if user_intent %}
+  - 用户指定的分析方向：{{ user_intent }}
+  {% endif %}
+
+  # 指令
+  请基于候选人简历{% if user_intent %}和用户指定的分析方向{% endif %}，建议 4-6 个适合本次面试重点追问的维度。
+
+  ## 具体要求
+  1. 每个维度必须给出推荐理由，说明为什么该维度对评估此候选人特别重要
+  2. 如果简历信息不足，仍根据已有信息输出最稳妥的维度建议
+  3. 维度名称必须具体明确（如"项目深度"而非"综合能力"），不得超过 8 个字
+  4. 维度之间应覆盖不同评估角度，避免重叠
+  5. 所有维度名称必须填写，不得为空
+
+  # 输出格式
+  只输出 JSON，不要输出 Markdown、解释或代码块：
+  {
+    "dimensions": [
+      {
+        "name": "项目深度",
+        "reason": "候选人有 3 个核心项目经历，需核实真实贡献与技术决策能力"
+      }
+    ]
+  }

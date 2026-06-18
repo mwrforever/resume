@@ -1,0 +1,36 @@
+﻿import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AdminLayout } from '@/components/layout/admin-layout';
+import { employeeAgentApi, employeeLlmApi } from '@/api/employee/agent';
+import { useAuthStore } from '@/store/auth';
+import type {
+  IAgentActionStreamItem,
+  IAgentBusinessCardItem,
+  IAgentInteractionRequestItem,
+  IAgentMemoryItem,
+  IAgentMessageItem,
+  IAgentRuntimeFeedItem,
+  IAgentThinkingStreamItem,
+  IAgentToolStreamItem,
+  ILlmModelOption,
+  IPlanReviewUiState,
+  TAgentWorkflowType,
+  TPlanReviewDecision,
+} from '@/types/agent';
+import { handleAgentStreamEvent, type AgentStreamHandlerDeps } from '@/utils/agent-stream-handler';
+import { AgentComposer } from '@/components/employee/agent/agent-composer';
+import { AgentMessageList } from '@/components/employee/agent/agent-message-list';
+import { AgentPreferencesDialog } from '@/components/employee/agent/agent-preferences-dialog';
+import { AgentSessionSidebar, type WorkspaceSession } from '@/components/employee/agent/agent-session-sidebar';
+import { DeleteSessionDialog, SessionDialog, SessionSearchDialog } from '@/components/employee/agent/agent-session-dialogs';
+import { AgentWorkspaceHeader } from '@/components/employee/agent/agent-workspace-header';
+import { DEFAULT_MODEL_VALUE } from '@/components/employee/agent/agent-ui-utils';
+
+const AGENT_IMMERSIVE_STORAGE_KEY = 'employee-agent-immersive';
+const AGENT_SESSION_COLLAPSED_STORAGE_KEY = 'employee-agent-session-collapsed';
+
+/** 从 localStorage 读取布尔值，若不存在则返回默认值 */
+function readBooleanStorage(key: string, defaultValue: boolean) {
+  const value = localStorage.getItem(key);
+  if (value === null) return defaultValue;
+  return value === 'true';
+}

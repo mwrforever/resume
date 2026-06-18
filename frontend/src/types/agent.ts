@@ -1,165 +1,185 @@
-/** Agent 流式协议 v1 与规划审批相关类型（与后端 schemas/agent 对齐） */
+/**
+ * Agent 模块类型定义（重写版）。
+ *
+ * 全部以 block 为中心；事件协议字段与后端 9 type / 6 block 严格对齐。
+ * 后端字段一律 snake_case，TypeScript 不在 client 端做 camelCase 转换。
+ */
 
-export type TAgentStreamProtocolVersion = '1.0';
+// ====== Workflow ======
 
-/** 与后端 AgentNodeId 一致 */
-export type TAgentNodeId =
-  | 'input'
-  | 'analyst'
-  | 'human_feedback'
-  | 'planner'
-  | 'supervisor'
-  | 'serial_route'
-  | 'fan_out'
-  | 'domain_agent'
-  | 'result_merger'
-  | 'legacy_executor'
-  | 'evaluator'
-  | 'compressor'
-  | 'reporter';
+/** 工作流类型 */
+export type WorkflowType = 'interview_questions' | 'resume_evaluation';
 
-/** 与后端 AgentEventTypeV1 一致 */
-export type TAgentEventTypeV1 =
-  | 'lifecycle.run_started'
-  | 'lifecycle.run_finished'
-  | 'lifecycle.run_failed'
-  | 'lifecycle.node_enter'
-  | 'lifecycle.node_exit'
-  | 'lifecycle.node_error'
-  | 'lifecycle.interrupt'
-  | 'lifecycle.resume_ack'
-  | 'stream.text_delta'
-  | 'stream.text_done'
-  | 'stream.thought_delta'
-  | 'stream.thought_done'
-  | 'ui.render'
-  | 'ui.patch'
-  | 'ui.dismiss'
-  | 'plan.revision_started'
-  | 'plan.revision_rejected'
-  | 'plan.repair_suggestions'
-  | 'plan.approved'
-  | 'tool.call_start'
-  | 'tool.call_log'
-  | 'tool.call_end';
+export const WORKFLOW_LABELS: Record<WorkflowType, string> = {
+  interview_questions: '简历问答',
+  resume_evaluation: '简历评估',
+};
 
-export type TUiComponentKey = 'PlanReviewTree' | 'PlanRepairHints' | 'ActionConfirmCard' | 'AgentStatusTimeline' | 'ToolExecutionCard' | 'ThinkingRenderer' | 'RepairSuggestionsPanel';
+// ====== Block ======
 
-export type TPlanReviewDecision = 'approved' | 'rejected';
+/** block 状态枚举 */
+export type BlockStatus =
+  | 'streaming' | 'success' | 'failed'
+  | 'pending' | 'submitted' | 'rejected' | 'expired';
 
-export type TAgentDomain = 'job' | 'application' | 'evaluation' | 'memory' | 'generic';
+/** interaction 类型 */
+export type InteractionType =
+  | 'dimension_selection' | 'plan_approval' | 'job_selection';
 
-/** 规划子任务（对应后端 SubTaskDTO） */
-export interface IPlanSubTask {
-  task_id: string;
-  domain: TAgentDomain;
+/** 6 种 block 联合类型（discriminated union on type） */
+export type AgentBlock =
+  | { type: 'text'; index: number; text: string; status: BlockStatus }
+  | { type: 'thinking'; index: number; text: string; status: BlockStatus }
+  | {
+      type: 'tool_use'; index: number;
+      tool_name: string; display_name: string;
+      input: Record<string, unknown>;
+      output?: Record<string, unknown>;
+      status: BlockStatus; error?: string;
+      /** 维度块自带的思考过程（开启思考模式时由后端 block.delta.reasoning 增量写入） */
+      reasoning?: string;
+    }
+  | {
+      type: 'interaction'; index: number;
+      request_id: string; interaction_type: InteractionType;
+      title: string; prompt: string;
+      data: Record<string, unknown>;
+      status: BlockStatus;
+      values?: Record<string, unknown>;
+    }
+  | { type: 'interview_questions'; index: number; question_set: QuestionSet; status: BlockStatus }
+  | { type: 'evaluation_report'; index: number; report: EvaluationReport; status: BlockStatus };
+
+// ====== Envelope（与后端 9 type 一一对应） ======
+
+/** SSE 信封联合类型 */
+export type AgentEnvelope =
+  | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
+      type: 'run.start'; data: { run_id: string; workflow_type: WorkflowType;
+                                  enable_thinking: boolean; user_message_id: number | null;
+                                  resume?: boolean } }
+  | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
+      type: 'run.finish'; data: { agent_message_id: number; next_task_id?: string } }
+  | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
+      type: 'run.error'; data: { code: string; message: string; retriable: boolean } }
+  | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
+      type: 'step.update'; data: { step_id: string; title: string;
+                                     status: 'pending' | 'running' | 'success' | 'failed';
+                                     detail?: string } }
+  | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
+      type: 'block.start'; data: { index: number; block: Record<string, unknown> } }
+  | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
+      type: 'block.delta'; data: { index: number; delta: Record<string, unknown> } }
+  | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
+      type: 'block.stop'; data: { index: number } }
+  | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
+      type: 'interaction.request'; data: { request_id: string; interaction_type: InteractionType;
+                                             title: string; prompt: string;
+                                             schema?: Record<string, unknown>;
+                                             data: Record<string, unknown> } }
+  | { v: 1; seq: number; ts: number; run_id: string; session_id: number;
+      type: 'interaction.resolve'; data: { request_id: string; values: Record<string, unknown> } };
+
+// ====== Message ======
+
+/** Agent 消息 */
+export interface AgentMessage {
+  id: number;
+  session_id: number;
+  parent_message_id: number | null;
+  role: 'user' | 'agent';
+  workflow_type: WorkflowType;
+  run_id: string | null;
+  content: { blocks: AgentBlock[]; context_refs?: Array<Record<string, unknown>> };
+  model_name: string | null;
+  token_count: number | null;
+  sort_order: number;
+  create_time: string | null;
+}
+
+// ====== Session ======
+
+/** Agent 工作台会话 */
+export interface WorkspaceSession {
+  id: number;
+  session_key: string;
+  /** 当前运行任务的 thread_id（模型上下文隔离）；工作流正常 END 时由后端推进 */
+  current_task_id: string;
+  employee_id: number;
+  title: string | null;
+  selected_model_name: string | null;
+  enable_thinking: boolean;
+  status: number;
+  last_message_time: string | null;
+  create_time: string | null;
+  update_time: string | null;
+}
+
+// ====== Run state ======
+
+/** 步骤信息 */
+export interface AgentStep {
+  step_id: string;
   title: string;
-  instruction: string;
-  depends_on?: string[];
-  status?: string;
-  result_summary?: string | null;
+  status: 'pending' | 'running' | 'success' | 'failed';
+  detail?: string;
 }
 
-/** SSE agent.v1 信封 */
-export interface IAgentStreamEnvelopeV1 {
-  protocol_version: TAgentStreamProtocolVersion;
-  seq: number;
-  run_id: string;
-  stream_id: string;
-  session_id: number;
-  node_id: TAgentNodeId;
-  event_type: TAgentEventTypeV1;
-  timestamp: number;
-  payload: Record<string, unknown>;
-  branch_id?: string | null;
+/** 一次 run 的实时状态（reducer 管理） */
+export interface AgentRunState {
+  running: boolean;
+  run_id: string | null;
+  workflow_type: WorkflowType;
+  enable_thinking: boolean;
+  steps: AgentStep[];
+  current_blocks: AgentBlock[];
+  error: { code: string; message: string } | null;
 }
 
-export type TAgentStreamProtocolVersionV2 = '2.0';
+// ====== 业务卡 payload ======
 
-export type TAgentEventTypeV2 =
-  | 'lifecycle.run.started'
-  | 'lifecycle.run.finished'
-  | 'lifecycle.run.failed'
-  | 'lifecycle.node.enter'
-  | 'lifecycle.node.exit'
-  | 'lifecycle.node.error'
-  | 'message.delta'
-  | 'message.done'
-  | 'tool.started'
-  | 'tool.finished'
-  | 'form.requested'
-  | 'form.resolved'
-  | 'action.requested'
-  | 'action.resolved'
-  | 'data.card'
-  | 'data.evaluation_report'
-  | 'error';
-
-export interface IAgentStreamEnvelopeV2 {
-  schema_version: TAgentStreamProtocolVersionV2;
-  seq: number;
-  run_id: string;
-  session_id: number;
-  node_id: string;
-  agent_id?: string | null;
-  event: TAgentEventTypeV2 | string;
-  payload: Record<string, unknown>;
-  ts: number;
-  extensions?: Record<string, unknown> | null;
+/** 面试题 */
+export interface QuestionItem {
+  question: string;
+  dimension: string;
+  difficulty: string;
+  evaluation_points: string[];
+  follow_up_suggestions: string[];
+  excellent_signals: string[];
+  average_signals: string[];
+  risk_signals: string[];
+  /** 示例参考答案（前端标注"仅供参考"） */
+  reference_answer?: string;
 }
 
-/** ui.render · PlanReviewTree 载荷 */
-export interface IPlanReviewTreeRenderData {
-  plan_id?: string;
-  revision: number;
-  max_revisions?: number;
-  tasks: IPlanSubTask[];
-  editable?: boolean;
+/** 面试题集合 */
+export interface QuestionSet {
+  title: string;
+  total_questions: number;
+  dimensions: string[];
+  questions: QuestionItem[];
 }
 
-/** 前端规划审批 UI 状态 */
-export interface IPlanReviewUiState {
-  instanceId: string;
-  revision: number;
-  maxRevisions: number;
-  tasks: IPlanSubTask[];
-  editable: boolean;
-  repairSuggestions: string[];
-  feedbackDraft: string;
-  /** pending=待审批 submitting=已提交 resume 请求 */
-  phase: 'pending' | 'submitting';
+/** 简历评估报告 */
+export interface EvaluationReport {
+  final_score: number;
+  final_label: string;
+  decision: string;
+  summary: string;
+  match_overview: Record<string, unknown>;
+  resume_structure: Record<string, unknown>;
+  experience_timeline: Array<Record<string, unknown>>;
+  skill_dimensions: Array<Record<string, unknown>>;
+  job_gaps: Array<Record<string, unknown>>;
+  /** 方案 B 新增：候选人画像摘要 */
+  profile_summary?: { years?: number; education?: string; stack?: string[]; stability?: string };
+  /** 面试建议（重点考察项） */
+  interview_suggestions?: Array<{ focus: string; reason: string }>;
+  /** 综合评语（优势/风险总评） */
+  comprehensive_comment?: { advantages?: string; risks?: string };
 }
 
-/** 恢复 interrupt 请求体（对应 PlanReviewResumePayload） */
-export interface IPlanReviewResumePayload {
-  decision: TPlanReviewDecision;
-  tasks?: IPlanSubTask[] | null;
-  feedback?: string | null;
-}
-
-export interface IAgentRunResumeRequest {
-  interrupt_kind: 'plan_review';
-  payload: IPlanReviewResumePayload;
-}
-
-export interface IAgentFormSubmitRequest {
-  request_id: string;
-  values: Record<string, unknown>;
-}
-
-export interface IAgentRuntimeOptions {
-  enable_thinking?: boolean;
-}
-
-export interface IAgentTemporaryActionExecute {
-  action_id: string;
-  capability_key: string;
-  action_name: string;
-  target_type?: string | null;
-  target_id?: number | null;
-  input_payload: Record<string, unknown>;
-  preview_payload: Record<string, unknown>;
-}
+// ====== LLM 配置（保留，供 llm-configs 页面使用） ======
 
 export interface ILlmConfigItem {
   id: number;
@@ -226,205 +246,20 @@ export interface ILlmModelOption {
   base_url: string;
 }
 
-export interface IAgentRuntimeConfig {
-  id?: number | null;
-  employee_id: number;
-  model_name: string;
-  model_source: 'employee' | 'dept' | 'env';
-  llm_config_id?: number | null;
-  enable_thinking: boolean;
-  enable_tools: boolean;
-  enable_prompt_cache: boolean;
-  enable_memory: boolean;
-  temperature: number;
-  top_p: number;
-  max_tokens: number;
-  presence_penalty: number;
-  frequency_penalty: number;
-  extra_body?: Record<string, unknown> | null;
-  last_used_at?: string | null;
-  create_time?: string | null;
-  update_time?: string | null;
-}
+// ====== 向后兼容别名（Stage 8 后可删除） ======
 
-export type IAgentRuntimeConfigPayload = Pick<IAgentRuntimeConfig, 'enable_thinking' | 'enable_tools' | 'enable_prompt_cache' | 'enable_memory' | 'temperature' | 'top_p' | 'max_tokens' | 'presence_penalty' | 'frequency_penalty' | 'extra_body'>;
-
-export interface IAgentSessionItem {
-  id: number;
-  session_key: string;
-  employee_id: number;
-  title: string;
-  status: number;
-  selected_model_name?: string | null;
-  selected_model_source?: string | null;
-  context_summary?: string | null;
-  last_message_time?: string | null;
-  version: number;
-  create_time?: string | null;
-  update_time?: string | null;
-}
-
-export interface IAgentMessageItem {
-  id: number;
-  session_id: number;
-  parent_message_id?: number | null;
-  role: 'user' | 'agent' | 'system' | 'tool' | 'summary';
-  message_type: string;
-  content: {
-    context_refs?: Array<Record<string, unknown>>;
-    blocks: Array<Record<string, unknown>>;
-  };
-  model_name?: string | null;
-  token_count?: number | null;
-  sort_order: number;
-  create_time?: string | null;
-}
-
-export interface IAgentRunItem {
-  id: number;
-  trace_id: string;
-  parent_run_id?: number | null;
-  session_id: number;
-  message_id?: number | null;
-  run_type: string;
-  status: number;
-  model_name?: string | null;
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-  latency_ms?: number | null;
-  input_payload?: Record<string, unknown> | null;
-  output_payload?: Record<string, unknown> | null;
-  error_message?: string | null;
-  create_time?: string | null;
-  update_time?: string | null;
-}
-
-export interface IAgentActionItem {
-  id: number;
-  session_id: number;
-  message_id?: number | null;
-  run_id?: number | null;
-  employee_id: number;
-  capability_key: string;
-  action_name: string;
-  target_type?: string | null;
-  target_id?: number | null;
-  input_payload: Record<string, unknown>;
-  preview_payload: Record<string, unknown>;
-  status: number;
-  idempotency_key: string;
-  error_message?: string | null;
-  create_time?: string | null;
-  update_time?: string | null;
-  confirmed_at?: string | null;
-  rejected_at?: string | null;
-  executed_at?: string | null;
-}
-
-export interface IAgentMemoryItem {
-  id: number;
-  employee_id: number;
-  memory_type: string;
-  memory_key: string;
+export type TAgentWorkflowType = WorkflowType;
+export type IAgentSessionItem = WorkspaceSession;
+export type IAgentMessageItem = AgentMessage;
+export type IAgentSessionDetail = { session: WorkspaceSession; messages: AgentMessage[] };
+export type IAgentRuntimeOptions = { enable_thinking?: boolean };
+export type IAgentMessageCreatePayload = {
   content: string;
-  importance_score: number;
-  confidence_score: number;
-  source_session_id?: number | null;
-  last_access_time?: string | null;
-  create_time?: string | null;
-  update_time?: string | null;
-}
-
-export interface IAgentContextSnapshotItem {
-  id: number;
-  session_id: number;
-  snapshot_version: number;
-  summary_text: string;
-  covered_message_start_id: number;
-  covered_message_end_id: number;
-  message_count: number;
-  token_count: number;
-  model_name?: string | null;
-  create_time?: string | null;
-}
-
-export interface IAgentSessionWindowItem {
-  snapshot?: IAgentContextSnapshotItem | null;
-  recent_messages: IAgentMessageItem[];
-  token_count: number;
-  prompt_prefix_hash?: string | null;
-}
-
-export interface IAgentSessionDetail {
-  session: IAgentSessionItem;
-  messages: IAgentMessageItem[];
-  memories: IAgentMemoryItem[];
-  snapshots: IAgentContextSnapshotItem[];
-  session_window?: IAgentSessionWindowItem | null;
-}
-
-export interface IAgentReply {
-  user_message: IAgentMessageItem;
-  agent_message: IAgentMessageItem;
-  run: IAgentRunItem;
-  session?: IAgentSessionItem | null;
-  snapshot?: IAgentContextSnapshotItem | null;
-  memories: IAgentMemoryItem[];
-  session_window?: IAgentSessionWindowItem | null;
-}
-
-export type AgentStreamEventName =
-  | 'user_message'
-  | 'run_started'
-  | 'context_ready'
-  | 'token'
-  | 'final'
-  | 'error'
-  | 'tool_call'
-  | 'tool_result'
-  | 'action_required'
-  | 'agent'
-  | 'agent.v1';
-
-export interface IAgentStreamEvent {
-  event: AgentStreamEventName | string;
-  data: Record<string, unknown>;
-}
-
-export interface IAgentToolStreamItem {
-  id: string;
-  type: 'call' | 'result';
-  tool_name: string;
-  display_name: string;
-  payload: Record<string, unknown>;
-  success?: boolean;
-  error_message?: string | null;
-}
-
-export interface IAgentActionStreamItem extends Omit<IAgentActionItem, 'id'> {
-  id: string;
-  isStreaming?: boolean;
-}
-
-/** 消息列表下方的运行时动态条目（思考、工具、待确认动作） */
-export interface IAgentRuntimeFeedItem {
-  id: string;
-  type: 'thinking' | 'tool' | 'action' | 'node';
-  status: 'running' | 'success' | 'failed' | 'pending';
-  title: string;
-  message?: string | null;
-  action?: IAgentActionStreamItem;
-}
-
-/** RepairSuggestionsPanel 组件 Props */
-export interface IRepairSuggestionsPanelProps {
-  suggestions: string[];
-  selectionMode: 'single' | 'multiple';
-  customInputFirst: boolean;
-  customInput: string;
-  onSuggestionToggle: (index: number) => void;
-  onCustomInputChange: (value: string) => void;
-  onSubmit: (selectedSuggestions: string[], customInput: string) => void;
-  submitting: boolean;
-}
+  workflow_type?: WorkflowType;
+  context_refs?: Array<Record<string, unknown>>;
+  runtime_options?: IAgentRuntimeOptions;
+};
+export type IAgentFormSubmitRequest = {
+  request_id: string;
+  values: Record<string, unknown>;
+};

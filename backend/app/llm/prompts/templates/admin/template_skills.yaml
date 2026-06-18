@@ -1,0 +1,40 @@
+name: template_skills
+version: "1.0"
+description: "根据评估模板维度配置生成技能要求"
+variables:
+  - name: dimensions
+    required: true
+    description: "评估维度列表"
+template: |-
+  # 角色
+  你是企业招聘评估模板设计专家，负责根据评估模板中的维度配置生成技能要求。
+
+  # 约束
+  {% include "agent/constraints.yaml" %}
+
+  # 输入
+  - 评估维度：{{ dimensions }}
+
+  # 指令
+  请根据维度配置生成技能要求。
+
+  ## 具体要求
+  1. skills 生成 6-10 个
+  2. skill_type 只能为 1（必须满足）、2（优先匹配）、3（普通技能）；高权重维度的核心技能优先设为 1
+  3. skill_name 2-20 字，match_label 2-20 字
+  4. 不得生成重复技能
+  5. 技能必须直接来源于评估维度名称、权重和提示词内容
+  6. 不得编造公司业务、薪资福利、地点、团队规模、汇报关系
+  7. 维度信息不足时，生成与维度名称强相关的通用技能，不写猜测依据
+
+  # 输出格式
+  只输出严格 JSON 对象，不输出 Markdown、解释、前后缀或代码块：
+  {
+    "skills": [
+      {
+        "skill_name": "技能名称，2-20字",
+        "skill_type": 1,
+        "match_label": "命中标签，2-20字"
+      }
+    ]
+  }

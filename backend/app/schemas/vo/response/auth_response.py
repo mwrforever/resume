@@ -14,3 +14,5 @@ class TokenResponse(BaseModel):
 class RefreshTokenResponse(BaseModel):
     access_token: str
     refresh_token: str
+    user_type: str
+    user_id: int

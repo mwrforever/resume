@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Source+Sans+3:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -21,6 +21,9 @@
   --border: #cbd5e1;
   --ring: #0284c7;
   --radius: 0.875rem;
+  /* Agent 工作台字体栈（落地供内联 font-[...] 引用） */
+  --font-agent: 'Plus Jakarta Sans', -apple-system, 'PingFang SC', system-ui, sans-serif;
+  --font-mono-agent: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
 @layer base {
@@ -51,3 +54,69 @@
 .docx-content th { background: #f8fafc; font-weight: 600; }
 .docx-content strong { font-weight: 700; }
 .docx-content em { font-style: italic; }
+
+/* ===== Agent 工作台动效 ===== */
+/* WaveText：字符波浪跳动（running 态步骤提示） */
+@keyframes wave {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2px); }
+}
+/* WaveText：品牌蓝光泽逐字流动 */
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+/* 新 block / 卡片入场：fade + 上移 8px */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* ReasoningSection 展开：内容从透明 + 上移 6px 渐入（无滚轮的"涌现"感） */
+@keyframes reasoningReveal {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* ReasoningSection 顶部渐隐遮罩（营造内容从下方"滚动涌现"的视觉，无真实滚动条） */
+.reasoning-veil::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 14px;
+  background: linear-gradient(to bottom, rgba(248,250,252,1), rgba(248,250,252,0));
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ===== Agent 工作台动效增强（全面重设计） ===== */
+/* 卡片入场：fade + 上移 10px + 微缩放，比 fadeSlideUp 更顺滑有物理感 */
+@keyframes cardEnter {
+  from { opacity: 0; transform: translateY(10px) scale(0.992); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* 呼吸点：实时状态点的柔和缩放呼吸（替代生硬 pulse） */
+@keyframes pulseSoft {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.86); }
+}
+/* 状态点闪烁：用于"在线/运行"指示点 */
+@keyframes dotBlink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+/* 背景晕缓慢流动：工作台顶层极淡品牌蓝晕的有机运动 */
+@keyframes gradientShift {
+  0%, 100% { background-position: 0% 0%; }
+  50%      { background-position: 100% 100%; }
+}
+
+/* ===== Tinted 阴影工具类（带底色调，替代生硬黑色投影） ===== */
+.agent-shadow-card {
+  box-shadow:
+    0 1px 2px rgba(2, 6, 23, 0.04),
+    0 4px 14px -8px rgba(2, 6, 23, 0.08);
+}
+.agent-shadow-raised {
+  box-shadow:
+    0 1px 3px rgba(2, 6, 23, 0.05),
+    0 12px 32px -12px rgba(3, 105, 161, 0.14);
+}
