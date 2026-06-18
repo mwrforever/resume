@@ -165,20 +165,32 @@ def refine_session_title_task(
             logger.warning("精化标题跳过：LLM 返回空 session_id=%s", session_id)
             return
 
-        # 3. 第二次双重校验 + 落库
+        # 3. 原子条件 UPDATE：把"第二次默认态校验 + 写入"压缩为一条 SQL，
+        #    彻底消除两次 SELECT 之间用户手动改标题的覆盖窗口。
+        #    匹配条件包含：占位标题、空、与本次首条问题截断态完全一致。
+        expected_default = _make_default_title(user_content)
         with mysql_manager_sync.session() as db_session:
-            row = db_session.execute(
-                text("SELECT title FROM agent_session WHERE id = :sid AND is_deleted = 0"),
-                {"sid": session_id},
-            ).mappings().first()
-            if not row or not _is_default_title(row["title"], user_content):
-                logger.info("精化标题落库前竞态保护：session_id=%s", session_id)
-                return
-            db_session.execute(
-                text("UPDATE agent_session SET title = :title WHERE id = :sid"),
-                {"title": refined, "sid": session_id},
+            result = db_session.execute(
+                text(
+                    "UPDATE agent_session SET title = :title "
+                    "WHERE id = :sid AND is_deleted = 0 AND ("
+                    "title IS NULL OR TRIM(title) = '' "
+                    "OR title IN ('新会话', '未命名会话') "
+                    "OR title = :expected_default"
+                    ")"
+                ),
+                {
+                    "title": refined,
+                    "sid": session_id,
+                    "expected_default": expected_default,
+                },
             )
             db_session.commit()
+        if result.rowcount == 0:
+            logger.info(
+                "精化标题落库前竞态保护：标题已被用户修改 session_id=%s", session_id,
+            )
+            return
         logger.info("会话标题精化完成：session_id=%s title=%s", session_id, refined)
     except Exception as exc:
         # 任何异常都不抛、不重试：保留默认标题
