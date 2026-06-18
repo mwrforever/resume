@@ -141,7 +141,9 @@ class AgentRuntimeService:
         resume_ref = await self._resolve_resume_ref(session.id, body)
         graph_input = await self._build_graph_input(body, resume_ref)
         # 落库用户消息
-        user_message = await self._create_user_message(session, body, run_id=run_id)
+        user_message = await self._create_user_message(
+            session, body, run_id=run_id, runtime_config=runtime_config,
+        )
 
         envelope_buffer: list[AgentStreamEnvelope] = []
 
@@ -428,6 +430,7 @@ class AgentRuntimeService:
 
     async def _create_user_message(
         self, session, body: AgentMessageCreate, *, run_id: str,
+        runtime_config: LLMRuntimeConfigDTO,
     ):
         """落库用户消息。
 
@@ -460,6 +463,27 @@ class AgentRuntimeService:
                     "首次发送消息自动设置会话标题：session_id=%s title=%s",
                     session.id, snippet,
                 )
+                # 投递 LLM 异步精化任务：基于用户首条问题生成 ≤20 字中文标题。
+                # 失败（Broker 不可用、序列化异常等）静默忽略，默认标题已能用作兜底。
+                # SecretStr 字段必须显式取值后再走 JSON broker：mode="json" 会把 api_key
+                # 渲染为掩码 "**********"，task 重建 DTO 后调 LLM 必返回 401。
+                try:
+                    from app.workers.tasks.agent_task import refine_session_title_task
+                    runtime_config_dict = runtime_config.model_dump(mode="json")
+                    runtime_config_dict["api_key"] = runtime_config.api_key.get_secret_value()
+                    refine_session_title_task.delay(
+                        session.id,
+                        body.content or "",
+                        runtime_config_dict,
+                    )
+                    logger.info(
+                        "已投递会话标题精化任务：session_id=%s", session.id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "投递会话标题精化任务失败（忽略）：session_id=%s err=%s",
+                        session.id, exc,
+                    )
         return msg
 
     @staticmethod
