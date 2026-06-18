@@ -145,7 +145,7 @@ def refine_session_title_task(
         # 1. 第一次双重校验：当前 title 是否仍为默认态
         with mysql_manager_sync.session() as db_session:
             row = db_session.execute(
-                text("SELECT title FROM agent_session WHERE id = :sid AND is_deleted = 0"),
+                text("SELECT title FROM agent_session WHERE id = :sid AND status = 1"),
                 {"sid": session_id},
             ).mappings().first()
         if not row:
@@ -168,12 +168,13 @@ def refine_session_title_task(
         # 3. 原子条件 UPDATE：把"第二次默认态校验 + 写入"压缩为一条 SQL，
         #    彻底消除两次 SELECT 之间用户手动改标题的覆盖窗口。
         #    匹配条件包含：占位标题、空、与本次首条问题截断态完全一致。
+        #    status=1 是 agent_session 的正常态（status=0 视为软删除，参考 soft_delete_session）。
         expected_default = _make_default_title(user_content)
         with mysql_manager_sync.session() as db_session:
             result = db_session.execute(
                 text(
                     "UPDATE agent_session SET title = :title "
-                    "WHERE id = :sid AND is_deleted = 0 AND ("
+                    "WHERE id = :sid AND status = 1 AND ("
                     "title IS NULL OR TRIM(title) = '' "
                     "OR title IN ('新会话', '未命名会话') "
                     "OR title = :expected_default"
