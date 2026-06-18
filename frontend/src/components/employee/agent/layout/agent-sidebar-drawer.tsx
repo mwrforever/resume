@@ -38,10 +38,10 @@ const STORAGE_KEY = 'agent-sidebar-expanded';
 
 /** 按 last_message_time 降序排序会话（新的在上）。
  *
- * 不再按"今天/昨天/本周更早/更早"分组，全部降序平铺。
+ * 仅供折叠态 Popover 复用（折叠态不分组，平铺最近会话）；展开态走 groupSessionsByTime。
  * 空时间视为最早（排到末尾）。
  *
- * 导出供单测与收起态 Popover 复用。
+ * 导出供单测与折叠态 Popover 复用。
  */
 export function sortSessionsByTime(sessions: WorkspaceSession[]): WorkspaceSession[] {
   return [...sessions].sort((a, b) =>
