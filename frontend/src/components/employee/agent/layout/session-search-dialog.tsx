@@ -14,7 +14,9 @@ import { Button } from '@/components/ui/button';
 import { employeeAgentApi } from '@/api/employee/agent';
 import type { WorkspaceSession } from '@/types/agent';
 
-const PAGE_SIZE = 10;
+// 每页 6 条：与弹窗 max-h-[360px] 容器匹配（每行约 50px → 6 行 ≈ 300px），
+// 保证常态下不出现内部滚动条；超出 6 条由分页控件翻页。
+const PAGE_SIZE = 6;
 
 export interface SessionSearchDialogProps {
   /** 是否打开 */

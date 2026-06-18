@@ -55,7 +55,13 @@ export function AgentComposer({
   // sending=true 时（含人机交互等待）按钮显示红色"停止"可终止；
   // 但纯流式运行中（非交互等待）禁用输入框，避免并发触发第二条流。
   // 人机交互等待时流程已暂停，允许输入新指令（如补充需求/换思路）。
+  //
+  // interrupt 暂停时后端已 run.finish，sending=false；但流程仍未结束（等用户选择），
+  // 此时按钮应保持红色"中断"语义：点击 = 放弃当前 interaction 走新一轮发送。
+  // 输入框始终可输入（hasPendingInteraction 时 inputLocked=false）。
   const inputLocked = sending && !hasPendingInteraction;
+  // 按钮"红/蓝"判定：纯运行中 OR 等待用户交互 → 红色中断；否则蓝色发送。
+  const showAbortButton = sending || hasPendingInteraction;
   const [content, setContent] = useState('');
   // 初始模式取最近一条消息的 workflow_type；空会话回退默认 interview_questions。
   // WorkspaceInner 的 key={sessionId} 保证切会话时重挂载，useState 初值按会话回显正确模式，
@@ -244,21 +250,22 @@ export function AgentComposer({
 
           <span className="hidden sm:block text-[11px] text-[#94A3B8]">Ctrl+Enter 发送</span>
 
-          {/* 主操作按钮 morph：sending 时（含人机交互等待）红色"停止"可终止，否则蓝色"发送"。
-              停止按钮始终可点；发送按钮仅在空内容时禁用。 */}
+          {/* 主操作按钮 morph：sending（含人机交互等待）红色"停止"可终止，否则蓝色"发送"。
+              interrupt 暂停时后端已 run.finish 但流程未结束，按钮保持红色"中断"以表达
+              "放弃当前选择、改发新消息"的语义；点击触发 onAbort，由 store 决定如何收尾。 */}
           <button
             type="button"
-            onClick={sending ? onAbort : submit}
-            disabled={!sending && !content.trim()}
+            onClick={showAbortButton ? onAbort : submit}
+            disabled={!showAbortButton && !content.trim()}
             className={`h-9 px-5 rounded-lg text-xs font-semibold transition-all active:scale-[0.97]
                         inline-flex items-center gap-1.5 ${
-              sending
+              showAbortButton
                 ? 'border border-[#DC2626] text-[#DC2626] hover:bg-[#FEE2E2] bg-white shadow-[0_2px_8px_-3px_rgba(220,38,38,0.35)]'
                 : 'bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] text-white ring-1 ring-inset ring-white/15 shadow-[0_4px_12px_-4px_rgba(3,105,161,0.5)] hover:shadow-[0_6px_16px_-4px_rgba(3,105,161,0.55)] disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none'
             }`}
           >
-            {sending ? <Square size={13} className="fill-current" /> : <Send size={13} />}
-            <span>{sending ? '停止' : '发送'}</span>
+            {showAbortButton ? <Square size={13} className="fill-current" /> : <Send size={13} />}
+            <span>{showAbortButton ? '中断' : '发送'}</span>
           </button>
         </div>
       </div>

@@ -116,6 +116,11 @@ function getRun(runs: Record<number, RunEntry>, id: number): RunEntry {
 
 const abortControllers = new Map<number, AbortController>();
 
+// 当前进行中的 run promise（含 finally 落库）。sendMessage 入口若发现存在
+// 进行中的 run，会先 abort 并 await 此 promise 走完 finally，保证已生成的
+// blocks 被 _persist_agent_message 落库后再发新一轮，避免内容丢失。
+const runningRunPromises = new Map<number, Promise<void>>();
+
 // ---------- 模块级：思考模式全局默认（localStorage 持久化） ----------
 
 const THINKING_DEFAULT_KEY = 'agent-thinking-default';
@@ -330,6 +335,15 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
   },
 
   sendMessage: async (sessionId, input) => {
+    // 可中断状态发送：若该会话当前有进行中的 run（流式 / interrupt 暂停），
+    // 先中止并 await 其 finally 走完（确保 _persist_agent_message 把已生成的 blocks 落库），
+    // 再继续发新一轮，保证中断前的内容不丢失（除了未渲染的不完整业务卡 JSON，由前端 BlockRenderer 自行过滤）。
+    const prevRun = runningRunPromises.get(sessionId);
+    if (prevRun) {
+      abortControllers.get(sessionId)?.abort();
+      try { await prevRun; } catch { /* abort 抛错忽略，落库逻辑在 finally 中已完成 */ }
+    }
+
     // 虚拟会话（负 id）：先真正建会话，再发消息
     let realSessionId = sessionId;
     if (sessionId < 0) {
@@ -416,25 +430,33 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
       return { runs: { ...s.runs, [realSessionId]: { ...entry, messages, session } }, sessions };
     });
 
-    try {
-      const iter = employeeAgentApi.streamMessage(
-        realSessionId,
-        {
-          content: input.content,
-          workflow_type: input.workflow_type,
-          context_refs: input.context_refs,
-          runtime_options: {
-            ...(input.enable_thinking !== undefined ? { enable_thinking: input.enable_thinking } : {}),
-            ...(input.model_name ? { model_name: input.model_name } : {}),
+    // 包装为可被外部 await 的 run promise，注册到 runningRunPromises：
+    // 下一轮 sendMessage 会先 abort 并 await 此 promise，确保 finally（含 _persist_agent_message
+    // 由 runEnvelopes 内部 reload 拉到落库消息）执行完毕后再发新一轮。
+    const runPromise = (async () => {
+      try {
+        const iter = employeeAgentApi.streamMessage(
+          realSessionId,
+          {
+            content: input.content,
+            workflow_type: input.workflow_type,
+            context_refs: input.context_refs,
+            runtime_options: {
+              ...(input.enable_thinking !== undefined ? { enable_thinking: input.enable_thinking } : {}),
+              ...(input.model_name ? { model_name: input.model_name } : {}),
+            },
           },
-        },
-        ac.signal,
-      );
-      await runEnvelopes(realSessionId, iter);
-    } finally {
-      set((s) => ({ runs: { ...s.runs, [realSessionId]: { ...getRun(s.runs, realSessionId), sending: false } } }));
-      abortControllers.delete(realSessionId);
-    }
+          ac.signal,
+        );
+        await runEnvelopes(realSessionId, iter);
+      } finally {
+        set((s) => ({ runs: { ...s.runs, [realSessionId]: { ...getRun(s.runs, realSessionId), sending: false } } }));
+        abortControllers.delete(realSessionId);
+        runningRunPromises.delete(realSessionId);
+      }
+    })();
+    runningRunPromises.set(realSessionId, runPromise);
+    await runPromise;
   },
 
   submitInteraction: async (sessionId, requestId, values) => {
@@ -448,18 +470,25 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     const ac = new AbortController();
     abortControllers.set(sessionId, ac);
     set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true } } }));
-    try {
-      const enableThinking = !!entry?.session?.enable_thinking;
-      const modelName = entry?.session?.selected_model_name ?? null;
-      const iter = employeeAgentApi.submitInteraction(
-        sessionId, requestId, values, workflowType,
-        { enableThinking, modelName }, ac.signal,
-      );
-      await runEnvelopes(sessionId, iter);
-    } finally {
-      set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: false } } }));
-      abortControllers.delete(sessionId);
-    }
+    // 同 sendMessage：把 run 包装为 promise 注册到 runningRunPromises，
+    // 让"中断后再发"路径能 await 等其落库 finally 执行完。
+    const runPromise = (async () => {
+      try {
+        const enableThinking = !!entry?.session?.enable_thinking;
+        const modelName = entry?.session?.selected_model_name ?? null;
+        const iter = employeeAgentApi.submitInteraction(
+          sessionId, requestId, values, workflowType,
+          { enableThinking, modelName }, ac.signal,
+        );
+        await runEnvelopes(sessionId, iter);
+      } finally {
+        set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: false } } }));
+        abortControllers.delete(sessionId);
+        runningRunPromises.delete(sessionId);
+      }
+    })();
+    runningRunPromises.set(sessionId, runPromise);
+    await runPromise;
   },
 
   deleteSession: async (id) => {
@@ -490,7 +519,50 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
   },
 
   abort: (sessionId) => {
-    abortControllers.get(sessionId)?.abort();
+    // 中断分两路径：
+    // 1) 流式 run 进行中（ac 存在）→ fetch.abort() 切断流，后端 finally 落库（含中断前内容）
+    // 2) interrupt 暂停态（ac 已 delete）→ 调后端 /abort 端点：
+    //    标记 pending interaction block 为 expired + 推进 task_id，再 reload 拉到落库消息
+    const ac = abortControllers.get(sessionId);
+    if (ac) {
+      ac.abort();
+      return;
+    }
+    // 路径 2：interrupt 态。fire-and-forget 调后端，再 reload 同步前端 UI。
+    void (async () => {
+      try {
+        await employeeAgentApi.abortSession(sessionId);
+      } catch (err) {
+        console.error('中断 interrupt 失败', err);
+        return;
+      }
+      // 重新拉会话详情：覆盖最近一条消息的 blocks（pending → expired），
+      // 让 hasPendingInteraction 变为 false，按钮回到蓝色"发送"。
+      try {
+        const resp = await employeeAgentApi.getSession(sessionId);
+        const detail = resp.data?.data ?? resp.data;
+        useAgentStore.setState((s) => {
+          const entry = getRun(s.runs, sessionId);
+          const remoteSession = (detail?.session ?? entry.session) as WorkspaceSession | null;
+          const session = remoteSession
+            ? mergeLocalRuntime(remoteSession, entry.session)
+            : entry.session;
+          return {
+            runs: {
+              ...s.runs,
+              [sessionId]: {
+                ...entry,
+                session,
+                messages: detail?.messages ?? entry.messages,
+                loaded: true,
+              },
+            },
+          };
+        });
+      } catch (err) {
+        console.error('中断后 reload 会话失败', err);
+      }
+    })();
   },
 }));
 
@@ -500,12 +572,13 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
  * 消费 envelope 迭代器并 dispatch 到对应会话的 runState。
  *
  * run.finish 不立即 dispatch：先 reload 拿到落库后的 agent 消息，
- * 再紧随其后 dispatch run.finish 清空 current_blocks。两步在同一微任务延续中，
- * React 18 自动批处理，单帧完成"流式卡片 → 新消息"对调，避免留白闪烁。
- * 完成后重置 runState（清空 current_blocks 控制内存），保留 messages。
+ * 然后**单次 setState 同时**完成「替换 messages + 清空 current_blocks + running=false」，
+ * 避免双 setState 间的中间态被 React 渲染（流式卡先消失再出现新消息卡 = 闪烁）。
+ * runState 直接重置为 INITIAL_RUN_STATE，效果等同 reducer(run.finish) 但更彻底。
  */
 async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<AgentEnvelope>) {
   let pendingFinish: AgentEnvelope | null = null;
+  let aborted = false;
   const dispatch = (env: AgentEnvelope) => {
     useAgentStore.setState((s) => {
       const entry = getRun(s.runs, sessionId);
@@ -517,20 +590,33 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
       };
     });
   };
-  for await (const env of iter) {
-    if (env.type === 'run.finish') {
-      pendingFinish = env;
-      continue;
+  try {
+    for await (const env of iter) {
+      if (env.type === 'run.finish') {
+        pendingFinish = env;
+        continue;
+      }
+      dispatch(env);
     }
-    dispatch(env);
+  } catch (err) {
+    // fetch.abort() / 网络断开 → AbortError；后端的 finally 仍会落库已生成 envelopes，
+    // 这里把 aborted 置 true 让收尾走"reload + 重置 runState"路径，把落库消息拉到前端。
+    const isAbort =
+      err instanceof DOMException && err.name === 'AbortError'
+      || (err as { name?: string })?.name === 'AbortError';
+    if (!isAbort) throw err;
+    aborted = true;
   }
-  if (pendingFinish) {
-    // 强制重新拉取落库消息（覆盖乐观消息），再清空流式状态
+  // 收尾：正常 finish / 客户端 abort 都需要 reload 落库消息 + 重置 runState
+  if (pendingFinish || aborted) {
+    // 强制重新拉取落库消息（覆盖乐观消息），再单次 setState 切换流式卡 → 新消息
     const resp = await employeeAgentApi.getSession(sessionId);
     const detail = resp.data?.data ?? resp.data;
     // run.finish 携带的 next_task_id：后端在 graph 正常 END 时已 update session 表；
-    // 这里以前端 envelope 为准同步（二者一致），保证下一轮用新 task_id 隔离上下文。
-    const nextTaskId = (pendingFinish.data as { next_task_id?: string }).next_task_id ?? null;
+    // abort 路径无 finish envelope，task_id 由后端 finally 决定（中断不推进，保证 resume 命中）。
+    const nextTaskId = pendingFinish
+      ? ((pendingFinish.data as { next_task_id?: string }).next_task_id ?? null)
+      : null;
     useAgentStore.setState((s) => {
       const entry = getRun(s.runs, sessionId);
       // getSession 回写的 session 来自后端，其 enable_thinking/selected_model_name 是 DB 默认值
@@ -549,19 +635,8 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
             session,
             messages: detail?.messages ?? entry.messages,
             loaded: true,
-            runState: agentRunReducer(entry.runState, pendingFinish!),
-          },
-        },
-      };
-    });
-    // run.finish 已把 running 置 false；再重置 runState 清空 current_blocks 释放内存
-    useAgentStore.setState((s) => {
-      const entry = getRun(s.runs, sessionId);
-      return {
-        runs: {
-          ...s.runs,
-          [sessionId]: {
-            ...entry,
+            // 单次 setState 完成「running=false + 清空 current_blocks + 切到落库消息」三件事，
+            // React 一次提交切换 UI，避免帧间留白。
             runState: { ...INITIAL_RUN_STATE, workflow_type: entry.runState.workflow_type },
           },
         },

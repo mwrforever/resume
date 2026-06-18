@@ -93,6 +93,11 @@
   from { opacity: 0; transform: translateY(10px) scale(0.992); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
+/* Block 增量入场：用于流式期间新 block 出现时的轻量过渡（不带缩放，避免父卡轻微抖动） */
+@keyframes blockEnter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 /* 呼吸点：实时状态点的柔和缩放呼吸（替代生硬 pulse） */
 @keyframes pulseSoft {
   0%, 100% { opacity: 1; transform: scale(1); }

@@ -117,4 +117,12 @@ export const employeeAgentApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+
+  /** 中断 interrupt 等待（用户在交互卡上点击"中断"按钮触发）。
+   *
+   * 后端会把最近一条消息中所有 status=pending 的 interaction block 标记为 expired，
+   * 并推进 current_task_id（让下一轮走全新 LangGraph thread）。
+   */
+  abortSession: (sessionId: number) =>
+    client.post(`/employee/agent/sessions/${sessionId}/abort`),
 };

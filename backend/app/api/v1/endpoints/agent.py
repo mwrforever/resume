@@ -309,6 +309,31 @@ async def submit_interaction(
     return EventSourceResponse(_generator())
 
 
+# ============================= 中断 interrupt =============================
+
+
+@agent_router.post("/sessions/{session_id}/abort")
+async def abort_session(
+    session_id: int = Path(..., ge=1),
+    current_user: dict = Depends(get_current_user),
+    session_svc: AgentSessionService = Depends(_get_session_service),
+    runtime_svc: AgentRuntimeService = Depends(_get_runtime_service),
+):
+    """中断当前会话的 interrupt 等待。
+
+    场景：用户在维度选择 / 计划审批 / 岗位选择卡上点了"中断"，希望放弃当前
+    interaction，下一轮新问题走全新 LangGraph thread。流式 run 的中断走 fetch.abort()
+    由前端处理；本端点仅处理 interrupt 暂停态的中断（连接已断、ac 已 delete）。
+
+    副作用：
+    - 把会话最近一条 agent 消息中所有 status=pending 的 interaction block 标记为 expired
+    - 推进 session.current_task_id（让下一轮走新 thread）
+    """
+    session = await session_svc._require_session(session_id, current_user)
+    await runtime_svc.abort_pending_interaction(session=session)
+    return ApiResponse()
+
+
 # ============================= 简历上传 =============================
 
 

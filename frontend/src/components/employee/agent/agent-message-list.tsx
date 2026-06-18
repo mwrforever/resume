@@ -3,15 +3,14 @@
  *
  * 流式与历史共用同一管线：
  * - 历史消息：messages.map(MessageRow)
- * - 流式正在构造：RunRow（流式 current_blocks）
+ * - 流式正在构造：与历史共用 AgentMessageCard 外壳（agent 头像 + accent 条 + divide blocks）
+ *   渲染为"伪消息"。这样流式 → reload 历史时，DOM 结构一致，只有内容增减 + 头部
+ *   StepStrip 折叠，避免视觉跳动。
  */
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import type { AgentMessage, AgentRunState, WorkflowType } from '@/types/agent';
-import { BlockRenderer } from './blocks/block-renderer';
-import { attachReasoning } from './blocks/group-blocks';
-import { StepStrip } from './step-strip';
 import { useFollowBottom } from '@/hooks/use-follow-bottom';
 import { EmptyState } from './empty-state';
 import { ResumeFileIcon } from './resume-file-icon';
@@ -50,6 +49,29 @@ export function AgentMessageList({ messages, runState, sending, onSubmitInteract
     );
   }
 
+  // 把流式 runState 包装成"伪消息"，复用 AgentMessageCard 外壳：
+  // - id 用固定 -1（不会与真实消息冲突）
+  // - blocks 取自 runState.current_blocks
+  // - 通过把 runState 透传给 AgentMessageCard 的 runState 入参，渲染 StepStrip
+  // 此举让"流式 → reload 历史"切换时 DOM 结构一致，仅内容发生增减，避免高度跳动。
+  const pseudoStreamingMessage = useMemo<AgentMessage | null>(() => {
+    if (!runState.running) return null;
+    if (runState.current_blocks.length === 0 && runState.steps.length === 0) return null;
+    return {
+      id: -1,
+      session_id: 0,
+      parent_message_id: null,
+      role: 'agent',
+      workflow_type: runState.workflow_type,
+      run_id: runState.run_id,
+      content: { blocks: runState.current_blocks },
+      model_name: null,
+      token_count: null,
+      sort_order: Number.MAX_SAFE_INTEGER,
+      create_time: null,
+    };
+  }, [runState.running, runState.current_blocks, runState.steps.length, runState.run_id, runState.workflow_type]);
+
   // 骨架屏条件：有 tool_use(running) 但还没产出 interview_questions
   // （fanout 并行生成期间，让用户看到题目正在加载）
   const hasToolRunning = runState.current_blocks.some(
@@ -70,32 +92,19 @@ export function AgentMessageList({ messages, runState, sending, onSubmitInteract
           />
         ))}
 
-        {/* 流式正在构造的 blocks */}
-        {runState.running && (
-          <div className="space-y-2">
-            <StepStrip steps={runState.steps} running={runState.running} />
-            <div className="relative border border-[#BAE6FD]/60 rounded-2xl bg-white
-                            overflow-hidden animate-[cardEnter_0.32s_cubic-bezier(0.16,1,0.3,1)]
-                            shadow-[0_1px_3px_rgba(2,6,23,0.05),0_12px_32px_-12px_rgba(3,105,161,0.14)]">
-              {/* 左侧 3px 品牌蓝 accent 条（渐变，与历史卡区分：流式更亮） */}
-              <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-[#38BDF8] via-[#0EA5E9] to-[#0369A1]" />
-              <div className="divide-y divide-[#E2E8F0]">
-                {attachReasoning(runState.current_blocks).map(b => (
-                  <div key={b.index} className="px-4 py-3">
-                    <BlockRenderer
-                      block={b}
-                      submitting={sending}
-                      onSubmitInteraction={
-                        b.type === 'interaction' ? onSubmitInteraction : undefined
-                      }
-                    />
-                  </div>
-                ))}
-                {/* fanout 骨架屏：题目正在并行生成 */}
-                {showSkeleton && <QuestionSkeleton />}
-              </div>
-            </div>
-          </div>
+        {/* 流式正在构造的 blocks：与历史卡共用 AgentMessageCard 外壳，避免切换跳动。
+            流式期间 message.id=-1 视作占位伪消息；run.finish reload 后被真实消息替换，
+            React 会按 key 销毁伪消息节点，但因为同一容器内的真实消息节点结构相同，
+            视觉上像是"伪消息平滑变成真实消息"。 */}
+        {pseudoStreamingMessage && (
+          <AgentMessageCard
+            message={pseudoStreamingMessage}
+            runState={runState}
+            submitting={sending}
+            onSubmitInteraction={onSubmitInteraction}
+            streaming
+            showSkeleton={showSkeleton}
+          />
         )}
 
         {/* 错误提示：带重试按钮的卡片 */}
@@ -128,24 +137,6 @@ export function AgentMessageList({ messages, runState, sending, onSubmitInteract
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-/** fanout 期间题目骨架卡：shimmer 占位 */
-function QuestionSkeleton() {
-  return (
-    <div className="px-4 py-3 space-y-2.5">
-      {[0, 1, 2].map(i => (
-        <div key={i} className="space-y-1.5">
-          <div className="h-3 rounded bg-[#E2E8F0] bg-gradient-to-r from-[#E2E8F0] via-[#F1F5F9] to-[#E2E8F0]
-                          bg-[length:200%_100%] animate-[shimmer_1.8s_linear_infinite] w-3/4" />
-          <div className="h-2.5 rounded bg-[#E2E8F0] bg-gradient-to-r from-[#E2E8F0] via-[#F1F5F9] to-[#E2E8F0]
-                          bg-[length:200%_100%] animate-[shimmer_1.8s_linear_infinite] w-full" />
-          <div className="h-2.5 rounded bg-[#E2E8F0] bg-gradient-to-r from-[#E2E8F0] via-[#F1F5F9] to-[#E2E8F0]
-                          bg-[length:200%_100%] animate-[shimmer_1.8s_linear_infinite] w-5/6" />
-        </div>
-      ))}
     </div>
   );
 }

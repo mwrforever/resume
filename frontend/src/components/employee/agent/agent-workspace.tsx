@@ -59,12 +59,15 @@ function WorkspaceInner({
   const lastInputRef = useRef<SendInput | null>(null);
 
   // 是否处于人机交互等待（最后一条 agent 消息含未提交的 interaction block）。
-  // 此时流程已暂停在等用户输入，输入框不应显示"停止/进行中"，应可正常输入新指令。
+  // 此时流程已暂停在等用户输入，但工作流尚未结束，输入框右侧按钮应保持红色"中断"语义，
+  // 提示用户当前还在 Agent 流程中（点击 = 放弃当前 interaction、用新输入重新发起）。
+  // 注意：interaction block 的 status 来自 runner 的 "pending"（见 runner.py:107），
+  // 而非 streaming；终态为 submitted/rejected/expired。
   const hasPendingInteraction = useMemo(() => {
     const lastAgent = [...messages].reverse().find(m => m.role === 'agent');
     if (!lastAgent) return false;
     return (lastAgent.content.blocks ?? []).some(
-      b => b.type === 'interaction' && b.status === 'streaming',
+      b => b.type === 'interaction' && b.status === 'pending',
     );
   }, [messages]);
 

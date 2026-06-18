@@ -11,6 +11,7 @@ AgentRuntimeService：SSE 编排核心。
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -157,45 +158,78 @@ class AgentRuntimeService:
         runner = self._runner_factory(self._workflow_graphs[body.workflow_type])
         thread_id = await self._resolve_thread_id(session)
         graph_completed = False  # 仅"无异常 且 未中断（走到 END）"才视为完成
+        # client_aborted：客户端中途断开（fetch.abort），asyncio 抛 CancelledError/GeneratorExit。
+        # 此时 yield 已不可用（连接已断），但已生成的 envelopes 必须落库到 agent_message，
+        # 让用户在新一轮发送 / reload 时能看到中断前的内容（业务规则：可终止状态发送先中断、保留已生成内容）。
+        client_aborted = False
         try:
-            async for env in runner.astream(
-                thread_id=thread_id, graph_input=graph_input, ctx=ctx,
-            ):
-                envelope_buffer.append(env)
-                await self._buffer_append(session.id, run_id, env)
-                yield env
-        except Exception as exc:
-            graph_completed = False
-            logger.exception("Graph 执行异常：session_id=%s run_id=%s", session.id, run_id)
-            err_env = emitter.emit_run_error(
-                code="graph_execution_failed", message=str(exc), retriable=False,
-            )
-            envelope_buffer.append(err_env)
-            await self._buffer_append(session.id, run_id, err_env)
-            yield err_env
-        else:
-            # 无异常：还需区分 interrupt（等待用户）与 END（真正完成）
-            graph_completed = not self._has_interrupt(envelope_buffer)
-
-        # 收尾：把 buffer 折叠为 blocks，落库 agent 消息
-        agent_message = await self._persist_agent_message(
-            session=session, user_message=user_message, run_id=run_id,
-            envelopes=envelope_buffer, runtime_config=runtime_config,
-            workflow_type=body.workflow_type,
-        )
-        # 仅 graph 真正走到 END 才推进 task_id；interrupt/异常保持不变以保证 resume 命中正确 checkpoint
-        next_task_id = await self._advance_task_id(session) if graph_completed else None
-        # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
-        await self._persist_block_index(session.id, emitter.max_block_index_used)
-        finish_env = emitter.emit_run_finish(
-            agent_message_id=agent_message.id, next_task_id=next_task_id,
-        )
-        await self._buffer_append(session.id, run_id, finish_env)
-        yield finish_env
-        # 清理 Redis buffer
-        await self._cache.client.delete(
-            STREAM_BUFFER_KEY.format(session_id=session.id, run_id=run_id),
-        )
+            try:
+                async for env in runner.astream(
+                    thread_id=thread_id, graph_input=graph_input, ctx=ctx,
+                ):
+                    envelope_buffer.append(env)
+                    await self._buffer_append(session.id, run_id, env)
+                    yield env
+            except (GeneratorExit, asyncio.CancelledError):
+                # 客户端断开：标记 aborted，不再 yield；落到外层 finally 完成落库
+                client_aborted = True
+                logger.info(
+                    "客户端中断流式 run，转入收尾落库：session_id=%s run_id=%s",
+                    session.id, run_id,
+                )
+                raise
+            except Exception as exc:
+                graph_completed = False
+                logger.exception("Graph 执行异常：session_id=%s run_id=%s", session.id, run_id)
+                err_env = emitter.emit_run_error(
+                    code="graph_execution_failed", message=str(exc), retriable=False,
+                )
+                envelope_buffer.append(err_env)
+                await self._buffer_append(session.id, run_id, err_env)
+                yield err_env
+            else:
+                # 无异常：还需区分 interrupt（等待用户）与 END（真正完成）
+                graph_completed = not self._has_interrupt(envelope_buffer)
+        finally:
+            # 不论正常 / 异常 / 客户端中断，都把已生成的 envelopes 折叠落库；
+            # 客户端中断时跳过 yield 与 task_id 推进（保留 thread 让下一轮 resume 命中 checkpoint）。
+            try:
+                agent_message = await self._persist_agent_message(
+                    session=session, user_message=user_message, run_id=run_id,
+                    envelopes=envelope_buffer, runtime_config=runtime_config,
+                    workflow_type=body.workflow_type,
+                )
+            except Exception:
+                logger.exception(
+                    "收尾落库失败：session_id=%s run_id=%s aborted=%s",
+                    session.id, run_id, client_aborted,
+                )
+                agent_message = None
+            # 仅 graph 真正走到 END 才推进 task_id；客户端中断 → 也推进，保证下一轮新问题走全新
+            # LangGraph thread（用户语义是"放弃前面的、用新问题重新问"，不是续接）。
+            # interrupt/异常保持不变以保证 resume 命中正确 checkpoint。
+            advance = (graph_completed) or client_aborted
+            next_task_id = await self._advance_task_id(session) if advance else None
+            # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
+            try:
+                await self._persist_block_index(session.id, emitter.max_block_index_used)
+            except Exception:
+                logger.exception("延时落库 block index 失败：session_id=%s", session.id)
+            # 客户端已断开 → 不再 yield finish（连接已无效），仅完成落库后退出
+            if not client_aborted and agent_message is not None:
+                finish_env = emitter.emit_run_finish(
+                    agent_message_id=agent_message.id, next_task_id=next_task_id,
+                )
+                await self._buffer_append(session.id, run_id, finish_env)
+                yield finish_env
+            # 清理 Redis buffer
+            try:
+                await self._cache.client.delete(
+                    STREAM_BUFFER_KEY.format(session_id=session.id, run_id=run_id),
+                )
+            except Exception:
+                logger.exception("清理 stream buffer 失败：session_id=%s run_id=%s",
+                                 session.id, run_id)
 
     async def resolve_interaction(
         self, *, session, request_id: str, body: AgentInteractionSubmit,
@@ -258,46 +292,73 @@ class AgentRuntimeService:
         runner = self._runner_factory(self._workflow_graphs[workflow_type])
         thread_id = await self._resolve_thread_id(session)
         graph_completed = False  # 仅"无异常 且 未中断（走到 END）"才视为完成
+        # client_aborted：与 stream_message 同构 — 客户端中途断开，跳过 yield 但完成落库
+        client_aborted = False
         try:
-            async for env in runner.astream(
-                thread_id=thread_id,
-                graph_input=Command(resume=body.values),
-                ctx=ctx,
-            ):
-                envelope_buffer.append(env)
-                await self._buffer_append(session.id, run_id, env)
-                yield env
-        except Exception as exc:
-            graph_completed = False
-            logger.exception("Graph 恢复失败：session_id=%s run_id=%s", session.id, run_id)
-            err_env = emitter.emit_run_error(
-                code="graph_execution_failed", message=str(exc), retriable=False,
-            )
-            envelope_buffer.append(err_env)
-            await self._buffer_append(session.id, run_id, err_env)
-            yield err_env
-        else:
-            # 无异常：区分 interrupt（如驳回后再次到 plan 审批卡）与 END
-            graph_completed = not self._has_interrupt(envelope_buffer)
-
-        # 收尾：落库新一条 agent 消息
-        agent_message = await self._persist_agent_message(
-            session=session, user_message=None, run_id=run_id,
-            envelopes=envelope_buffer, runtime_config=runtime_config,
-            workflow_type=workflow_type,
-        )
-        # 仅 graph 真正走到 END 才推进 task_id；驳回循环会再次 interrupt，task_id 不变保证 resume 命中
-        next_task_id = await self._advance_task_id(session) if graph_completed else None
-        # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
-        await self._persist_block_index(session.id, emitter.max_block_index_used)
-        finish_env = emitter.emit_run_finish(
-            agent_message_id=agent_message.id, next_task_id=next_task_id,
-        )
-        await self._buffer_append(session.id, run_id, finish_env)
-        yield finish_env
-        await self._cache.client.delete(
-            STREAM_BUFFER_KEY.format(session_id=session.id, run_id=run_id),
-        )
+            try:
+                async for env in runner.astream(
+                    thread_id=thread_id,
+                    graph_input=Command(resume=body.values),
+                    ctx=ctx,
+                ):
+                    envelope_buffer.append(env)
+                    await self._buffer_append(session.id, run_id, env)
+                    yield env
+            except (GeneratorExit, asyncio.CancelledError):
+                client_aborted = True
+                logger.info(
+                    "客户端中断 resume 流式 run，转入收尾落库：session_id=%s run_id=%s",
+                    session.id, run_id,
+                )
+                raise
+            except Exception as exc:
+                graph_completed = False
+                logger.exception("Graph 恢复失败：session_id=%s run_id=%s", session.id, run_id)
+                err_env = emitter.emit_run_error(
+                    code="graph_execution_failed", message=str(exc), retriable=False,
+                )
+                envelope_buffer.append(err_env)
+                await self._buffer_append(session.id, run_id, err_env)
+                yield err_env
+            else:
+                # 无异常：区分 interrupt（如驳回后再次到 plan 审批卡）与 END
+                graph_completed = not self._has_interrupt(envelope_buffer)
+        finally:
+            # 不论何种结束路径都要落库 agent 消息（含中断），保证可终止状态后内容不丢
+            try:
+                agent_message = await self._persist_agent_message(
+                    session=session, user_message=None, run_id=run_id,
+                    envelopes=envelope_buffer, runtime_config=runtime_config,
+                    workflow_type=workflow_type,
+                )
+            except Exception:
+                logger.exception(
+                    "resume 收尾落库失败：session_id=%s run_id=%s aborted=%s",
+                    session.id, run_id, client_aborted,
+                )
+                agent_message = None
+            # 仅 graph 真正走到 END 才推进 task_id；客户端中断 → 也推进，与 stream_message 同构
+            # （放弃当前 thread，下一轮新问题走全新 LangGraph thread）。
+            # 驳回循环 / 异常保持不变以保证 resume 命中。
+            advance = graph_completed or client_aborted
+            next_task_id = await self._advance_task_id(session) if advance else None
+            try:
+                await self._persist_block_index(session.id, emitter.max_block_index_used)
+            except Exception:
+                logger.exception("延时落库 block index 失败：session_id=%s", session.id)
+            if not client_aborted and agent_message is not None:
+                finish_env = emitter.emit_run_finish(
+                    agent_message_id=agent_message.id, next_task_id=next_task_id,
+                )
+                await self._buffer_append(session.id, run_id, finish_env)
+                yield finish_env
+            try:
+                await self._cache.client.delete(
+                    STREAM_BUFFER_KEY.format(session_id=session.id, run_id=run_id),
+                )
+            except Exception:
+                logger.exception("清理 stream buffer 失败：session_id=%s run_id=%s",
+                                 session.id, run_id)
 
     # ---------- 内部 ----------
 
@@ -370,8 +431,8 @@ class AgentRuntimeService:
     ):
         """落库用户消息。
 
-        副作用：若会话尚未命名（首次发送消息），用本次问题前 30 字截取为标题
-        （单行化后取前 30 字符），保证侧边栏列表与 Topbar 标题不换行。
+        副作用：若会话尚未命名（首次发送消息），用本次问题（≤80 字，与 DB 列长度对齐）
+        作为标题，保证侧边栏与 Topbar 标题信息完整；展示侧的 .truncate 负责单行省略。
         标题截取走纯字符串处理，不调 LLM。
         """
         msg = await self._repo.create_message(
@@ -403,19 +464,22 @@ class AgentRuntimeService:
 
     @staticmethod
     def _make_title_from_content(content: str) -> str:
-        """把用户消息内容压成单行 30 字以内的会话标题。
+        """把用户消息内容压成单行 ≤80 字的会话标题（与 DB 列长度对齐）。
 
         规则：
         1. strip 首尾空白
         2. 所有换行/制表符替换为单空格，再合并连续空白
-        3. 截取前 30 个字符（中文按字符计；不再加省略号，前端 .truncate 已处理）
+        3. 截取前 80 个字符（中文按字符计；不再加省略号，前端 .truncate 已处理）
+
+        80 字以内的问题原样落库；超长部分由展示侧的 .truncate 单行省略展示，
+        落库值仍是完整可读的标题。
         """
         if not content:
             return ""
         flat = content.strip().replace("\r", " ").replace("\n", " ").replace("\t", " ")
         # 合并连续空白
         flat = " ".join(flat.split())
-        return flat[:30]
+        return flat[:80]
 
     async def _persist_agent_message(
         self, *, session, user_message, run_id: str,
@@ -547,3 +611,45 @@ class AgentRuntimeService:
         except Exception:
             logger.exception("更新旧 interaction block status 失败")
         return True
+
+    async def abort_pending_interaction(self, *, session) -> None:
+        """中断会话当前的 interrupt 等待。
+
+        场景：用户在 interrupt 暂停态（维度选择 / 计划审批 / 岗位选择卡）点击"中断"按钮。
+        此时流式 run 已结束（run.finish 已 yield），无连接可断；本方法负责：
+        1. 把最近一条 agent 消息中所有 status=pending 的 interaction block 标记为 expired
+        2. 推进 session.current_task_id：让下一轮新问题走全新 LangGraph thread，
+           丢弃当前 thread 上等 interrupt 的 checkpoint（用户语义=放弃当前流程）。
+
+        失败仅日志，不抛错；调用方按 fire-and-forget 处理。
+        """
+        try:
+            # 1) 标记所有 pending interaction block 为 expired
+            messages = await self._repo.list_messages(session.id)
+            for msg in reversed(messages):
+                content = msg.content or {}
+                blocks = content.get("blocks") or []
+                dirty = False
+                for b in blocks:
+                    if (
+                        b.get("type") == "interaction"
+                        and b.get("status") == "pending"
+                    ):
+                        b["status"] = "expired"
+                        dirty = True
+                if dirty:
+                    await self._repo.update_message_content(msg.id, content)
+                    await self._repo.commit()
+                    logger.info(
+                        "用户中断 interrupt：session_id=%s message_id=%s 已标记 pending block 为 expired",
+                        session.id, msg.id,
+                    )
+                    break  # 只处理最近一条含 pending 的消息
+        except Exception:
+            logger.exception("标记 pending interaction 为 expired 失败：session_id=%s", session.id)
+        # 2) 推进 task_id，下一轮新问题走全新 LangGraph thread
+        try:
+            await self._advance_task_id(session)
+            logger.info("用户中断 interrupt：session_id=%s 已推进 task_id", session.id)
+        except Exception:
+            logger.exception("中断后推进 task_id 失败：session_id=%s", session.id)
