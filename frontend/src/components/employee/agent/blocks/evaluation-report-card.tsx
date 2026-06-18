@@ -87,7 +87,20 @@ export function EvaluationReportCard({ block, reasoning }: EvaluationReportCardP
   const color = ringColor(final_score);
 
   return (
-    <div>
+    <div className="
+      relative bg-white rounded-2xl px-4 py-3.5
+      shadow-[0_1px_3px_rgba(2,6,23,0.05),0_12px_32px_-12px_rgba(3,105,161,0.14)]
+      before:content-[''] before:absolute before:inset-0 before:rounded-2xl
+      before:p-px before:pointer-events-none
+      before:[background:linear-gradient(135deg,rgba(14,165,233,0.45),rgba(3,105,161,0.18)_50%,rgba(226,232,240,0.6))]
+      before:[mask:linear-gradient(#000_0_0)_content-box,linear-gradient(#000_0_0)]
+      before:[mask-composite:xor] before:[-webkit-mask-composite:xor]
+    ">
+      {/* 浮起卡头小字 label */}
+      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#0369A1] mb-2">
+        Resume Evaluation
+      </div>
+
       {/* 头部：分数环 + 决策 */}
       <div className="flex items-center gap-4 mb-3">
         <ScoreRing score={final_score} color={color} />
@@ -180,9 +193,14 @@ export function EvaluationReportCard({ block, reasoning }: EvaluationReportCardP
             </section>
           )}
 
-          {/* 综合评语 */}
+          {/* 综合评语：去 border，改为左 accent 条 callout 浅渐变底 */}
           {comprehensive_comment && (comprehensive_comment.advantages || comprehensive_comment.risks) && (
-            <section className="rounded-md bg-[#F8FAFC] border border-[#E2E8F0] px-3 py-2">
+            <section
+              className="relative pl-3 py-2
+                         bg-gradient-to-r from-[#F8FAFC] via-[#F8FAFC]/70 to-transparent
+                         rounded-r-md"
+            >
+              <span className="absolute left-0 top-1.5 bottom-1.5 w-[2.5px] rounded-r-full bg-gradient-to-b from-[#0EA5E9] to-[#0369A1]" />
               {comprehensive_comment.advantages && (
                 <p className="text-xs text-[#16A34A]"><span className="font-medium">优势：</span>{comprehensive_comment.advantages}</p>
               )}

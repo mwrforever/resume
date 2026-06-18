@@ -38,15 +38,85 @@ const STORAGE_KEY = 'agent-sidebar-expanded';
 
 /** 按 last_message_time 降序排序会话（新的在上）。
  *
- * 不再按"今天/昨天/本周更早/更早"分组，全部降序平铺。
+ * 仅供折叠态 Popover 复用（折叠态不分组，平铺最近会话）；展开态走 groupSessionsByTime。
  * 空时间视为最早（排到末尾）。
  *
- * 导出供单测与收起态 Popover 复用。
+ * 导出供单测与折叠态 Popover 复用。
  */
 export function sortSessionsByTime(sessions: WorkspaceSession[]): WorkspaceSession[] {
   return [...sessions].sort((a, b) =>
     (b.last_message_time ?? '').localeCompare(a.last_message_time ?? ''),
   );
+}
+
+/** 会话时间分组：今天 / 本周更早 / 更早。
+ *
+ * 边界规则：
+ * - 今天：last_message_time >= 本地今天 00:00
+ * - 本周更早：本周一 00:00 <= last_message_time < 今天 00:00
+ * - 更早：本周一之前 / 空时间 / 解析失败
+ * - 同组内按时间降序；空 / 无效时间项追加到「更早」末尾，按 id 升序稳定
+ *
+ * 周首遵循 ISO（周一为第一天），与 sortSessionsByTime 共用排序语义。
+ *
+ * 导出供单测与展开态侧栏渲染复用；折叠态侧栏不分组。
+ */
+export type SessionGroupKey = 'today' | 'thisWeek' | 'earlier';
+export interface SessionGroup {
+  key: SessionGroupKey;
+  label: '今天' | '本周更早' | '更早';
+  items: WorkspaceSession[];
+}
+
+export function groupSessionsByTime(
+  sessions: WorkspaceSession[],
+  now: Date = new Date(),
+): SessionGroup[] {
+  // 计算本地今天 00:00 与本周一 00:00（ISO 周首：周一）
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // JS getDay：周日=0、周一=1…周六=6；本周一偏移：周日=-6，其它=1-day
+  const dayOfWeek = today0.getDay();
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const monday0 = new Date(today0);
+  monday0.setDate(today0.getDate() + mondayOffset);
+
+  const todayMs = today0.getTime();
+  const mondayMs = monday0.getTime();
+
+  const today: WorkspaceSession[] = [];
+  const thisWeek: WorkspaceSession[] = [];
+  const earlierValid: { s: WorkspaceSession; ms: number }[] = [];
+  const earlierInvalid: WorkspaceSession[] = [];
+
+  for (const s of sessions) {
+    const t = s.last_message_time;
+    if (!t) {
+      earlierInvalid.push(s);
+      continue;
+    }
+    const ms = new Date(t).getTime();
+    if (!Number.isFinite(ms)) {
+      earlierInvalid.push(s);
+      continue;
+    }
+    if (ms >= todayMs) today.push(s);
+    else if (ms >= mondayMs) thisWeek.push(s);
+    else earlierValid.push({ s, ms });
+  }
+
+  // 同组内按时间降序
+  const byTimeDesc = (a: WorkspaceSession, b: WorkspaceSession) =>
+    (b.last_message_time ?? '').localeCompare(a.last_message_time ?? '');
+  today.sort(byTimeDesc);
+  thisWeek.sort(byTimeDesc);
+  earlierValid.sort((a, b) => b.ms - a.ms);
+  earlierInvalid.sort((a, b) => a.id - b.id);
+
+  return [
+    { key: 'today',    label: '今天',     items: today },
+    { key: 'thisWeek', label: '本周更早', items: thisWeek },
+    { key: 'earlier',  label: '更早',     items: [...earlierValid.map(x => x.s), ...earlierInvalid] },
+  ];
 }
 
 export function AgentSidebarDrawer({
@@ -93,7 +163,7 @@ export function AgentSidebarDrawer({
 
   // 过滤掉空虚拟会话（未发送首条消息的不进侧栏），再按时间降序
   const visible = sessions.filter(s => !isEmptyVirtual(s));
-  const sorted = sortSessionsByTime(visible);
+  const groups = groupSessionsByTime(visible);
 
   return (
     <nav
@@ -102,87 +172,103 @@ export function AgentSidebarDrawer({
                   ${expanded ? 'w-[280px]' : 'w-[64px]'}
                   overflow-hidden`}
     >
-      {/* 展开态内容 */}
+      {/* 展开态内容（毛玻璃头 + 时间分组 + 渐变 pill active + 6px 隐形滚动条） */}
       <div className={`h-full flex flex-col transition-opacity duration-200
                        ${expanded ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-        {/* 顶栏：标题 + 搜索图标 + 收起按钮 */}
-        <div className="flex items-center justify-between px-3 pt-3 pb-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-[#64748B]">会话</span>
-          <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => setSearchOpen(true)}
-              title="搜索会话"
-              aria-label="搜索会话"
-              className="w-7 h-7 flex items-center justify-center rounded-md
-                         text-[#64748B] hover:text-[#020617] hover:bg-[#F1F5F9] transition-colors"
-            >
-              <Search size={15} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setExpanded(false)}
-              title="收起侧栏"
-              className="w-7 h-7 flex items-center justify-center rounded-md
-                         text-[#64748B] hover:text-[#020617] hover:bg-[#F1F5F9] transition-colors"
-            >
-              <PanelLeftClose size={16} />
-            </button>
+        {/* 顶栏：毛玻璃 + sky 微光晕；标题 + 搜索图标 + 收起按钮 */}
+        <div
+          className="relative px-3 pt-3 pb-2.5
+                     bg-[radial-gradient(120%_60%_at_0%_0%,rgba(14,165,233,0.08),transparent_60%)]
+                     backdrop-blur-sm
+                     border-b border-[#E2E8F0]/60"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#64748B]">会话</span>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => setSearchOpen(true)}
+                title="搜索会话"
+                aria-label="搜索会话"
+                className="w-7 h-7 flex items-center justify-center rounded-md
+                           text-[#64748B] hover:text-[#0369A1] hover:bg-[rgba(14,165,233,0.08)]
+                           transition-colors"
+              >
+                <Search size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                title="收起侧栏"
+                className="w-7 h-7 flex items-center justify-center rounded-md
+                           text-[#64748B] hover:text-[#020617] hover:bg-[#F1F5F9] transition-colors"
+              >
+                <PanelLeftClose size={16} />
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* 会话列表（按时间降序平铺，空虚拟会话已过滤） */}
-        <div className="flex-1 overflow-y-auto px-2 pb-2">
-          <ul className="space-y-0.5">
-            {sorted.map(s => {
-              const isActive = s.id === activeId;
-              const isRunning = runningIds.has(s.id);
-              return (
-                <li key={s.id} className="group relative">
-                  <button
-                    type="button"
-                    onClick={() => onSelect(s.id)}
-                    title={isRunning ? '正在运行…' : undefined}
-                    className={`relative w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left
-                                transition-colors duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]
-                                active:scale-[0.99]
-                                ${isActive
-                                  ? 'bg-[#F0F9FF] text-[#020617] font-semibold'
-                                  : 'text-[#334155] hover:bg-[#F1F5F9]'
-                                }`}
-                  >
-                    {/* active 左侧 2px sky accent 条 */}
-                    {isActive && (
-                      <span className="absolute left-0 top-1.5 bottom-1.5 w-[2.5px] rounded-r-full bg-gradient-to-b from-[#0EA5E9] to-[#0369A1]" />
-                    )}
-                    {isRunning ? (
-                      <Loader2 size={16} className={`flex-shrink-0 animate-spin ${isActive ? 'text-[#0369A1]' : 'text-[#0EA5E9]'}`} />
-                    ) : (
-                      <Bot size={16} className={`flex-shrink-0 ${isActive ? 'text-[#0369A1]' : 'text-[#64748B]'}`} />
-                    )}
-                    <span className="truncate text-sm flex-1">{s.title || '未命名会话'}</span>
-                  </button>
-                  {/* hover 操作区：重命名 + 删除（弹窗化） */}
-                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5">
-                    <button
-                      type="button" title="重命名"
-                      onClick={(e) => { e.stopPropagation(); setRenaming(s); }}
-                      className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#0369A1] bg-white/80 backdrop-blur-sm transition-colors"
-                    >
-                      <Pencil size={12} />
-                    </button>
-                    <button
-                      type="button" title="删除"
-                      onClick={(e) => { e.stopPropagation(); setDeleting(s); }}
-                      className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#DC2626] bg-white/80 backdrop-blur-sm transition-colors"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+        {/* 会话列表（按时间分组：今天 / 本周更早 / 更早；隐形 6px 滚动条） */}
+        <div className="flex-1 overflow-y-auto thin-scroll px-2 pb-2 pt-1">
+          {groups.map(group => group.items.length === 0 ? null : (
+            <div key={group.key} className="mb-1">
+              {/* 组头：小字大写 label */}
+              <div className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-[0.1em] text-[#94A3B8]">
+                {group.label}
+              </div>
+              <ul className="space-y-0.5">
+                {group.items.map(s => {
+                  const isActive = s.id === activeId;
+                  const isRunning = runningIds.has(s.id);
+                  return (
+                    <li key={s.id} className="group relative">
+                      <button
+                        type="button"
+                        onClick={() => onSelect(s.id)}
+                        title={isRunning ? '正在运行…' : undefined}
+                        className={`relative w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left
+                                    transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]
+                                    active:scale-[0.99]
+                                    ${isActive
+                                      ? 'bg-[linear-gradient(90deg,rgba(14,165,233,0.12)_0%,rgba(14,165,233,0.04)_60%,transparent)] text-[#020617] font-semibold'
+                                      : 'text-[#334155] hover:bg-[#F1F5F9] hover:translate-x-[1px]'
+                                    }`}
+                      >
+                        {/* active 左侧 2.5px sky 渐变 accent 条 */}
+                        {isActive && (
+                          <span className="absolute left-0 top-1.5 bottom-1.5 w-[2.5px] rounded-r-full bg-gradient-to-b from-[#0EA5E9] to-[#0369A1]" />
+                        )}
+                        {isRunning ? (
+                          <Loader2 size={16} className={`flex-shrink-0 animate-spin ${isActive ? 'text-[#0369A1]' : 'text-[#0EA5E9]'}`} />
+                        ) : (
+                          <Bot size={16} className={`flex-shrink-0 ${isActive ? 'text-[#0369A1]' : 'text-[#64748B]'}`} />
+                        )}
+                        <span className="truncate text-sm flex-1">{s.title || '未命名会话'}</span>
+                      </button>
+                      {/* hover 操作区：重命名 + 删除（弹窗化） */}
+                      <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5">
+                        <button
+                          type="button" title="重命名"
+                          onClick={(e) => { e.stopPropagation(); setRenaming(s); }}
+                          className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#0369A1] bg-white/80 backdrop-blur-sm transition-colors"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                        <button
+                          type="button" title="删除"
+                          onClick={(e) => { e.stopPropagation(); setDeleting(s); }}
+                          className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#DC2626] bg-white/80 backdrop-blur-sm transition-colors"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
           {visible.length === 0 && (
             <div className="text-center text-xs text-[#94A3B8] py-10 leading-relaxed">
               发送第一条消息后<br />会话会出现在这里
@@ -190,8 +276,9 @@ export function AgentSidebarDrawer({
           )}
         </div>
 
-        {/* 底部按钮区 */}
-        <div className="flex-shrink-0 px-3 py-3 border-t border-[#E2E8F0]">
+        {/* 底部按钮区（保持，新增 hover 微浮起） */}
+        <div className="flex-shrink-0 px-3 py-3 border-t border-[#E2E8F0]
+                        bg-[linear-gradient(180deg,transparent,rgba(248,250,252,0.6))]">
           <button
             type="button"
             onClick={() => onCreate()}
@@ -201,7 +288,8 @@ export function AgentSidebarDrawer({
                        shadow-[0_4px_12px_-4px_rgba(3,105,161,0.5)]
                        hover:from-[#0EA5E9] hover:to-[#082f49]
                        hover:shadow-[0_6px_16px_-4px_rgba(3,105,161,0.55)]
-                       active:scale-[0.98] active:shadow-sm
+                       hover:-translate-y-[1px]
+                       active:scale-[0.98] active:translate-y-0 active:shadow-sm
                        transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
           >
             <Plus size={16} strokeWidth={2.5} />

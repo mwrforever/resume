@@ -125,3 +125,45 @@
     0 1px 3px rgba(2, 6, 23, 0.05),
     0 12px 32px -12px rgba(3, 105, 161, 0.14);
 }
+
+/* ===== 全局滚动条美化 =====
+   规则：
+   - 默认 thumb 半透明 slate（不抢眼）
+   - thumb 自身 hover 进一步加深为 sky（与品牌色统一）
+   - track 永远透明
+   - .thin-scroll 工具类：极致瘦身（6px、容器 hover 才显形），用于阅读型容器 */
+
+/* WebKit / Blink */
+*::-webkit-scrollbar       { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.18);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(3, 105, 161, 0.4);
+  background-clip: padding-box;
+}
+
+/* Firefox */
+* { scrollbar-width: thin; scrollbar-color: rgba(100, 116, 139, 0.25) transparent; }
+
+/* 工具类：极致瘦身（仅在阅读型容器需要时叠加） */
+.thin-scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.thin-scroll:hover { scrollbar-color: rgba(100, 116, 139, 0.32) transparent; }
+.thin-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.thin-scroll:hover::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.32); }
+.thin-scroll:hover::-webkit-scrollbar-thumb:hover { background: rgba(3, 105, 161, 0.5); }
+
+/* ===== 流式 rail 呼吸光（Agent 消息流 A 方案专用） ===== */
+@keyframes railGlow {
+  0%, 100% { box-shadow: -3px 0 12px -4px rgba(14, 165, 233, 0.35); }
+  50%      { box-shadow: -3px 0 16px -3px rgba(14, 165, 233, 0.55); }
+}

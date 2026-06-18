@@ -50,7 +50,20 @@ export function InterviewQuestionsCard({ block, reasoning }: InterviewQuestionsC
   };
 
   return (
-    <div>
+    <div className="
+      relative bg-white rounded-2xl px-4 py-3.5
+      shadow-[0_1px_3px_rgba(2,6,23,0.05),0_12px_32px_-12px_rgba(3,105,161,0.14)]
+      before:content-[''] before:absolute before:inset-0 before:rounded-2xl
+      before:p-px before:pointer-events-none
+      before:[background:linear-gradient(135deg,rgba(14,165,233,0.45),rgba(3,105,161,0.18)_50%,rgba(226,232,240,0.6))]
+      before:[mask:linear-gradient(#000_0_0)_content-box,linear-gradient(#000_0_0)]
+      before:[mask-composite:xor] before:[-webkit-mask-composite:xor]
+    ">
+      {/* 浮起卡头小字 label */}
+      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#0369A1] mb-2">
+        Interview Questions
+      </div>
+
       {/* 头部统计条 */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-3">
         <div className="flex items-baseline gap-1">
@@ -77,12 +90,22 @@ export function InterviewQuestionsCard({ block, reasoning }: InterviewQuestionsC
         )}
       </div>
 
-      {/* 题目列表（无边框，由 AgentMessageCard 的 divide 提供分隔） */}
-      <div className="space-y-1.5">
+      {/* 题目列表（去 border，hover 显浅底，左侧 expanded 时高亮 accent） */}
+      <div className="space-y-0.5">
         {questions.map((q: QuestionItem, i: number) => {
           const isExpanded = expandedQ.has(i);
           return (
-            <div key={i} className="rounded-xl border border-[#E2E8F0]/80 hover:border-[#0EA5E9]/40 hover:bg-[#F8FAFC] transition-colors duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]">
+            <div
+              key={i}
+              className={`group relative rounded-lg transition-colors duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]
+                          ${isExpanded ? 'bg-[#F8FAFC]' : 'hover:bg-[#F8FAFC]'}`}
+            >
+              {/* 左侧 accent 条：默认透明，hover/expanded 时显示 sky 渐变 */}
+              <span
+                className={`absolute left-0 top-2 bottom-2 w-[2px] rounded-r-full transition-opacity duration-200
+                            bg-gradient-to-b from-[#0EA5E9] to-[#0369A1]
+                            ${isExpanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-60'}`}
+              />
               {/* 题目标题行 */}
               <button
                 type="button"
@@ -102,7 +125,7 @@ export function InterviewQuestionsCard({ block, reasoning }: InterviewQuestionsC
                 </svg>
               </button>
 
-              {/* 展开详情 */}
+              {/* 展开详情（保留原结构：维度 / 评估要点 / 参考答案） */}
               {isExpanded && (
                 <div className="px-3 pb-2.5 ml-5 space-y-2 text-xs">
                   <p className="text-[#64748B]">
