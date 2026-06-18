@@ -163,7 +163,7 @@ export function AgentSidebarDrawer({
 
   // 过滤掉空虚拟会话（未发送首条消息的不进侧栏），再按时间降序
   const visible = sessions.filter(s => !isEmptyVirtual(s));
-  const sorted = sortSessionsByTime(visible);
+  const groups = groupSessionsByTime(visible);
 
   return (
     <nav
@@ -172,87 +172,103 @@ export function AgentSidebarDrawer({
                   ${expanded ? 'w-[280px]' : 'w-[64px]'}
                   overflow-hidden`}
     >
-      {/* 展开态内容 */}
+      {/* 展开态内容（毛玻璃头 + 时间分组 + 渐变 pill active + 6px 隐形滚动条） */}
       <div className={`h-full flex flex-col transition-opacity duration-200
                        ${expanded ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-        {/* 顶栏：标题 + 搜索图标 + 收起按钮 */}
-        <div className="flex items-center justify-between px-3 pt-3 pb-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-[#64748B]">会话</span>
-          <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => setSearchOpen(true)}
-              title="搜索会话"
-              aria-label="搜索会话"
-              className="w-7 h-7 flex items-center justify-center rounded-md
-                         text-[#64748B] hover:text-[#020617] hover:bg-[#F1F5F9] transition-colors"
-            >
-              <Search size={15} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setExpanded(false)}
-              title="收起侧栏"
-              className="w-7 h-7 flex items-center justify-center rounded-md
-                         text-[#64748B] hover:text-[#020617] hover:bg-[#F1F5F9] transition-colors"
-            >
-              <PanelLeftClose size={16} />
-            </button>
+        {/* 顶栏：毛玻璃 + sky 微光晕；标题 + 搜索图标 + 收起按钮 */}
+        <div
+          className="relative px-3 pt-3 pb-2.5
+                     bg-[radial-gradient(120%_60%_at_0%_0%,rgba(14,165,233,0.08),transparent_60%)]
+                     backdrop-blur-sm
+                     border-b border-[#E2E8F0]/60"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#64748B]">会话</span>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => setSearchOpen(true)}
+                title="搜索会话"
+                aria-label="搜索会话"
+                className="w-7 h-7 flex items-center justify-center rounded-md
+                           text-[#64748B] hover:text-[#0369A1] hover:bg-[rgba(14,165,233,0.08)]
+                           transition-colors"
+              >
+                <Search size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                title="收起侧栏"
+                className="w-7 h-7 flex items-center justify-center rounded-md
+                           text-[#64748B] hover:text-[#020617] hover:bg-[#F1F5F9] transition-colors"
+              >
+                <PanelLeftClose size={16} />
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* 会话列表（按时间降序平铺，空虚拟会话已过滤） */}
-        <div className="flex-1 overflow-y-auto px-2 pb-2">
-          <ul className="space-y-0.5">
-            {sorted.map(s => {
-              const isActive = s.id === activeId;
-              const isRunning = runningIds.has(s.id);
-              return (
-                <li key={s.id} className="group relative">
-                  <button
-                    type="button"
-                    onClick={() => onSelect(s.id)}
-                    title={isRunning ? '正在运行…' : undefined}
-                    className={`relative w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left
-                                transition-colors duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]
-                                active:scale-[0.99]
-                                ${isActive
-                                  ? 'bg-[#F0F9FF] text-[#020617] font-semibold'
-                                  : 'text-[#334155] hover:bg-[#F1F5F9]'
-                                }`}
-                  >
-                    {/* active 左侧 2px sky accent 条 */}
-                    {isActive && (
-                      <span className="absolute left-0 top-1.5 bottom-1.5 w-[2.5px] rounded-r-full bg-gradient-to-b from-[#0EA5E9] to-[#0369A1]" />
-                    )}
-                    {isRunning ? (
-                      <Loader2 size={16} className={`flex-shrink-0 animate-spin ${isActive ? 'text-[#0369A1]' : 'text-[#0EA5E9]'}`} />
-                    ) : (
-                      <Bot size={16} className={`flex-shrink-0 ${isActive ? 'text-[#0369A1]' : 'text-[#64748B]'}`} />
-                    )}
-                    <span className="truncate text-sm flex-1">{s.title || '未命名会话'}</span>
-                  </button>
-                  {/* hover 操作区：重命名 + 删除（弹窗化） */}
-                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5">
-                    <button
-                      type="button" title="重命名"
-                      onClick={(e) => { e.stopPropagation(); setRenaming(s); }}
-                      className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#0369A1] bg-white/80 backdrop-blur-sm transition-colors"
-                    >
-                      <Pencil size={12} />
-                    </button>
-                    <button
-                      type="button" title="删除"
-                      onClick={(e) => { e.stopPropagation(); setDeleting(s); }}
-                      className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#DC2626] bg-white/80 backdrop-blur-sm transition-colors"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+        {/* 会话列表（按时间分组：今天 / 本周更早 / 更早；隐形 6px 滚动条） */}
+        <div className="flex-1 overflow-y-auto thin-scroll px-2 pb-2 pt-1">
+          {groups.map(group => group.items.length === 0 ? null : (
+            <div key={group.key} className="mb-1">
+              {/* 组头：小字大写 label */}
+              <div className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-[0.1em] text-[#94A3B8]">
+                {group.label}
+              </div>
+              <ul className="space-y-0.5">
+                {group.items.map(s => {
+                  const isActive = s.id === activeId;
+                  const isRunning = runningIds.has(s.id);
+                  return (
+                    <li key={s.id} className="group relative">
+                      <button
+                        type="button"
+                        onClick={() => onSelect(s.id)}
+                        title={isRunning ? '正在运行…' : undefined}
+                        className={`relative w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left
+                                    transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]
+                                    active:scale-[0.99]
+                                    ${isActive
+                                      ? 'bg-[linear-gradient(90deg,rgba(14,165,233,0.12)_0%,rgba(14,165,233,0.04)_60%,transparent)] text-[#020617] font-semibold'
+                                      : 'text-[#334155] hover:bg-[#F1F5F9] hover:translate-x-[1px]'
+                                    }`}
+                      >
+                        {/* active 左侧 2.5px sky 渐变 accent 条 */}
+                        {isActive && (
+                          <span className="absolute left-0 top-1.5 bottom-1.5 w-[2.5px] rounded-r-full bg-gradient-to-b from-[#0EA5E9] to-[#0369A1]" />
+                        )}
+                        {isRunning ? (
+                          <Loader2 size={16} className={`flex-shrink-0 animate-spin ${isActive ? 'text-[#0369A1]' : 'text-[#0EA5E9]'}`} />
+                        ) : (
+                          <Bot size={16} className={`flex-shrink-0 ${isActive ? 'text-[#0369A1]' : 'text-[#64748B]'}`} />
+                        )}
+                        <span className="truncate text-sm flex-1">{s.title || '未命名会话'}</span>
+                      </button>
+                      {/* hover 操作区：重命名 + 删除（弹窗化） */}
+                      <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5">
+                        <button
+                          type="button" title="重命名"
+                          onClick={(e) => { e.stopPropagation(); setRenaming(s); }}
+                          className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#0369A1] bg-white/80 backdrop-blur-sm transition-colors"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                        <button
+                          type="button" title="删除"
+                          onClick={(e) => { e.stopPropagation(); setDeleting(s); }}
+                          className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#DC2626] bg-white/80 backdrop-blur-sm transition-colors"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
           {visible.length === 0 && (
             <div className="text-center text-xs text-[#94A3B8] py-10 leading-relaxed">
               发送第一条消息后<br />会话会出现在这里
@@ -260,8 +276,9 @@ export function AgentSidebarDrawer({
           )}
         </div>
 
-        {/* 底部按钮区 */}
-        <div className="flex-shrink-0 px-3 py-3 border-t border-[#E2E8F0]">
+        {/* 底部按钮区（保持，新增 hover 微浮起） */}
+        <div className="flex-shrink-0 px-3 py-3 border-t border-[#E2E8F0]
+                        bg-[linear-gradient(180deg,transparent,rgba(248,250,252,0.6))]">
           <button
             type="button"
             onClick={() => onCreate()}
@@ -271,7 +288,8 @@ export function AgentSidebarDrawer({
                        shadow-[0_4px_12px_-4px_rgba(3,105,161,0.5)]
                        hover:from-[#0EA5E9] hover:to-[#082f49]
                        hover:shadow-[0_6px_16px_-4px_rgba(3,105,161,0.55)]
-                       active:scale-[0.98] active:shadow-sm
+                       hover:-translate-y-[1px]
+                       active:scale-[0.98] active:translate-y-0 active:shadow-sm
                        transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
           >
             <Plus size={16} strokeWidth={2.5} />
