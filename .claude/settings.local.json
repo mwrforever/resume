@@ -51,12 +51,17 @@
       "Bash(rm -f app/schemas/vo/response/agent_response.py)",
       "Bash(rm -f app/utils/http_client.py)",
       "Bash(../.venv/Scripts/python.exe -m pytest tests/services/test_agent_resume_service.py -q)",
-      "Bash(../.venv/Scripts/python.exe -m pytest tests/services/test_agent_stream_events.py tests/services/test_agent_stream_emitter.py tests/services/test_agent_resume_service.py -q)"
+      "Bash(../.venv/Scripts/python.exe -m pytest tests/services/test_agent_stream_events.py tests/services/test_agent_stream_emitter.py tests/services/test_agent_resume_service.py -q)",
+      "Skill(loop)",
+      "Bash(start *)"
     ]
   },
   "enabledPlugins": {
     "superpowers@superpowers-dev": true,
     "claude-hud@claude-hud": true,
-    "personskills@personskills": true
+    "personskills@personskills": true,
+    "example-skills@anthropic-agent-skills": true,
+    "ui-ux-pro-max@ui-ux-pro-max-skill": true,
+    "taste-skill@taste-skill": true
   }
 }
