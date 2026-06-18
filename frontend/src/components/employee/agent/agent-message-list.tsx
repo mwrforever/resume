@@ -7,7 +7,7 @@
  */
 
 import { useEffect } from 'react';
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, RefreshCw, Sparkles } from 'lucide-react';
 import type { AgentMessage, AgentRunState, WorkflowType } from '@/types/agent';
 import { BlockRenderer } from './blocks/block-renderer';
 import { attachReasoning } from './blocks/group-blocks';
@@ -70,26 +70,50 @@ export function AgentMessageList({ messages, runState, sending, onSubmitInteract
           />
         ))}
 
-        {/* 流式正在构造的 blocks */}
+        {/* 流式正在构造的 blocks（与历史 AgentMessageCard 共用 rail 骨架，仅颜色更亮 + 呼吸光） */}
         {runState.running && (
-          <div className="space-y-2">
-            <StepStrip steps={runState.steps} running={runState.running} />
-            <div className="relative border border-[#BAE6FD]/60 rounded-2xl bg-white
-                            overflow-hidden animate-[cardEnter_0.32s_cubic-bezier(0.16,1,0.3,1)]
-                            shadow-[0_1px_3px_rgba(2,6,23,0.05),0_12px_32px_-12px_rgba(3,105,161,0.14)]">
-              {/* 左侧 3px 品牌蓝 accent 条（渐变，与历史卡区分：流式更亮） */}
-              <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-[#38BDF8] via-[#0EA5E9] to-[#0369A1]" />
-              <div className="divide-y divide-[#E2E8F0]">
+          <div className="relative pl-11 animate-[cardEnter_0.32s_cubic-bezier(0.16,1,0.3,1)]">
+            {/* 头像锚点：与历史一致，确保流式 → 历史切换无视觉跳变 */}
+            <div className="absolute left-0 top-0 flex h-8 w-8 items-center justify-center rounded-xl
+                            bg-gradient-to-br from-[#0EA5E9] to-[#0369A1] text-white
+                            shadow-[0_4px_10px_-3px_rgba(3,105,161,0.5)]
+                            ring-1 ring-inset ring-white/20">
+              <Sparkles size={15} className="fill-white/25" strokeWidth={2.2} />
+            </div>
+
+            {/* 流式 rail：更亮的 sky300 → sky → navy 渐变 + 1.6s 呼吸光 */}
+            <div
+              className="relative pl-4 py-1
+                         border-l-2 border-transparent
+                         [border-image:linear-gradient(180deg,#7DD3FC_0%,#0EA5E9_50%,#0369A1_100%)_1]
+                         animate-[railGlow_1.6s_cubic-bezier(0.4,0,0.6,1)_infinite]
+                         motion-reduce:animate-none"
+            >
+              {/* StepStrip：仅流式时显示在 rail 顶部 */}
+              {runState.steps.length > 0 && (
+                <div className="mb-2">
+                  <StepStrip steps={runState.steps} running={runState.running} />
+                </div>
+              )}
+
+              {/* 段头：HR · Agent · 流式标识 */}
+              <div className="flex items-center gap-2 mb-2 text-[11px] text-[#64748B]">
+                <span className="font-semibold text-[#334155]">HR · Agent</span>
+                <span className="w-[3px] h-[3px] rounded-full bg-[#CBD5E1]" />
+                <span className="text-[#0EA5E9] font-medium animate-pulse">生成中…</span>
+              </div>
+
+              {/* Blocks：与历史相同 spacing 节奏 */}
+              <div className="space-y-3">
                 {attachReasoning(runState.current_blocks).map(b => (
-                  <div key={b.index} className="px-4 py-3">
-                    <BlockRenderer
-                      block={b}
-                      submitting={sending}
-                      onSubmitInteraction={
-                        b.type === 'interaction' ? onSubmitInteraction : undefined
-                      }
-                    />
-                  </div>
+                  <BlockRenderer
+                    key={b.index}
+                    block={b}
+                    submitting={sending}
+                    onSubmitInteraction={
+                      b.type === 'interaction' ? onSubmitInteraction : undefined
+                    }
+                  />
                 ))}
                 {/* fanout 骨架屏：题目正在并行生成 */}
                 {showSkeleton && <QuestionSkeleton />}

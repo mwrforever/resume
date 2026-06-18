@@ -156,3 +156,9 @@
 }
 .thin-scroll:hover::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.32); }
 .thin-scroll:hover::-webkit-scrollbar-thumb:hover { background: rgba(3, 105, 161, 0.5); }
+
+/* ===== 流式 rail 呼吸光（Agent 消息流 A 方案专用） ===== */
+@keyframes railGlow {
+  0%, 100% { box-shadow: -3px 0 12px -4px rgba(14, 165, 233, 0.35); }
+  50%      { box-shadow: -3px 0 16px -3px rgba(14, 165, 233, 0.55); }
+}
