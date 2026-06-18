@@ -28,9 +28,9 @@ class TestMakeDefaultTitle:
     def test_replace_newline_and_tab(self):
         assert _make_default_title("a\nb\tc\rd") == "a b c d"
 
-    def test_truncate_to_30_chars(self):
+    def test_truncate_to_80_chars(self):
         content = "我" * 100
-        assert _make_default_title(content) == "我" * 30
+        assert _make_default_title(content) == "我" * 80
 
     def test_chinese_short_passes_through(self):
         assert _make_default_title("帮我评估候选人") == "帮我评估候选人"
@@ -47,7 +47,7 @@ class TestIsDefaultTitle:
         content = "帮我评估这份候选人简历，重点看技术能力"
         assert _is_default_title(content, content) is True
 
-    def test_long_content_truncated_to_30_is_default(self):
+    def test_long_content_truncated_to_80_is_default(self):
         content = "很长的问题" * 40
         truncated = _make_default_title(content)
         assert _is_default_title(truncated, content) is True

@@ -43,12 +43,12 @@ def _make_default_title(content: str) -> str:
     保持单一事实源：上游规则一旦变更，本函数同步更新，单元测试守住一致性。
 
     @param content: 用户消息原文
-    @return: 单行 ≤30 字的标题文本（与 AgentRuntimeService 上游规则对齐，DB 列上限 80）
+    @return: 单行 ≤80 字的标题文本（与 AgentRuntimeService 上游规则、DB 列上限对齐）
     """
     if not content:
         return ""
     flat = content.strip().replace("\r", " ").replace("\n", " ").replace("\t", " ")
-    return " ".join(flat.split())[:30]
+    return " ".join(flat.split())[:80]
 
 
 def _is_default_title(current: str | None, content: str) -> bool:
