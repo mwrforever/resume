@@ -29,7 +29,7 @@ AgentRuntimeService.stream_message
   └─ _create_user_message
        ├─ DB: 落库用户消息
        ├─ DB: 若 title 为默认/空 → set title = _make_title_from_content(content)[:80]
-       └─ ★ 新增：refine_session_title_task.delay(session_id, content, model_name)
+       └─ ★ 新增：refine_session_title_task.delay(session_id, content, runtime_config.model_dump(mode="json"))
               （try/except 兜底：Broker 不可用不阻塞主流程）
         │
         ▼ （并行，与主 SSE 完全独立）
