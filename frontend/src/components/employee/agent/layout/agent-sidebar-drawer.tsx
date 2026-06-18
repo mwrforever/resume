@@ -49,6 +49,76 @@ export function sortSessionsByTime(sessions: WorkspaceSession[]): WorkspaceSessi
   );
 }
 
+/** 会话时间分组：今天 / 本周更早 / 更早。
+ *
+ * 边界规则：
+ * - 今天：last_message_time >= 本地今天 00:00
+ * - 本周更早：本周一 00:00 <= last_message_time < 今天 00:00
+ * - 更早：本周一之前 / 空时间 / 解析失败
+ * - 同组内按时间降序；空 / 无效时间项追加到「更早」末尾，按 id 升序稳定
+ *
+ * 周首遵循 ISO（周一为第一天），与 sortSessionsByTime 共用排序语义。
+ *
+ * 导出供单测与展开态侧栏渲染复用；折叠态侧栏不分组。
+ */
+export type SessionGroupKey = 'today' | 'thisWeek' | 'earlier';
+export interface SessionGroup {
+  key: SessionGroupKey;
+  label: '今天' | '本周更早' | '更早';
+  items: WorkspaceSession[];
+}
+
+export function groupSessionsByTime(
+  sessions: WorkspaceSession[],
+  now: Date = new Date(),
+): SessionGroup[] {
+  // 计算本地今天 00:00 与本周一 00:00（ISO 周首：周一）
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // JS getDay：周日=0、周一=1…周六=6；本周一偏移：周日=-6，其它=1-day
+  const dayOfWeek = today0.getDay();
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const monday0 = new Date(today0);
+  monday0.setDate(today0.getDate() + mondayOffset);
+
+  const todayMs = today0.getTime();
+  const mondayMs = monday0.getTime();
+
+  const today: WorkspaceSession[] = [];
+  const thisWeek: WorkspaceSession[] = [];
+  const earlierValid: { s: WorkspaceSession; ms: number }[] = [];
+  const earlierInvalid: WorkspaceSession[] = [];
+
+  for (const s of sessions) {
+    const t = s.last_message_time;
+    if (!t) {
+      earlierInvalid.push(s);
+      continue;
+    }
+    const ms = new Date(t).getTime();
+    if (!Number.isFinite(ms)) {
+      earlierInvalid.push(s);
+      continue;
+    }
+    if (ms >= todayMs) today.push(s);
+    else if (ms >= mondayMs) thisWeek.push(s);
+    else earlierValid.push({ s, ms });
+  }
+
+  // 同组内按时间降序
+  const byTimeDesc = (a: WorkspaceSession, b: WorkspaceSession) =>
+    (b.last_message_time ?? '').localeCompare(a.last_message_time ?? '');
+  today.sort(byTimeDesc);
+  thisWeek.sort(byTimeDesc);
+  earlierValid.sort((a, b) => b.ms - a.ms);
+  earlierInvalid.sort((a, b) => a.id - b.id);
+
+  return [
+    { key: 'today',    label: '今天',     items: today },
+    { key: 'thisWeek', label: '本周更早', items: thisWeek },
+    { key: 'earlier',  label: '更早',     items: [...earlierValid.map(x => x.s), ...earlierInvalid] },
+  ];
+}
+
 export function AgentSidebarDrawer({
   sessions, activeId, onSelect, onCreate, onRename, onDelete,
 }: AgentSidebarDrawerProps) {
