@@ -194,25 +194,97 @@ function upsertStep(steps: AgentStep[], data: AgentStep): AgentStep[] {
 
 ## 四、Bug 2：驳回反馈语义传到 LLM
 
-### 4.1 当前数据流（已通过调查 agent 确认）
+### 4.1 当前数据流与新语义
 
-✅ 已通的链路：
+✅ 已通的链路（部分）：
 - 前端 `interaction-block.tsx:354` 提交 `{ regenerate: true, feedback: 用户文本 }`
 - 后端 `resolve_interaction` 通过 `Command(resume=values)` 透传给 LangGraph
 - `_request_dimension_selection`（interview_questions.py:46-49）把 feedback 写入 `state.dimension_feedback`
 - 条件边 `_route_after_dimension_selection` 跳回 `suggest_dimensions`
 
-❌ 断链的环节：
-- `suggest_dimensions` 节点（`interview_question_service.py:78-101`）**只读 `state.user_intent`**（首条用户消息），**从不读 `state.dimension_feedback`**
-- `dimension_suggest.yaml` 模板**只有 `resume_text` + `user_intent` 两个变量**，**没有 feedback 占位符、没有 previous_dimensions 对比基线**
+❌ 三处断链：
+1. **前端驳回 payload 信息不全**：当前只发 `{regenerate: true, feedback}`，**完全没把"用户已勾选/未勾选"的维度信息传给后端**；后端无法区分"用户认可哪些"和"用户否决哪些"
+2. **后端 service 节点不读反馈**：`suggest_dimensions` 节点（`interview_question_service.py:78-101`）只读 `state.user_intent`（首条用户消息），**从不读 `state.dimension_feedback`**，也无法读到勾选状态
+3. **prompt 模板字段缺失**：`dimension_suggest.yaml` 只有 `resume_text` + `user_intent` 两个变量，没有 feedback 占位符、没有 accepted/rejected 对比基线
 
-### 4.2 修复：dimension（核心 bug）
+### 4.2 新语义：分类保留 + 调整
 
-**文件 1**：`backend/app/llm/prompts/templates/interview_questions/dimension_suggest.yaml`
+**核心规则**（用户在维度选择卡上点"驳回"时）：
+- **用户已勾选的维度** → 用户采纳的，必须**完整保留**进新一轮维度集合
+- **用户未勾选的维度** → 用户否决的，作为反例传给 LLM，**必须替换**为新建议（不重复推荐相同维度）
+- **用户文本反馈**（textarea）→ 针对**未采纳部分**的具体调整方向（如"还需要新增团队沟通能力"），优先级最高
 
-新增两个 optional 变量 + prompt 强转指令：
+LLM 指令：
+1. 必须 1:1 保留所有 accepted_dimensions 项（name + reason 不变）
+2. 在 accepted 之外补足新维度，让总数仍为 4-6 个
+3. 新建议必须避开 rejected_dimensions 列表
+4. 若有 feedback，新建议必须按 feedback 体现（如反馈说"新增 X"则必含 X 维度）
 
-```yaml
+仅 dimension 路径用此分类语义；plan_approval 已有内嵌表格编辑（题量/难度/focus 直接改），用户已采纳部分通过 edited_plan 提交保留，驳回路径只需保留现有 review_feedback + 新增 previous_plan 即可（见 §4.4）。
+
+### 4.3 修复：dimension（核心 bug）
+
+**文件 1**：`frontend/src/components/employee/agent/blocks/interaction-block.tsx`（约 354 行）
+
+升级 `DimensionSelection` 组件的"驳回"按钮：
+
+```tsx
+// 当前 onClick：
+onClick={() => onSubmit({ regenerate: true, feedback: feedback.trim() })}
+
+// 改为：构造 accepted（已勾选）/ rejected（未勾选）分类
+onClick={() => {
+  const accepted = candidates
+    .filter(c => selected.has(String(c.name ?? '')))
+    .map(c => ({
+      name: String(c.name ?? ''),
+      reason: c.reason ? String(c.reason) : '',
+    }));
+  const rejected = candidates
+    .filter(c => !selected.has(String(c.name ?? '')))
+    .map(c => ({
+      name: String(c.name ?? ''),
+      reason: c.reason ? String(c.reason) : '',
+    }));
+  onSubmit({
+    regenerate: true,
+    feedback: feedback.trim(),
+    accepted_dimensions: accepted,
+    rejected_dimensions: rejected,
+  });
+}}
+```
+
+按钮文案动态化（让用户预知行为）：
+- 0 勾选：`"全部驳回，重新建议"`
+- ≥1 勾选：`"保留已选 N 个，调整其余"`
+
+**文件 2**：`backend/app/llm/graphs/workflows/interview_questions.py:32-55` 的 `_request_dimension_selection` 节点
+
+把驳回分支扩展，写入 accepted/rejected 到 state：
+
+```python
+if user_values.get("regenerate"):
+    return {
+        "dimension_rejected": True,
+        "dimension_feedback": feedback,
+        "accepted_dimensions": user_values.get("accepted_dimensions", []),
+        "rejected_dimensions": user_values.get("rejected_dimensions", []),
+    }
+```
+
+**文件 3**：`backend/app/llm/graphs/workflows/state.py`
+
+state schema 中需要 `accepted_dimensions: list[dict]` 与 `rejected_dimensions: list[dict]` 字段；若已存在则复用，否则补充（实施时先 Read 该文件确认）。这两个字段是"驳回循环过程态"，进入下一轮成功提交后由 service 节点重置。
+
+**文件 4**：`backend/app/llm/prompts/templates/interview_questions/dimension_suggest.yaml`
+
+完整新版（5 个变量：resume_text + user_intent + user_feedback + accepted_dimensions + rejected_dimensions）：
+
+````yaml
+name: dimension_suggest
+version: "1.2"
+description: "基于候选人简历建议面试评估维度（支持驳回循环：已采纳保留 + 已否决替换 + 反馈调整）"
 variables:
   - name: resume_text
     required: true
@@ -220,16 +292,18 @@ variables:
   - name: user_intent
     required: false
     description: "用户指定的分析方向或关注点"
-  - name: user_feedback           # ← 新增
+  - name: user_feedback
     required: false
-    description: "上一轮被驳回时用户的反馈文本（必须严格采纳）"
-  - name: previous_dimensions     # ← 新增
+    description: "上一轮驳回时用户对未采纳部分的反馈文本"
+  - name: accepted_dimensions
     required: false
-    description: "上一轮被用户驳回的维度列表（JSON 字符串，作为对比基线，避免重复推荐）"
-
+    description: "上一轮用户已勾选（采纳）的维度（JSON 数组），必须 1:1 完整保留"
+  - name: rejected_dimensions
+    required: false
+    description: "上一轮用户未勾选（否决）的维度（JSON 数组），必须替换为新建议，不可重复"
 template: |-
   # 角色
-  你是资深企业招聘面试设计专家，负责根据候选人简历和用户意图推荐面试评估维度。
+  你是资深企业招聘面试设计专家，负责根据候选人简历推荐面试评估维度。
 
   # 约束
   {% include "agent/constraints.yaml" %}
@@ -238,25 +312,34 @@ template: |-
   - 候选人简历：
     ```{{ resume_text }}```
   {% if user_intent %}
-  - 用户指定的分析方向：{{ user_intent }}
+  - 用户指定的分析方向:{{ user_intent }}
   {% endif %}
-  {% if previous_dimensions %}
-  - 上一轮被驳回的维度（仅作对比基线，不要重复出现）：
-    {{ previous_dimensions }}
+  {% if accepted_dimensions %}
+  - 上一轮用户**已采纳**的维度（**必须 1:1 完整保留**到新一轮，name 与 reason 不得改动）：
+    {{ accepted_dimensions }}
+  {% endif %}
+  {% if rejected_dimensions %}
+  - 上一轮用户**已否决**的维度（**必须替换为新建议**，新维度的 name 不得与下列任一相同或近义）：
+    {{ rejected_dimensions }}
   {% endif %}
   {% if user_feedback %}
-  - 用户驳回反馈（**必须严格采纳，不得自由发挥**）：
+  - 用户对未采纳部分的反馈（**最高优先级，必须严格按反馈调整未采纳维度**）：
     {{ user_feedback }}
   {% endif %}
 
   # 指令
-  请基于候选人简历{% if user_intent %}和用户指定的分析方向{% endif %}{% if user_feedback %}，并**严格按照用户驳回反馈调整维度集合**（驳回反馈是绝对约束，不可忽略；若反馈要求新增某维度，必须包含该维度；若反馈要求移除/替换某维度，必须移除/替换）{% endif %}，建议 4-6 个适合本次面试重点追问的维度。
+  请输出 4-6 个面试维度{% if accepted_dimensions or rejected_dimensions %}，按以下规则：
 
-  ## 具体要求
-  1. 每个维度必须给出推荐理由
-  2. {% if previous_dimensions %}**必须与上一轮被驳回的维度有显著差异**——保留合理的、按反馈调整有问题的{% else %}维度名称必须具体明确（如"项目深度"而非"综合能力"），不得超过 8 个字{% endif %}
-  3. 维度之间应覆盖不同评估角度，避免重叠
-  4. 所有维度名称必须填写，不得为空
+  1. **保留约束**：{% if accepted_dimensions %}上述「已采纳的维度」必须 1:1 出现在输出 dimensions 数组里（顺序可自定，但 name 与 reason 严格不变）{% else %}本轮无已采纳维度{% endif %}
+  2. **替换约束**：{% if rejected_dimensions %}上述「已否决的维度」**严禁出现**在输出里（包括同义改写）{% else %}本轮无已否决维度{% endif %}
+  3. **反馈优先**：{% if user_feedback %}基于上述用户反馈生成新维度填充剩余位置（若反馈要求新增某维度必须包含；若反馈否决某方向必须避开）{% else %}基于简历给出最稳妥的新维度填充剩余位置{% endif %}
+  4. **总数控制**：accepted + 新维度 = 4-6 个；不足则补充与简历相关的新维度，超出则仅保留最相关的{% else %}（首轮：维度数量在 4-6 个之间）{% endif %}
+
+  ## 通用要求
+  - 每个维度必须给出推荐理由
+  - 维度名称具体明确（如"项目深度"而非"综合能力"），不得超过 8 个字
+  - 维度之间应覆盖不同评估角度，避免重叠
+  - 所有维度名称必须填写，不得为空
 
   # 输出格式
   只输出 JSON，不要输出 Markdown、解释或代码块：
@@ -268,18 +351,29 @@ template: |-
       }
     ]
   }
-```
+````
 
-**文件 2**：`backend/app/services/interview_question_service.py:78-101` 的 `suggest_dimensions` 节点
+**文件 5**：`backend/app/services/interview_question_service.py:78-101` 的 `suggest_dimensions` 节点
 
 ```python
 async def suggest_dimensions(self, state, ctx: WorkflowRuntimeContext) -> dict:
-    # 驳回循环时把上一轮维度作对比基线、把反馈强转给 LLM
+    """AI 提议维度；支持驳回循环（已采纳保留 + 已否决替换 + 反馈优先）。"""
     user_feedback = (state.get("dimension_feedback") or "").strip() or None
-    previous_dims = state.get("suggested_dimensions") or []
-    previous_dimensions_json = (
-        json.dumps([{"name": d.get("name"), "reason": d.get("reason")} for d in previous_dims], ensure_ascii=False)
-        if previous_dims else None
+    accepted = state.get("accepted_dimensions") or []
+    rejected = state.get("rejected_dimensions") or []
+    accepted_json = (
+        json.dumps(
+            [{"name": d.get("name"), "reason": d.get("reason")} for d in accepted],
+            ensure_ascii=False,
+        )
+        if accepted else None
+    )
+    rejected_json = (
+        json.dumps(
+            [{"name": d.get("name"), "reason": d.get("reason")} for d in rejected],
+            ensure_ascii=False,
+        )
+        if rejected else None
     )
 
     prompt = _pm.render(
@@ -287,12 +381,36 @@ async def suggest_dimensions(self, state, ctx: WorkflowRuntimeContext) -> dict:
         resume_text=state.get("resume_text") or "",
         user_intent=self._extract_user_intent(state),
         user_feedback=user_feedback,
-        previous_dimensions=previous_dimensions_json,
+        accepted_dimensions=accepted_json,
+        rejected_dimensions=rejected_json,
     )
     text = await self._stream_with_thinking(prompt, ctx, stage_label="分析维度")
     dims = self._parse_dimensions(text)
-    # 重置 dimension_feedback（用过即清，避免下一轮误用）
-    return {"suggested_dimensions": dims, "dimension_feedback": ""}
+    if not dims:
+        logger.warning(
+            "AI 维度提议失败/为空，使用内置维度兜底；原始返回前 200 字：%s",
+            text[:200].replace("\n", " "),
+        )
+        dims = BUILTIN_DIMENSIONS
+
+    # 防御性兜底：LLM 偶尔不遵守"保留 accepted"约束 → 后端强制注入
+    if accepted:
+        dim_names = {d.get("name") for d in dims}
+        for acc in accepted:
+            if acc.get("name") and acc.get("name") not in dim_names:
+                dims.insert(0, {
+                    "name": acc["name"],
+                    "reason": acc.get("reason", ""),
+                    "source": "ai",
+                })
+
+    # 重置驳回过程态（用过即清，避免下一轮误用）
+    return {
+        "suggested_dimensions": dims,
+        "dimension_feedback": "",
+        "accepted_dimensions": [],
+        "rejected_dimensions": [],
+    }
 ```
 
 ### 4.3 修复：plan_approval
