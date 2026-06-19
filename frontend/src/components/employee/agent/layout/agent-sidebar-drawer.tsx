@@ -167,15 +167,18 @@ export function AgentSidebarDrawer({
 
   return (
     <nav
-      className={`relative flex-shrink-0 bg-white border-r border-[#E2E8F0]
+      className={`relative flex-shrink-0
+                  bg-[linear-gradient(180deg,#FFFFFF_0%,#FAFCFE_100%)]
+                  border-r border-[#E2E8F0]/80
+                  shadow-[1px_0_0_0_rgba(255,255,255,0.6)_inset]
                   transition-[width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]
                   ${expanded ? 'w-[280px]' : 'w-[64px]'}
                   overflow-hidden`}
     >
-      {/* 展开态内容（毛玻璃头 + 时间分组 + 渐变 pill active + 6px 隐形滚动条） */}
+      {/* 展开态内容（毛玻璃头 + 时间分组 + 渐变 pill active + 隐形 4px 品牌色滚动条 + 上下渐隐 mask） */}
       <div className={`h-full flex flex-col transition-opacity duration-200
                        ${expanded ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-        {/* 顶栏：毛玻璃 + sky 微光晕；标题 + 搜索图标 + 收起按钮 */}
+        {/* 顶栏：毛玻璃 + sky 微光晕；品牌 dot + "会话" + 计数 chip + 搜索/收起 */}
         <div
           className="relative px-3 pt-3 pb-2.5
                      bg-[radial-gradient(120%_60%_at_0%_0%,rgba(14,165,233,0.08),transparent_60%)]
@@ -183,7 +186,20 @@ export function AgentSidebarDrawer({
                      border-b border-[#E2E8F0]/60"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#64748B]">会话</span>
+            <div className="flex items-center gap-2 min-w-0">
+              {/* 品牌色 dot：与底部 CTA / active rail 同色系，建立首尾呼应 */}
+              <span className="w-1.5 h-1.5 rounded-full bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] shadow-[0_0_6px_rgba(14,165,233,0.55)] flex-shrink-0" aria-hidden />
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#475569]">会话</span>
+              {/* 计数 chip：仅在有可见会话时渲染；空态保持简洁 */}
+              {visible.length > 0 && (
+                <span className="px-1.5 py-px rounded-full text-[10px] font-semibold tabular-nums
+                                 text-[#0369A1]
+                                 bg-[rgba(14,165,233,0.10)]
+                                 ring-1 ring-inset ring-[rgba(14,165,233,0.18)]">
+                  {visible.length}
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-0.5">
               <button
                 type="button"
@@ -209,12 +225,12 @@ export function AgentSidebarDrawer({
           </div>
         </div>
 
-        {/* 会话列表（按时间分组：今天 / 本周更早 / 更早；隐形 6px 滚动条） */}
-        <div className="flex-1 overflow-y-auto thin-scroll px-2 pb-2 pt-1">
-          {groups.map(group => group.items.length === 0 ? null : (
-            <div key={group.key} className="mb-1">
-              {/* 组头：小字大写 label */}
-              <div className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-[0.1em] text-[#94A3B8]">
+        {/* 会话列表（按时间分组：今天 / 本周更早 / 更早；sidebar-scroll = 4px 品牌色 thumb + 上下渐隐 mask） */}
+        <div className="flex-1 overflow-y-auto sidebar-scroll px-2 pb-2 pt-1">
+          {groups.map((group, gi) => group.items.length === 0 ? null : (
+            <div key={group.key} className={gi === 0 ? 'mb-1' : 'mb-1 mt-0.5'}>
+              {/* 组头：极小字大写 label + 与品牌 sky 协调的灰阶 */}
+              <div className="px-3 pt-2.5 pb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-[#94A3B8]">
                 {group.label}
               </div>
               <ul className="space-y-0.5">
@@ -227,17 +243,22 @@ export function AgentSidebarDrawer({
                         type="button"
                         onClick={() => onSelect(s.id)}
                         title={isRunning ? '正在运行…' : undefined}
-                        className={`relative w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left
+                        className={`relative w-full flex items-center gap-3 pl-3 pr-3 py-2 rounded-lg text-left
                                     transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]
                                     active:scale-[0.99]
                                     ${isActive
-                                      ? 'bg-[linear-gradient(90deg,rgba(14,165,233,0.12)_0%,rgba(14,165,233,0.04)_60%,transparent)] text-[#020617] font-semibold'
+                                      ? 'bg-[linear-gradient(90deg,rgba(14,165,233,0.14)_0%,rgba(14,165,233,0.05)_60%,transparent)] text-[#020617] font-semibold ring-1 ring-inset ring-[rgba(14,165,233,0.16)]'
                                       : 'text-[#334155] hover:bg-[#F1F5F9] hover:translate-x-[1px]'
                                     }`}
                       >
-                        {/* active 左侧 2.5px sky 渐变 accent 条 */}
+                        {/* active 左侧 3px sky 渐变 accent rail + 外发光（与底部 CTA 同色系呼应） */}
                         {isActive && (
-                          <span className="absolute left-0 top-1.5 bottom-1.5 w-[2.5px] rounded-r-full bg-gradient-to-b from-[#0EA5E9] to-[#0369A1]" />
+                          <span
+                            className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full
+                                       bg-gradient-to-b from-[#0EA5E9] to-[#0369A1]
+                                       shadow-[0_0_8px_rgba(14,165,233,0.55)]"
+                            aria-hidden
+                          />
                         )}
                         {isRunning ? (
                           <Loader2 size={16} className={`flex-shrink-0 animate-spin ${isActive ? 'text-[#0369A1]' : 'text-[#0EA5E9]'}`} />
@@ -246,19 +267,22 @@ export function AgentSidebarDrawer({
                         )}
                         <span className="truncate text-sm flex-1">{s.title || '未命名会话'}</span>
                       </button>
-                      {/* hover 操作区：重命名 + 删除（弹窗化） */}
-                      <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5">
+                      {/* hover 操作区：重命名 + 删除（白色卡片层 + ring + shadow，与底色形成清晰层级） */}
+                      <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5
+                                      bg-white/95 backdrop-blur-sm rounded-md p-0.5
+                                      ring-1 ring-[#E2E8F0]
+                                      shadow-[0_2px_8px_-2px_rgba(2,6,23,0.12)]">
                         <button
                           type="button" title="重命名"
                           onClick={(e) => { e.stopPropagation(); setRenaming(s); }}
-                          className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#0369A1] bg-white/80 backdrop-blur-sm transition-colors"
+                          className="w-5 h-5 flex items-center justify-center rounded text-[#64748B] hover:text-[#0369A1] hover:bg-[rgba(14,165,233,0.10)] transition-colors"
                         >
                           <Pencil size={12} />
                         </button>
                         <button
                           type="button" title="删除"
                           onClick={(e) => { e.stopPropagation(); setDeleting(s); }}
-                          className="w-6 h-6 flex items-center justify-center rounded text-[#64748B] hover:text-[#DC2626] bg-white/80 backdrop-blur-sm transition-colors"
+                          className="w-5 h-5 flex items-center justify-center rounded text-[#64748B] hover:text-[#DC2626] hover:bg-[rgba(220,38,38,0.08)] transition-colors"
                         >
                           <Trash2 size={12} />
                         </button>
@@ -271,13 +295,14 @@ export function AgentSidebarDrawer({
           ))}
           {visible.length === 0 && (
             <div className="text-center text-xs text-[#94A3B8] py-10 leading-relaxed">
+              {/* 空态：极简文案（icon 由顶栏品牌 dot 承担，避免冗余装饰） */}
               发送第一条消息后<br />会话会出现在这里
             </div>
           )}
         </div>
 
-        {/* 底部按钮区（保持，新增 hover 微浮起） */}
-        <div className="flex-shrink-0 px-3 py-3 border-t border-[#E2E8F0]
+        {/* 底部 CTA 区：与顶部品牌 dot 首尾呼应 */}
+        <div className="flex-shrink-0 px-3 py-3 border-t border-[#E2E8F0]/80
                         bg-[linear-gradient(180deg,transparent,rgba(248,250,252,0.6))]">
           <button
             type="button"
@@ -298,35 +323,38 @@ export function AgentSidebarDrawer({
         </div>
       </div>
 
-      {/* 折叠态内容 */}
-      <div className={`absolute inset-0 flex flex-col items-center py-3 gap-2
+      {/* 折叠态内容：上分组（导航：展开+搜索）/ 中部（会话入口）/ 下分组（CTA+设置） */}
+      <div className={`absolute inset-0 flex flex-col items-center py-3 gap-1
                        transition-opacity duration-200
                        ${expanded ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-        {/* 展开按钮 */}
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          title="展开侧栏"
-          className="w-9 h-9 flex items-center justify-center rounded-lg
-                     text-[#64748B] hover:text-[#020617] hover:bg-[#F1F5F9] transition-colors"
-        >
-          <PanelLeftOpen size={16} />
-        </button>
+        {/* 上分组：展开 + 搜索 */}
+        <div className="flex flex-col items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            title="展开侧栏"
+            className="w-9 h-9 flex items-center justify-center rounded-lg
+                       text-[#64748B] hover:text-[#020617] hover:bg-[#F1F5F9] transition-colors"
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            title="搜索会话"
+            aria-label="搜索会话"
+            className="w-9 h-9 flex items-center justify-center rounded-lg
+                       text-[#64748B] hover:text-[#0369A1] hover:bg-[rgba(14,165,233,0.08)] transition-colors"
+          >
+            <Search size={16} />
+          </button>
+        </div>
 
-        {/* 搜索图标按钮（折叠态也可搜索） */}
-        <button
-          type="button"
-          onClick={() => setSearchOpen(true)}
-          title="搜索会话"
-          aria-label="搜索会话"
-          className="w-9 h-9 flex items-center justify-center rounded-lg
-                     text-[#64748B] hover:text-[#0369A1] hover:bg-[#F1F5F9] transition-colors"
-        >
-          <Search size={16} />
-        </button>
+        {/* 上下分组分隔：极细品牌色淡分隔，避免折叠态像一摞按钮 */}
+        <div className="my-1 w-6 h-px bg-gradient-to-r from-transparent via-[#E2E8F0] to-transparent" aria-hidden />
 
-        {/* 会话入口：单图标按钮，悬浮弹出会话列表 */}
-        <div className="flex-1 overflow-y-auto flex flex-col items-center gap-1 px-2 w-full">
+        {/* 会话入口（中段，自动 sidebar-scroll；位置吃满中部） */}
+        <div className="flex-1 overflow-y-auto sidebar-scroll flex flex-col items-center gap-1 px-2 w-full">
           <CollapsedSessionPopover
             sessions={visible}
             activeId={activeId}
@@ -335,24 +363,28 @@ export function AgentSidebarDrawer({
           />
         </div>
 
-        {/* 新建会话 FAB */}
-        <button type="button" onClick={() => onCreate()} title="新建会话"
-                className="w-9 h-9 flex items-center justify-center rounded-full
-                           bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] text-white
-                           ring-1 ring-inset ring-white/15
-                           shadow-[0_4px_12px_-4px_rgba(3,105,161,0.5)]
-                           hover:shadow-[0_6px_16px_-4px_rgba(3,105,161,0.55)]
-                           active:scale-[0.95] active:shadow-sm
-                           transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]">
-          <Plus size={16} strokeWidth={2.5} />
-        </button>
+        {/* 下分组分隔 */}
+        <div className="my-1 w-6 h-px bg-gradient-to-r from-transparent via-[#E2E8F0] to-transparent" aria-hidden />
 
-        {/* 设置：暂未实现，cursor-default 去误导 */}
-        <button type="button" title="设置（敬请期待）" disabled
-                className="w-9 h-9 flex items-center justify-center rounded-lg
-                           text-[#CBD5E1] cursor-not-allowed">
-          <Settings size={16} />
-        </button>
+        {/* 下分组：新建 FAB + 设置（占位） */}
+        <div className="flex flex-col items-center gap-1">
+          <button type="button" onClick={() => onCreate()} title="新建会话"
+                  className="w-9 h-9 flex items-center justify-center rounded-full
+                             bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] text-white
+                             ring-1 ring-inset ring-white/15
+                             shadow-[0_4px_12px_-4px_rgba(3,105,161,0.5)]
+                             hover:shadow-[0_6px_16px_-4px_rgba(3,105,161,0.55)]
+                             hover:-translate-y-[1px]
+                             active:scale-[0.95] active:translate-y-0 active:shadow-sm
+                             transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]">
+            <Plus size={16} strokeWidth={2.5} />
+          </button>
+          <button type="button" title="设置（敬请期待）" disabled
+                  className="w-9 h-9 flex items-center justify-center rounded-lg
+                             text-[#CBD5E1] cursor-not-allowed">
+            <Settings size={16} />
+          </button>
+        </div>
       </div>
 
       {/* 弹窗：重命名 */}

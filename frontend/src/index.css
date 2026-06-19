@@ -162,6 +162,30 @@
 .thin-scroll:hover::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.32); }
 .thin-scroll:hover::-webkit-scrollbar-thumb:hover { background: rgba(3, 105, 161, 0.5); }
 
+/* ===== Agent 侧栏专用：极简品牌色滚动条 + 上下渐隐 mask =====
+   规则：
+   - 静态 thumb 完全透明，列表静止时滚动条彻底"消失"
+   - 容器 hover 时 thumb 浮现为 sky 半透明品牌色（与底部 CTA 同色系）
+   - 极细 4px 宽度，不喧宾夺主
+   - 列表上下 8px mask 渐隐：内容溢出时不再硬切，呼应"渐变 pill active"美感
+   仅作用于 .sidebar-scroll 容器，不污染全局滚动条规则 */
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+          mask-image: linear-gradient(180deg, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+}
+.sidebar-scroll:hover { scrollbar-color: rgba(14, 165, 233, 0.28) transparent; }
+.sidebar-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+.sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  transition: background 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sidebar-scroll:hover::-webkit-scrollbar-thumb { background: rgba(14, 165, 233, 0.28); }
+.sidebar-scroll:hover::-webkit-scrollbar-thumb:hover { background: rgba(14, 165, 233, 0.55); }
+
 /* ===== 流式 rail 呼吸光（Agent 消息流 A 方案专用） ===== */
 @keyframes railGlow {
   0%, 100% { box-shadow: -3px 0 12px -4px rgba(14, 165, 233, 0.35); }
