@@ -416,17 +416,24 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
       if (cur && !isDefaultTitle(cur)) return null;
       return makeTitleFromContent(input.content);
     })();
+    // 乐观 last_message_time：让会话立即进入侧栏「今日」组顶部（bug 3）。
+    // 服务端权威值在 run.finish reload 时通过 mergeLocalRuntime 回写覆盖；
+    // 客户端时间与服务端可能差几秒，但都在「今日」区间内，分组结果一致，无视觉跳变。
+    const optimisticLastMessageTime = new Date().toISOString();
     set((s) => {
       const entry = getRun(s.runs, realSessionId);
       const messages = [...entry.messages, optimisticUserMessage];
-      const session = optimisticTitle && entry.session
-        ? { ...entry.session, title: optimisticTitle }
+      // session 同步乐观更新：标题（仅首条空标题）+ last_message_time（每次都写）
+      const sessionPatch: Partial<WorkspaceSession> = {
+        last_message_time: optimisticLastMessageTime,
+        ...(optimisticTitle ? { title: optimisticTitle } : {}),
+      };
+      const session = entry.session
+        ? { ...entry.session, ...sessionPatch }
         : entry.session;
-      const sessions = optimisticTitle
-        ? s.sessions.map((sess) =>
-            sess.id === realSessionId ? { ...sess, title: optimisticTitle } : sess,
-          )
-        : s.sessions;
+      const sessions = s.sessions.map((sess) =>
+        sess.id === realSessionId ? { ...sess, ...sessionPatch } : sess,
+      );
       return { runs: { ...s.runs, [realSessionId]: { ...entry, messages, session } }, sessions };
     });
 
