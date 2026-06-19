@@ -1,5 +1,5 @@
 /**
- * 会话分组（今天 / 本周更早 / 更早）单测。
+ * 会话分组（今日 / 本周 / 更早）单测。
  *
  * 边界规则：
  * - 今日：last_message_time >= 本地今天 00:00
@@ -45,7 +45,7 @@ describe('groupSessionsByTime', () => {
     expect(groups.map(g => g.label)).toEqual(['今日', '本周', '更早']);
   });
 
-  it('「今天」=本地今天 00:00 之后', () => {
+  it('「今日」=本地今天 00:00 之后', () => {
     const sessions = [
       mk(1, isoAt(2026, 5, 17, 0)),   // 今天 00:00（含）
       mk(2, isoAt(2026, 5, 17, 12)),  // 今天中午
@@ -85,7 +85,7 @@ describe('groupSessionsByTime', () => {
     expect(earlier.items.map(s => s.id)).toEqual([1, 2, 3, 4]);
   });
 
-  it('周一 00:00 边界：恰为周一 0 点 → 本周更早', () => {
+  it('周一 00:00 边界：恰为周一 0 点 → 本周', () => {
     // NOW = 周三 13:00；本周一 = 2026-06-15 00:00:00
     const sessions = [
       mk(1, new Date(2026, 5, 15, 0, 0, 0).toISOString()),
@@ -96,7 +96,7 @@ describe('groupSessionsByTime', () => {
     expect(groups.find(g => g.key === 'earlier')!.items.map(s => s.id)).toEqual([2]);
   });
 
-  it('NOW 是周一时：本周一 = 当天 00:00，「本周更早」可能为空', () => {
+  it('NOW 是周一时：本周一 = 当天 00:00，「本周」可能为空', () => {
     const monday = new Date(2026, 5, 15, 10, 0, 0); // 周一 10:00
     const sessions = [
       mk(1, new Date(2026, 5, 15, 9).toISOString()),  // 今天 09:00

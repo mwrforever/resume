@@ -54,8 +54,9 @@ export const WORKFLOW_STEP_TEMPLATES: Record<WorkflowType, StepTemplate[]> = {
  * - 模板项按拓扑顺序输出，runtime 命中的项替换 status / detail，未命中保持 pending；
  * - 重入相同 step_id（runtime 中多次出现）→ 取**最后一次**出现的状态作为该模板项的当前状态，
  *   保证"驳回循环"不增加分母也不重置已完成；
- * - 模板里没出现的 runtime step_id（异常分支或新节点未同步）→ 追加到末尾，分母 = 模板长度 + 异常项数；
- *   这是防御性兜底，正常情况下不应发生。
+ * - 模板里没出现的 runtime step_id（异常分支或新节点未同步）→ 追加到 mergedSteps 末尾用于展开态展示，
+ *   但 StepStrip 的分母仍以模板静态长度为准（详见 StepStrip 中 totalCount 计算），
+ *   避免异常分支让分母抖动。这是防御性兜底，正常情况下不应发生。
  *
  * @param workflow workflow_type；未在 WORKFLOW_STEP_TEMPLATES 中的值走 fallback（直接返回 runtimeSteps）
  * @param runtimeSteps runState.steps，按 step.update 到达顺序累积

@@ -209,7 +209,7 @@ export function AgentSidebarDrawer({
           </div>
         </div>
 
-        {/* 会话列表（按时间分组：今天 / 本周更早 / 更早；隐形 6px 滚动条） */}
+        {/* 会话列表（按时间分组：今日 / 本周 / 更早；隐形 6px 滚动条） */}
         <div className="flex-1 overflow-y-auto thin-scroll px-2 pb-2 pt-1">
           {groups.map(group => group.items.length === 0 ? null : (
             <div key={group.key} className="mb-1">
