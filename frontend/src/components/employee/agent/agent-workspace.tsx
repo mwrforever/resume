@@ -82,6 +82,23 @@ function WorkspaceInner({
     if (lastInputRef.current) void sendMessage(lastInputRef.current);
   }, [sendMessage]);
 
+  // 中断重发（bug 1）：用 messages 数组里最后一条 user 消息内容重新发起。
+  // 与 handleRetry 区别：handleRetry 用 lastInputRef（内存中的本次 send 入参），
+  // 刷新后内存丢失但 messages 还有落库的 user 消息，所以中断重发必须从 messages 取。
+  const handleRetryFromLastUser = useCallback(() => {
+    // 倒序找最近一条 user 消息
+    const lastUser = [...messages].reverse().find(m => m.role === 'user');
+    if (!lastUser) return;
+    const userText =
+      (lastUser.content.blocks?.[0] as { type: 'text'; text: string } | undefined)?.text ?? '';
+    if (!userText) return;
+    handleSend({
+      content: userText,
+      workflow_type: lastUser.workflow_type,
+      context_refs: lastUser.content.context_refs,
+    });
+  }, [messages, handleSend]);
+
   // ⚠️ 所有 hooks 必须在任何 early return 之前调用完毕，
   // 否则 session null→非 null 切换时 hook 调用顺序变化会触发 React 报错。
 
@@ -104,6 +121,7 @@ function WorkspaceInner({
         onSubmitInteraction={submit}
         onPickPrompt={(prompt, workflow) => setPrefill({ prompt, workflow })}
         onRetry={handleRetry}
+        onRetryFromLastUser={handleRetryFromLastUser}
       />
       <AgentComposer
         session={session}
