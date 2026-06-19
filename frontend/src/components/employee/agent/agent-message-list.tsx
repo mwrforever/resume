@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
+import { InterruptBar } from './interrupt-bar';
 import type { AgentMessage, AgentRunState, WorkflowType } from '@/types/agent';
 import { useFollowBottom } from '@/hooks/use-follow-bottom';
 import { EmptyState } from './empty-state';
@@ -24,10 +25,15 @@ export interface AgentMessageListProps {
   onSubmitInteraction: (requestId: string, values: Record<string, unknown>) => void;
   /** 选中空态快捷问答：可同时回填文案与联动切换 workflow 模式 */
   onPickPrompt?: (prompt: string, workflow?: WorkflowType) => void;
+  /** 错误重试（仅 runState.error 红色 callout 使用） */
   onRetry?: () => void;
+  /** 中断重发（用最后一条 user 消息内容重新发起，bug 1） */
+  onRetryFromLastUser?: () => void;
 }
 
-export function AgentMessageList({ messages, runState, sending, onSubmitInteraction, onPickPrompt, onRetry }: AgentMessageListProps) {
+export function AgentMessageList({
+  messages, runState, sending, onSubmitInteraction, onPickPrompt, onRetry, onRetryFromLastUser,
+}: AgentMessageListProps) {
   const { ref, followIfNeeded, forceSmoothToBottom } = useFollowBottom();
 
   // 流式期间新增 envelope → 触发滚动 follow
@@ -136,9 +142,44 @@ export function AgentMessageList({ messages, runState, sending, onSubmitInteract
             )}
           </div>
         )}
+
+        {/* 中断提示（bug 1）：刷新打断或后端 error 后，最后一条 agent 消息含 streaming block 时显示。
+            仅在没有正在跑的 run 时显示（避免和流式状态条同屏）；
+            runState.error 红色 callout 与本 pill 不会同屏（前者依赖 runState.error，后者依赖 !runState.running 且无 runState.error）。 */}
+        {!runState.running && !runState.error && isLastAgentMessageInterrupted(messages) && onRetryFromLastUser && (
+          <InterruptBar
+            onRetry={onRetryFromLastUser}
+            retrying={sending}
+          />
+        )}
       </div>
     </div>
   );
+}
+
+/**
+ * 判定最后一条 agent 消息是否被中断。
+ *
+ * 后端在客户端断开 / 后端 error 时，finally 块仍把已生成的 envelopes 折叠落库
+ * （agent_runtime_service._persist_agent_message），但部分 block 来不及发 block.stop，
+ * 落库时 status 仍为 'streaming'。
+ *
+ * 其它结束路径不会留 streaming：
+ * - 正常 END：全 success
+ * - interrupt 暂停（人机交互卡）：interaction block 是 pending（runner.py:107 emit 时就是 pending）
+ *   text/tool_use 都是 success
+ * - 用户 abort：interaction 是 expired
+ *
+ * 因此 'streaming' 是「被中断」的精确信号，pending interaction 不会误命中。
+ *
+ * @param messages 落库消息数组
+ * @returns true 表示最后一条 agent 消息被中断（应渲染 InterruptBar）
+ */
+export function isLastAgentMessageInterrupted(messages: AgentMessage[]): boolean {
+  if (messages.length === 0) return false;
+  const last = messages[messages.length - 1];
+  if (last.role !== 'agent') return false;
+  return (last.content.blocks ?? []).some(b => b.status === 'streaming');
 }
 
 /** 单条消息渲染 */
