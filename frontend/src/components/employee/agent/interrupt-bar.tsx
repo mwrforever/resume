@@ -46,7 +46,7 @@ export function InterruptBar({ onRetry, retrying = false }: InterruptBarProps) {
         aria-label={retrying ? '重试中' : '重试'}
         className="inline-flex w-6 h-6 rounded-full ml-1
                    text-[#EA580C]
-                   hover:bg-[#EA580C]/12
+                   hover:bg-[#EA580C]/10
                    disabled:opacity-60 disabled:cursor-not-allowed
                    items-center justify-center
                    transition-colors"

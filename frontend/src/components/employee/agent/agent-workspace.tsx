@@ -89,8 +89,11 @@ function WorkspaceInner({
     // 倒序找最近一条 user 消息
     const lastUser = [...messages].reverse().find(m => m.role === 'user');
     if (!lastUser) return;
-    const userText =
-      (lastUser.content.blocks?.[0] as { type: 'text'; text: string } | undefined)?.text ?? '';
+    // 查找 type==='text' 的 block（user 消息通常只有一个 text block，但用 find 更严谨）
+    const textBlock = (lastUser.content.blocks ?? []).find(
+      b => b.type === 'text',
+    ) as { type: 'text'; text: string } | undefined;
+    const userText = textBlock?.text?.trim() ?? '';
     if (!userText) return;
     handleSend({
       content: userText,
