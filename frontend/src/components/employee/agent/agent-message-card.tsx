@@ -75,15 +75,20 @@ export function AgentMessageCard({
           ) : null}
         </div>
 
-        {/* StepStrip：仅流式且有 steps 时渲染；max-height 折叠过渡避免直接 unmount 跳动 */}
+        {/* StepStrip：仅流式时渲染（使用模板补齐 pending 项）；max-height 折叠过渡避免直接 unmount 跳动。
+            空 steps 时仍渲染 0/M 起跑态——StepStrip 内部用 workflow 模板填出全 pending 占位。 */}
         <div
           className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]
-                      ${streaming && runState && runState.steps.length > 0
+                      ${streaming && runState
                         ? 'max-h-[200px] opacity-100 mb-2'
                         : 'max-h-0 opacity-0'}`}
         >
-          {runState && runState.steps.length > 0 && (
-            <StepStrip steps={runState.steps} running={runState.running} />
+          {streaming && runState && (
+            <StepStrip
+              steps={runState.steps}
+              running={runState.running}
+              workflowType={runState.workflow_type}
+            />
           )}
         </div>
 
