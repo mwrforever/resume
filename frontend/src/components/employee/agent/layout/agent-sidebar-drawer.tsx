@@ -49,11 +49,11 @@ export function sortSessionsByTime(sessions: WorkspaceSession[]): WorkspaceSessi
   );
 }
 
-/** 会话时间分组：今天 / 本周更早 / 更早。
+/** 会话时间分组：今日 / 本周 / 更早。
  *
  * 边界规则：
- * - 今天：last_message_time >= 本地今天 00:00
- * - 本周更早：本周一 00:00 <= last_message_time < 今天 00:00
+ * - 今日：last_message_time >= 本地今天 00:00
+ * - 本周：本周一 00:00 <= last_message_time < 今日 00:00
  * - 更早：本周一之前 / 空时间 / 解析失败
  * - 同组内按时间降序；空 / 无效时间项追加到「更早」末尾，按 id 升序稳定
  *
@@ -64,7 +64,7 @@ export function sortSessionsByTime(sessions: WorkspaceSession[]): WorkspaceSessi
 export type SessionGroupKey = 'today' | 'thisWeek' | 'earlier';
 export interface SessionGroup {
   key: SessionGroupKey;
-  label: '今天' | '本周更早' | '更早';
+  label: '今日' | '本周' | '更早';
   items: WorkspaceSession[];
 }
 
@@ -113,9 +113,9 @@ export function groupSessionsByTime(
   earlierInvalid.sort((a, b) => a.id - b.id);
 
   return [
-    { key: 'today',    label: '今天',     items: today },
-    { key: 'thisWeek', label: '本周更早', items: thisWeek },
-    { key: 'earlier',  label: '更早',     items: [...earlierValid.map(x => x.s), ...earlierInvalid] },
+    { key: 'today',    label: '今日', items: today },
+    { key: 'thisWeek', label: '本周', items: thisWeek },
+    { key: 'earlier',  label: '更早', items: [...earlierValid.map(x => x.s), ...earlierInvalid] },
   ];
 }
 
