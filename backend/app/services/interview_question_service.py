@@ -160,10 +160,18 @@ class InterviewQuestionService:
         """AI 生成出题计划。
 
         review_feedback 来自上一轮 plan_approval 驳回时透传的反馈；
+        previous_plan 是上一轮被驳回的计划本体（去掉 _feedback 字段后的 JSON），
+        作为对比基线让 LLM 知道"哪个被驳回了"，避免原样复用；
         user_intent 透传维度卡片提交时的"补充意见"或首条用户消息。
         """
         question_plan = state.get("question_plan") or {}
         review_feedback = str(question_plan.get("_feedback") or "").strip() or None
+        # 上一轮计划作对比基线（去掉 _feedback，仅取业务字段）；仅驳回循环时传
+        previous_plan_json = None
+        if review_feedback and question_plan:
+            clean_plan = {k: v for k, v in question_plan.items() if k != "_feedback"}
+            if clean_plan:
+                previous_plan_json = json.dumps(clean_plan, ensure_ascii=False)
         prompt = _pm.render(
             "interview_questions/question_plan",
             resume_text=state.get("resume_text") or "",
@@ -176,6 +184,7 @@ class InterviewQuestionService:
                 or None
             ),
             review_feedback=review_feedback,
+            previous_plan=previous_plan_json,
         )
         text = await self._stream_with_thinking(
             prompt, ctx, stage_label="规划出题",
