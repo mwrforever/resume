@@ -113,14 +113,15 @@ class InterviewQuestionService:
             rejected_dimensions=rejected_json,
         )
         text = await self._stream_with_thinking(
-            prompt, ctx, stage_label="分析维度",
+            prompt, ctx, stage_label="分析维度", raise_on_error=True,
         )
         dims = self._parse_dimensions(text)
         if not dims:
             logger.warning(
-                "AI 维度提议失败/为空，使用内置维度兜底；原始返回前 200 字：%s",
+                "AI 维度提议解析为空，使用内置维度兜底；原始返回前 200 字：%s",
                 text[:200].replace("\n", " "),
             )
+            # LLM 调用成功但内容解析失败（如格式不符）→ 用内置维度兜底（非调用失败）。
             # 用 list() 浅拷贝：避免后续防御性 dims.insert 原地污染模块级 BUILTIN_DIMENSIONS 常量
             dims = list(BUILTIN_DIMENSIONS)
 
@@ -187,7 +188,7 @@ class InterviewQuestionService:
             previous_plan=previous_plan_json,
         )
         text = await self._stream_with_thinking(
-            prompt, ctx, stage_label="规划出题",
+            prompt, ctx, stage_label="规划出题", raise_on_error=True,
         )
         plan = self._parse_plan(text) or self._fallback_plan(
             state.get("selected_dimensions") or BUILTIN_DIMENSIONS,
@@ -279,6 +280,7 @@ class InterviewQuestionService:
         self, prompt: str, ctx: WorkflowRuntimeContext,
         *,
         stage_label: str | None = None, block_index: int | None = None,
+        raise_on_error: bool = False,
     ) -> str:
         """LLM 流式调用：思考模式开启时把 reasoning_content 写入指定载体；
         text 正文不 emit（结构化 JSON 不当作正文展示），仅累加返回。
@@ -287,6 +289,13 @@ class InterviewQuestionService:
         - stage_label：阶段级节点的思考写入一个新分配的 tool_use 块（display_name
           为该阶段中文名）。块会随消息持久化，run 结束后历史消息里仍可展开查看。
         - block_index：维度级思考写入该维度预分配的 tool_use 块（fanout 各归各位）。
+
+        错误处理（raise_on_error）：
+        - True（核心节点：维度提议 / 出题计划 / 单维度出题）：LLM 重试+fallback 全部
+          失败后，把承载块标记为 failed 并**向上抛出异常**。核心节点的异常会被 graph
+          冒泡、Service 层 emit run.error 中断整个流程；fanout 单维度的异常则被
+          asyncio.gather(return_exceptions=True) 隔离，仅标记该维度失败不拖垮其他维度。
+        - False（保留旧行为）：吞掉异常返回已累积文本，由调用方走兜底逻辑。
 
         与 ResumeEvaluationService._stream_text_with_optional_thinking 的差异：
         本通道不为正文创建 text block——这里的 text 是结构化 JSON，会被后端
@@ -301,7 +310,10 @@ class InterviewQuestionService:
                     if chunk.kind == "text":
                         text_buf.append(chunk.text_delta)
             except Exception:
-                logger.exception("LLM 内部 JSON 调用失败")
+                logger.exception("LLM 内部 JSON 调用失败（stage=%s）", stage_label)
+                if raise_on_error:
+                    # 核心节点：失败即上抛，由上层中断流程并提示，不再返回空串走假兜底
+                    raise
             return "".join(text_buf)
 
         writer = get_stream_writer()
@@ -333,8 +345,18 @@ class InterviewQuestionService:
                     _emit_reasoning_delta(chunk.text_delta)
                 elif chunk.kind == "text":
                     text_parts.append(chunk.text_delta)
-        except Exception:
-            logger.exception("LLM 内部 JSON 调用失败")
+        except Exception as exc:
+            logger.exception("LLM 内部 JSON 调用失败（stage=%s）", stage_label)
+            if raise_on_error:
+                # 仅标记**本方法创建**的 stage 块为 failed（前端显示红色错误）；
+                # 借用调用方的 block_index（fanout 维度块）时不在此标记，
+                # 交由调用方（fanout 异常处理器）统一收尾，避免重复 emit。
+                if stage_idx is not None:
+                    writer(ctx.emitter.emit_block_delta(index=stage_idx, delta={
+                        "status": "failed", "error": str(exc),
+                    }))
+                    writer(ctx.emitter.emit_block_stop(index=stage_idx))
+                raise
         # 兜底：开启思考但模型未返回任何 reasoning_content，emit 一条提示
         if not "".join(thinking_parts).strip():
             _emit_reasoning_delta("（当前模型未返回推理过程）")
@@ -357,7 +379,11 @@ class InterviewQuestionService:
             resume_text=resume_text,
             plan_item=json.dumps(plan_item, ensure_ascii=False),
         )
-        text = await self._stream_with_thinking(prompt, ctx, block_index=block_index)
+        # raise_on_error=True：单维度 LLM 失败时上抛，由 fanout 的 gather 隔离，
+        # 仅标记该维度失败，不拖垮其他并行维度（核心错误语义见 _stream_with_thinking）。
+        text = await self._stream_with_thinking(
+            prompt, ctx, block_index=block_index, raise_on_error=True,
+        )
         questions = self._parse_questions(text)
         if not questions:
             logger.warning(

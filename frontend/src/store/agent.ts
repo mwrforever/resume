@@ -585,7 +585,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
  */
 async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<AgentEnvelope>) {
   let pendingFinish: AgentEnvelope | null = null;
-  let aborted = false;
+  let hasError = false;
   const dispatch = (env: AgentEnvelope) => {
     useAgentStore.setState((s) => {
       const entry = getRun(s.runs, sessionId);
@@ -603,19 +603,23 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
         pendingFinish = env;
         continue;
       }
+      // run.error：先 dispatch 让 reducer 写入 runState.error（红色提示数据源），
+      // 同时标记 hasError 让收尾保留错误态（不被随后的 run.finish 重置清空）。
+      if (env.type === 'run.error') hasError = true;
       dispatch(env);
     }
   } catch (err) {
-    // fetch.abort() / 网络断开 → AbortError；后端的 finally 仍会落库已生成 envelopes，
-    // 这里把 aborted 置 true 让收尾走"reload + 重置 runState"路径，把落库消息拉到前端。
+    // fetch.abort() / 网络断开 → AbortError：后端的 finally 仍会落库已生成 envelopes，
+    // 吞掉该错误后走下方无条件收尾，把落库消息 reload 到前端；非 abort 错误照常上抛。
     const isAbort =
       err instanceof DOMException && err.name === 'AbortError'
       || (err as { name?: string })?.name === 'AbortError';
     if (!isAbort) throw err;
-    aborted = true;
   }
-  // 收尾：正常 finish / 客户端 abort 都需要 reload 落库消息 + 重置 runState
-  if (pendingFinish || aborted) {
+  // 收尾：无条件执行。正常 finish / 客户端 abort / 后端 error / 流自然结束（无任何终态
+  // envelope，如代理意外断开）都走同一收尾——reload 落库消息 + 结算 runState，
+  // 避免流式卡与 pending 交互卡残留。reload 是幂等的（仅重新拉会话），多走一次无副作用。
+  {
     // 强制重新拉取落库消息（覆盖乐观消息），再单次 setState 切换流式卡 → 新消息
     const resp = await employeeAgentApi.getSession(sessionId);
     const detail = resp.data?.data ?? resp.data;
@@ -643,10 +647,11 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
             messages: detail?.messages ?? entry.messages,
             loaded: true,
             // 单次 setState 完成「running=false + 清空 current_blocks + 切到落库消息」三件事，
-            // React 一次提交切换 UI，避免帧间留白。steps 是否保留交由 resolveRunStateAfterFinish。
+            // React 一次提交切换 UI，避免帧间留白。steps/error 是否保留交由 resolveRunStateAfterFinish。
             runState: resolveRunStateAfterFinish(entry.runState, {
               hasFinish: Boolean(pendingFinish),
               nextTaskId,
+              hasError,
             }),
           },
         },
@@ -656,31 +661,43 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
 }
 
 /**
- * 计算 run 收尾后的 runState（决定步骤进度是否跨「中断段」累积）。
+ * 计算 run 收尾后的 runState（决定步骤进度是否跨「中断段」累积、错误态是否保留）。
  *
  * 背景：图一/图二都会被 interaction 中断（选维度、确认计划、选岗位等）拆成多个
  * run 段，每段以 run.finish 结束。此前收尾时无条件把 runState 重置为 INITIAL
- * （steps=[]），导致每段都从 0 重新计数 step.update，进度条永远停在
- * 「1/8 + 当前运行中节点」。
+ * （steps=[]、error=null），导致两个 bug：
+ * 1. 每段都从 0 重新计数 step.update，进度条永远停在「1/8 + 当前运行中节点」。
+ * 2. run.error 写入的错误态被随后的收尾清空，红色错误提示一闪而过甚至看不到。
  *
- * 判定依据 next_task_id（与后端语义一一对应，见 test_agent_runtime_service.py）：
- * - 中断段：后端 interrupt 时不推进 task_id → run.finish 的 next_task_id 为 null
- *   → 保留已累积 steps，下一段 resume（run.start.resume=true，reducer 不清 steps）
- *   继续往后累积（2/8 → 4/8 → 8/8）。
- * - 真正 END：后端推进 task_id → next_task_id 非空 → 全量清空，下一轮新问题从 0 起跑。
- * - 客户端 abort：无 finish envelope（hasFinish=false）→ 视为终止，全量清空。
+ * 三种结束路径（按优先级判定）：
+ * - 错误终态（hasError）：保留 steps（含失败步，红X 可见）+ 保留 error（红色提示数据源）。
+ *   running 仍置 false（流程已停），下一轮用户重试 / 新问题时由 run.start 重置。
+ *   错误终态优先级最高 —— graph 异常时 next_task_id 也为 null，绝不能被误判为中断段。
+ * - 中断段（hasFinish 且 next_task_id 为 null，且无错误）：后端 interrupt 不推进 task_id
+ *   → 保留已累积 steps，下一段 resume（run.start.resume=true，reducer 不清 steps）继续累积。
+ * - 真正 END（next_task_id 非空）/ 客户端 abort：全量清空，下一轮从 0 起跑。
  *
- * 无论哪种路径都把 running 置 false、清空 current_blocks（INITIAL 默认值），
- * 仅 workflow_type 始终保留（同会话工作流类型不变）。
+ * 除错误态外，running 一律置 false、current_blocks 清空（INITIAL 默认值），
+ * workflow_type 始终保留（同会话工作流类型不变）。
  *
- * @param prev - 收尾前的 runState（含已累积 steps）
- * @param finish - 收尾上下文：hasFinish 是否收到 run.finish；nextTaskId 其携带的 task_id
+ * @param prev - 收尾前的 runState（含已累积 steps 与可能的 error）
+ * @param finish - 收尾上下文：hasFinish 是否收到 run.finish；nextTaskId 其携带的 task_id；
+ *                 hasError 本 run 是否收到 run.error
  * @returns 收尾后的新 runState
  */
 export function resolveRunStateAfterFinish(
   prev: AgentRunState,
-  finish: { hasFinish: boolean; nextTaskId: string | null },
+  finish: { hasFinish: boolean; nextTaskId: string | null; hasError?: boolean },
 ): AgentRunState {
+  // 错误终态：保留 steps（失败步可见）+ error（红色提示），优先于中断段判定
+  if (finish.hasError) {
+    return {
+      ...INITIAL_RUN_STATE,
+      workflow_type: prev.workflow_type,
+      steps: prev.steps,
+      error: prev.error,
+    };
+  }
   // 中断段：收到 finish 且未推进 task_id → 保留 steps 让进度跨段累积
   const isInterruptPause = finish.hasFinish && !finish.nextTaskId;
   return {

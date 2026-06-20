@@ -1,13 +1,14 @@
 """节点名 → 中文友好提示映射。
 
-runner 翻译 LangGraph updates 时用此映射生成 step.update 的 title / detail，
+runner 翻译 LangGraph tasks 事件时用此映射生成 step.update 的 title / detail，
 让前端步骤条显示"正在并行生成各维度题目…"而不是英文节点名
 fanout_generate_questions。
 
-注意：LangGraph stream_mode="updates" 在节点**完成产出后**才触发，
-所以语义上 status 仍标 success（节点已产出），但 detail 用 running_detail
-表达"该步骤已在工作"。前端把 steps 数组最后一个 success step 视为当前
-活跃步骤做波浪动画。
+tasks 流模式为每个节点发开始/结束两条事件，runner 据此区分：
+- 节点开始 → status=running，detail 用 running_detail（如"正在解析简历内容…"）
+- 节点正常结束 → status=success，detail 用 success_detail（如"简历解析完成"）
+- 节点抛异常 → status=failed
+前端据此渲染完整的「运行中 → 完成/失败」时序。
 """
 
 from __future__ import annotations

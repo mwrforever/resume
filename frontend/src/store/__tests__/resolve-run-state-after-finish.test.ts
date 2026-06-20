@@ -1,9 +1,11 @@
 /**
- * resolveRunStateAfterFinish 单测：步骤进度跨「中断段」累积。
+ * resolveRunStateAfterFinish 单测：步骤进度跨「中断段」累积 + 错误态保留。
  *
- * 回归 bug：图一面试出题工作流被 interaction（选维度 / 确认计划）拆成 3 个 run 段，
+ * 回归 bug 1：图一面试出题工作流被 interaction（选维度 / 确认计划）拆成 3 个 run 段，
  * 此前每段 run.finish 收尾时无条件清空 steps，进度条永远停在 1/8。
- * 修复语义由 next_task_id 驱动：
+ * 回归 bug 2：run.error 写入的错误态被收尾重置清空，红色错误提示一闪而过。
+ * 修复语义：
+ * - 错误终态（hasError）→ 保留 steps（含失败步）+ error，优先于中断段判定
  * - 中断段（next_task_id=null）→ 保留 steps，下一段继续累积
  * - 真正 END（next_task_id 非空）→ 清空 steps，下一轮从 0 起跑
  * - 客户端 abort（无 finish）→ 清空 steps
@@ -73,4 +75,39 @@ describe('resolveRunStateAfterFinish', () => {
     const afterSeg2 = resolveRunStateAfterFinish(seg2, { hasFinish: true, nextTaskId: null });
     expect(afterSeg2.steps).toHaveLength(4);
   });
+
+  it('错误终态（hasError）→ 保留 steps（含失败步）+ error，running 置 false', () => {
+    // 模拟 build_question_plan 节点失败：steps 末位是 failed，runState.error 已由 reducer 写入
+    const prev: AgentRunState = {
+      ...runStateWithSteps(['load_resume', 'suggest_dimensions']),
+      steps: [
+        { step_id: 'load_resume', title: '读取简历', status: 'success' },
+        { step_id: 'build_question_plan', title: '规划出题', status: 'failed' },
+      ],
+      error: { code: 'graph_execution_failed', message: 'LLM 网关错误' },
+    };
+    const next = resolveRunStateAfterFinish(prev, {
+      hasFinish: true, nextTaskId: null, hasError: true,
+    });
+    // 失败步保留可见
+    expect(next.steps.map((s) => s.status)).toEqual(['success', 'failed']);
+    // 错误对象保留（红色提示数据源不被清空）
+    expect(next.error).toEqual({ code: 'graph_execution_failed', message: 'LLM 网关错误' });
+    // 流程已停
+    expect(next.running).toBe(false);
+  });
+
+  it('错误终态优先于中断段：next_task_id 为 null 也不当作中断段清空 error', () => {
+    // graph 异常时 next_task_id 同样为 null，必须靠 hasError 区分，否则错误被误判为中断段
+    const prev: AgentRunState = {
+      ...runStateWithSteps(['load_resume']),
+      error: { code: 'graph_execution_failed', message: 'boom' },
+    };
+    const next = resolveRunStateAfterFinish(prev, {
+      hasFinish: true, nextTaskId: null, hasError: true,
+    });
+    expect(next.error).not.toBeNull();
+    expect(next.steps).toHaveLength(1);
+  });
 });
+
