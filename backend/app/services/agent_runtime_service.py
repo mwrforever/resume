@@ -527,7 +527,7 @@ class AgentRuntimeService:
             # 不论正常 / 异常 / 客户端中断，都把已生成的 envelopes 折叠落库
             try:
                 agent_message = await self._persist_agent_message(
-                    session=session, user_message_id=None, run_id=run_id,
+                    session=session, user_message=None, run_id=run_id,
                     envelopes=envelope_buffer, runtime_config=runtime_config,
                     workflow_type=workflow_type,
                 )

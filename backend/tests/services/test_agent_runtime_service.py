@@ -423,3 +423,19 @@ async def test_resume_run_uses_none_input_on_same_thread():
         pass
     assert captured["graph_input"] is None
     assert captured["thread_id"] == "existing-task-id"
+
+
+@pytest.mark.asyncio
+async def test_resume_run_emits_run_finish_on_success():
+    """resume_run 成功续接后必须发出 run.finish（拦截 _persist_agent_message 落库失败类 bug）。"""
+    svc = _build_svc()
+    async def _astream(*, thread_id, graph_input, ctx):
+        yield ctx.emitter.emit_step(step_id="suggest_dimensions", title="分析维度", status="success")
+    svc._runner_factory = lambda graph: MagicMock(astream=_astream)
+    session = _make_session()
+    session.progress = None
+    events = [env.type async for env in svc.resume_run(
+        session=session, runtime_config=_runtime_cfg(), workflow_type="interview_questions",
+    )]
+    assert "run.start" in events
+    assert "run.finish" in events  # 若 _persist_agent_message 失败则 finish 不发出，测试会失败
