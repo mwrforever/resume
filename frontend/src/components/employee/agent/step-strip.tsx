@@ -37,9 +37,13 @@ export function StepStrip({ steps, running, workflowType }: StepStripProps) {
   // 未知 workflow（fallback 路径）退回 mergedSteps.length
   const totalCount = WORKFLOW_STEP_TEMPLATES[workflowType]?.length ?? mergedSteps.length;
 
-  // 当前活跃步骤：第一个非 success 项；全部 success 时取最后一项（运行结束态）
-  const activeStep =
-    mergedSteps.find(s => s.status !== 'success') ?? mergedSteps[mergedSteps.length - 1];
+  // 当前活跃步骤：取 runtime 中最后到达的 step（reducer.upsertStep 保证它在 runtime 末位，
+  // mergeStepsWithTemplate 保证 runtime 段在前、未到达模板项 pending 在后）。
+  // 后端 step.update 在节点完成后触发，所以"最后到达 = 刚完成、即将转交下一节点 / 等用户输入"。
+  // 因此 mergedSteps 中最后一个非 pending 项就是 runtime 末位。
+  // 兜底：runtime 为空（流式刚开始）→ 用模板第一项作为活跃占位。
+  const lastNonPending = [...mergedSteps].reverse().find(s => s.status !== 'pending');
+  const activeStep = lastNonPending ?? mergedSteps[0];
 
   // 模板长度永远 ≥ 1（WORKFLOW_STEP_TEMPLATES 不允许空），但 fallback / 未来扩展时仍兜底
   if (mergedSteps.length === 0) return null;
@@ -82,8 +86,9 @@ export function StepStrip({ steps, running, workflowType }: StepStripProps) {
       }`}>
         <ul className="flex flex-wrap gap-x-4 gap-y-1.5">
           {mergedSteps.map((s) => {
-            // 当前活跃步骤（且整体 running）用 WaveText 高亮，其余静态
-            const isActive = running && s.step_id === activeStep?.step_id && s.status !== 'success';
+            // 高亮当前活跃步骤；运行中状态下即使活跃步骤本身已 success（节点刚完成）
+            // 也保留波浪动画，因为 graph 正在转交下一节点。
+            const isActive = running && s.step_id === activeStep?.step_id;
             return (
               <li key={s.step_id} className="flex items-center gap-1.5">
                 <StepIcon status={s.status} />

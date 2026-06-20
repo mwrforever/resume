@@ -76,17 +76,41 @@ class InterviewQuestionService:
         return {"resume_text": text}
 
     async def suggest_dimensions(self, state, ctx: WorkflowRuntimeContext) -> dict:
-        """AI 提议维度；失败兜底为内置维度。
+        """AI 提议维度；支持驳回循环（已采纳保留 + 已否决替换 + 反馈优先）。
 
-        渲染 prompt 时把用户的首条消息作为 user_intent 注入，避免不同问题
-        都得到同样的 3 个维度。LLM 调用走 thinking-aware 通道：思考模式
-        开启时前端能看到推理过程（写入本节点 step 的 reasoning 字段）；
-        JSON 正文用于后端解析，不直接 emit。
+        驳回循环过程态字段（来自 _request_dimension_selection 写入）：
+        - state.dimension_feedback: 用户对未采纳部分的文本反馈
+        - state.accepted_dimensions: 用户已勾选的维度（必须 1:1 保留）
+        - state.rejected_dimensions: 用户未勾选的维度（必须替换为新建议）
+
+        返回时重置上述三个过程态字段为空，避免下一轮误用。
         """
+        # 取驳回过程态
+        user_feedback = (state.get("dimension_feedback") or "").strip() or None
+        accepted = state.get("accepted_dimensions") or []
+        rejected = state.get("rejected_dimensions") or []
+        accepted_json = (
+            json.dumps(
+                [{"name": d.get("name"), "reason": d.get("reason")} for d in accepted],
+                ensure_ascii=False,
+            )
+            if accepted else None
+        )
+        rejected_json = (
+            json.dumps(
+                [{"name": d.get("name"), "reason": d.get("reason")} for d in rejected],
+                ensure_ascii=False,
+            )
+            if rejected else None
+        )
+
         prompt = _pm.render(
             "interview_questions/dimension_suggest",
             resume_text=state.get("resume_text") or "",
             user_intent=self._extract_user_intent(state),
+            user_feedback=user_feedback,
+            accepted_dimensions=accepted_json,
+            rejected_dimensions=rejected_json,
         )
         text = await self._stream_with_thinking(
             prompt, ctx, stage_label="分析维度",
@@ -97,8 +121,30 @@ class InterviewQuestionService:
                 "AI 维度提议失败/为空，使用内置维度兜底；原始返回前 200 字：%s",
                 text[:200].replace("\n", " "),
             )
-            dims = BUILTIN_DIMENSIONS
-        return {"suggested_dimensions": dims}
+            # 用 list() 浅拷贝：避免后续防御性 dims.insert 原地污染模块级 BUILTIN_DIMENSIONS 常量
+            dims = list(BUILTIN_DIMENSIONS)
+
+        # 防御性兜底：LLM 偶尔不遵守"保留 accepted"约束 → 后端强制注入
+        # 检查 accepted 中每一项是否在 dims 里出现，未出现则插入到队首
+        if accepted:
+            dim_names = {d.get("name") for d in dims}
+            for acc in accepted:
+                acc_name = acc.get("name")
+                if acc_name and acc_name not in dim_names:
+                    dims.insert(0, {
+                        "name": acc_name,
+                        "reason": acc.get("reason", ""),
+                        "source": "ai",
+                    })
+                    logger.info("LLM 漏保留已采纳维度，强制注入：%s", acc_name)
+
+        # 重置驳回过程态：用过即清，避免下一轮误用
+        return {
+            "suggested_dimensions": dims,
+            "dimension_feedback": "",
+            "accepted_dimensions": [],
+            "rejected_dimensions": [],
+        }
 
     def build_dimension_interaction(self, state) -> dict:
         """构造维度选择 interaction payload。"""
@@ -114,10 +160,18 @@ class InterviewQuestionService:
         """AI 生成出题计划。
 
         review_feedback 来自上一轮 plan_approval 驳回时透传的反馈；
+        previous_plan 是上一轮被驳回的计划本体（去掉 _feedback 字段后的 JSON），
+        作为对比基线让 LLM 知道"哪个被驳回了"，避免原样复用；
         user_intent 透传维度卡片提交时的"补充意见"或首条用户消息。
         """
         question_plan = state.get("question_plan") or {}
         review_feedback = str(question_plan.get("_feedback") or "").strip() or None
+        # 上一轮计划作对比基线（去掉 _feedback，仅取业务字段）；仅驳回循环时传
+        previous_plan_json = None
+        if review_feedback and question_plan:
+            clean_plan = {k: v for k, v in question_plan.items() if k != "_feedback"}
+            if clean_plan:
+                previous_plan_json = json.dumps(clean_plan, ensure_ascii=False)
         prompt = _pm.render(
             "interview_questions/question_plan",
             resume_text=state.get("resume_text") or "",
@@ -130,6 +184,7 @@ class InterviewQuestionService:
                 or None
             ),
             review_feedback=review_feedback,
+            previous_plan=previous_plan_json,
         )
         text = await self._stream_with_thinking(
             prompt, ctx, stage_label="规划出题",

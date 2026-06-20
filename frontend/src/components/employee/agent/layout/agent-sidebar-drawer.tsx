@@ -171,13 +171,16 @@ export function AgentSidebarDrawer({
                   bg-[linear-gradient(180deg,#FFFFFF_0%,#FAFCFE_100%)]
                   border-r border-[#E2E8F0]/80
                   shadow-[1px_0_0_0_rgba(255,255,255,0.6)_inset]
-                  transition-[width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]
+                  transition-[width] duration-500 ease-[cubic-bezier(0.65,0,0.35,1)]
+                  motion-reduce:transition-none
                   ${expanded ? 'w-[280px]' : 'w-[64px]'}
                   overflow-hidden`}
     >
       {/* 展开态内容（毛玻璃头 + 时间分组 + 渐变 pill active + 隐形 4px 品牌色滚动条 + 上下渐隐 mask） */}
-      <div className={`h-full flex flex-col transition-opacity duration-200
-                       ${expanded ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+      <div className={`h-full flex flex-col transition-opacity duration-200 motion-reduce:transition-none
+                       ${expanded
+                         ? 'opacity-100 [transition-delay:0.25s] [transition-timing-function:cubic-bezier(0,0,0.2,1)]'
+                         : 'opacity-0 pointer-events-none [transition-timing-function:cubic-bezier(0.4,0,1,1)]'}`}>
         {/* 顶栏：毛玻璃 + sky 微光晕；品牌 dot + "会话" + 计数 chip + 搜索/收起 */}
         <div
           className="relative px-3 pt-3 pb-2.5
@@ -190,13 +193,15 @@ export function AgentSidebarDrawer({
               {/* 品牌色 dot：与底部 CTA / active rail 同色系，建立首尾呼应 */}
               <span className="w-1.5 h-1.5 rounded-full bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] shadow-[0_0_6px_rgba(14,165,233,0.55)] flex-shrink-0" aria-hidden />
               <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#475569]">会话</span>
-              {/* 计数 chip：仅在有可见会话时渲染；空态保持简洁 */}
-              {visible.length > 0 && (
-                <span className="px-1.5 py-px rounded-full text-[10px] font-semibold tabular-nums
+              {/* 运行中徽标：仅在有运行任务时渲染；空闲不打扰（替换原会话计数 chip，bug 3） */}
+              {runningIds.size > 0 && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-px rounded-full text-[10px] font-semibold tabular-nums
                                  text-[#0369A1]
                                  bg-[rgba(14,165,233,0.10)]
-                                 ring-1 ring-inset ring-[rgba(14,165,233,0.18)]">
-                  {visible.length}
+                                 ring-1 ring-inset ring-[rgba(14,165,233,0.18)]"
+                      title={`${runningIds.size} 个会话正在运行`}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#0EA5E9] animate-pulse" aria-hidden />
+                  <span>{runningIds.size} 运行中</span>
                 </span>
               )}
             </div>
@@ -325,8 +330,10 @@ export function AgentSidebarDrawer({
 
       {/* 折叠态内容：上分组（导航：展开+搜索）/ 中部（会话入口）/ 下分组（CTA+设置） */}
       <div className={`absolute inset-0 flex flex-col items-center py-3 gap-1
-                       transition-opacity duration-200
-                       ${expanded ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+                       transition-opacity duration-200 motion-reduce:transition-none
+                       ${expanded
+                         ? 'opacity-0 pointer-events-none [transition-timing-function:cubic-bezier(0.4,0,1,1)]'
+                         : 'opacity-100 [transition-delay:0.25s] [transition-timing-function:cubic-bezier(0,0,0.2,1)]'}`}>
         {/* 上分组：展开 + 搜索 */}
         <div className="flex flex-col items-center gap-1">
           <button

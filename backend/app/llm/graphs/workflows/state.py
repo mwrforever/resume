@@ -23,6 +23,12 @@ class InterviewQuestionState(TypedDict, total=False):
     dimension_feedback: str
     # 维度卡片是否被驳回（条件边路由依据）；True → 回 suggest_dimensions 重新建议
     dimension_rejected: bool
+    # 驳回循环过程态（用户分类反馈）：
+    # accepted_dimensions = 用户已勾选的维度，suggest_dimensions 节点必须 1:1 保留
+    # rejected_dimensions = 用户未勾选的维度，suggest_dimensions 节点必须替换为新建议
+    # 进入下一轮成功提交后由 suggest_dimensions 节点重置为空列表
+    accepted_dimensions: list[dict[str, Any]]
+    rejected_dimensions: list[dict[str, Any]]
     question_plan: dict[str, Any]
     plan_approved: bool
     # 出题计划是否被驳回（条件边路由依据）；True → 回 build_question_plan 重新规划

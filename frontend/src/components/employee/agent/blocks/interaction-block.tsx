@@ -351,9 +351,30 @@ function DimensionSelection({ title, prompt, data, submitting, onSubmit }: Secti
                      hover:bg-[#F8FAFC] transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={submitting}
-          onClick={() => onSubmit({ regenerate: true, feedback: feedback.trim() })}
+          onClick={() => {
+            // 已勾选维度 = 用户采纳的，驳回后必须保留
+            const accepted = candidates
+              .filter(c => selected.has(String(c.name ?? '')))
+              .map(c => ({
+                name: String(c.name ?? ''),
+                reason: c.reason ? String(c.reason) : '',
+              }));
+            // 未勾选维度 = 用户否决的，驳回后必须替换为新建议
+            const rejected = candidates
+              .filter(c => !selected.has(String(c.name ?? '')))
+              .map(c => ({
+                name: String(c.name ?? ''),
+                reason: c.reason ? String(c.reason) : '',
+              }));
+            onSubmit({
+              regenerate: true,
+              feedback: feedback.trim(),
+              accepted_dimensions: accepted,
+              rejected_dimensions: rejected,
+            });
+          }}
         >
-          驳回重新建议
+          {selected.size === 0 ? '全部驳回，重新建议' : `保留已选 ${selected.size} 个，调整其余`}
         </button>
       </div>
     </div>
@@ -513,11 +534,15 @@ function PlanApproval({ title, prompt, data, submitting, onSubmit }: SectionProp
   );
 }
 
-/** 岗位选择卡：提交 { selected_job_name: string } */
+/** 岗位选择卡：提交 { selected_job_name: string }
+ *
+ * 注意：本卡不含驳回 textarea + 按钮——岗位候选源是员工绑定岗位 DB 列表
+ * （load_job_candidates 节点不调 LLM，候选岗固定），驳回重生成在后端无 LLM 支撑、
+ * feedback 字段会被丢弃。移除驳回入口避免误导用户；如需切换岗位直接点选其它候选项即可。
+ */
 function JobSelection({ title, prompt, data, submitting, onSubmit }: SectionProps) {
   const candidates = (data?.candidates ?? []) as Array<{ name?: unknown; description?: unknown }>;
   const [selected, setSelected] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState('');
 
   return (
     <div className="rounded-md border border-[#0EA5E9]/40 bg-white shadow-sm px-4 py-3">
@@ -546,38 +571,16 @@ function JobSelection({ title, prompt, data, submitting, onSubmit }: SectionProp
         })}
       </div>
 
-      {/* 驳回反馈输入框（与维度/计划卡统一） */}
-      <textarea
-        value={feedback}
-        onChange={e => setFeedback(e.target.value)}
-        placeholder="如需驳回重新选岗，可填写反馈意见（可选）"
-        rows={2}
-        className="w-full text-xs border border-[#E2E8F0] rounded px-2 py-1.5 mb-2
-                   outline-none focus:border-[#0EA5E9] resize-none"
-      />
-
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
-                     hover:bg-[#0EA5E9] transition-colors
-                     disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={!selected || submitting}
-          onClick={() => selected && onSubmit({ selected_job_name: selected })}
-        >
-          {submitting ? '提交中…' : '确认选择'}
-        </button>
-        <button
-          type="button"
-          className="px-3 py-1.5 rounded-md border border-[#E2E8F0] text-[#64748B] text-sm
-                     hover:bg-[#F8FAFC] transition-colors
-                     disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={submitting}
-          onClick={() => onSubmit({ regenerate: true, feedback: feedback.trim() })}
-        >
-          驳回重新选岗
-        </button>
-      </div>
+      <button
+        type="button"
+        className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
+                   hover:bg-[#0EA5E9] transition-colors
+                   disabled:opacity-50 disabled:cursor-not-allowed"
+        disabled={!selected || submitting}
+        onClick={() => selected && onSubmit({ selected_job_name: selected })}
+      >
+        {submitting ? '提交中…' : '确认选择'}
+      </button>
     </div>
   );
 }
