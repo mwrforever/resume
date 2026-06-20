@@ -79,6 +79,8 @@ interface AgentStoreState {
   renameSession: (id: number, title: string) => Promise<void>;
   sendMessage: (sessionId: number, input: SendInput) => Promise<void>;
   submitInteraction: (sessionId: number, requestId: string, values: Record<string, unknown>) => Promise<void>;
+  /** 续接被中断的 run（A2）。调 resumeSession SSE，复用 submitInteraction 的 AbortController + runPromise 结构。 */
+  resumeRun: (sessionId: number) => Promise<void>;
   abort: (sessionId: number) => void;
 }
 
@@ -486,6 +488,36 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
         const iter = employeeAgentApi.submitInteraction(
           sessionId, requestId, values, workflowType,
           { enableThinking, modelName }, ac.signal,
+        );
+        await runEnvelopes(sessionId, iter);
+      } finally {
+        set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: false } } }));
+        abortControllers.delete(sessionId);
+        runningRunPromises.delete(sessionId);
+      }
+    })();
+    runningRunPromises.set(sessionId, runPromise);
+    await runPromise;
+  },
+
+  resumeRun: async (sessionId) => {
+    // 续接被中断的 run：从历史消息/runState 取 workflow_type（与 submitInteraction 同源逻辑），
+    // 复用其 AbortController + runPromise 结构，保证可被中断 / finally 清理。
+    const entry = get().runs[sessionId];
+    const lastMsg = entry?.messages?.[entry.messages.length - 1];
+    const workflowType: WorkflowType =
+      lastMsg?.workflow_type ?? entry?.runState.workflow_type ?? 'interview_questions';
+    const ac = new AbortController();
+    abortControllers.set(sessionId, ac);
+    set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true } } }));
+    // 同 submitInteraction：把 run 包装为 promise 注册到 runningRunPromises，
+    // 让"中断后再发"路径能 await 等其落库 finally 执行完。
+    const runPromise = (async () => {
+      try {
+        const enableThinking = !!entry?.session?.enable_thinking;
+        const modelName = entry?.session?.selected_model_name ?? null;
+        const iter = employeeAgentApi.resumeSession(
+          sessionId, workflowType, { enableThinking, modelName }, ac.signal,
         );
         await runEnvelopes(sessionId, iter);
       } finally {

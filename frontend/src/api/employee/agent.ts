@@ -109,6 +109,31 @@ export const employeeAgentApi = {
     );
   },
 
+  /** 续接被中断的 run（A2）。返回 SSE AsyncIterableIterator。
+   *
+   * 后端 T10 `/resume` 端点复用 AgentInteractionSubmit 请求体，
+   * 故仍需携带 values（续接场景为空）/ workflow_type / runtime_options。
+   * workflow_type 由前端从历史消息推断，续接保持原工作流类型不变。
+   */
+  resumeSession: (
+    sessionId: number,
+    workflowType: WorkflowType,
+    runtimeOptions: { enableThinking: boolean; modelName: string | null },
+    signal?: AbortSignal,
+  ): AsyncIterableIterator<AgentEnvelope> => {
+    return openAgentStream(
+      `/api/v1/employee/agent/sessions/${sessionId}/resume`,
+      {
+        values: {}, workflow_type: workflowType,
+        runtime_options: {
+          enable_thinking: runtimeOptions.enableThinking,
+          ...(runtimeOptions.modelName ? { model_name: runtimeOptions.modelName } : {}),
+        },
+      },
+      { signal },
+    );
+  },
+
   /** 上传简历（脱离 session，只存文件返回路径） */
   uploadResume: (file: File) => {
     const form = new FormData();
