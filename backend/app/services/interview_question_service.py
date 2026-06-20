@@ -20,7 +20,9 @@ import uuid
 from typing import Any
 
 from langgraph.config import get_stream_writer
+from langgraph.types import interrupt
 
+from app.core.exceptions import ValidationError
 from app.llm.graphs.workflows.context import WorkflowRuntimeContext
 from app.llm.model_router import LLMModelRouter
 from app.llm.prompts.prompts import prompt_manager as _pm
@@ -57,23 +59,44 @@ class InterviewQuestionService:
 
     # ---------- 节点入口方法 ----------
 
+    def build_resume_upload_interaction(self) -> dict:
+        """构造简历上传 interaction payload（缺简历时 interrupt 用）。
+
+        用户上传后提交 {file_path, file_name}，由 graph resume 回到 load_resume
+        节点重跑，interrupt() 第二次调用直接返回该值，随后走正常解析。
+        """
+        return {
+            "request_id": f"resume_{uuid.uuid4().hex[:8]}",
+            "interaction_type": "resume_upload",
+            "title": "需要先上传一份简历",
+            "prompt": "检测到尚未附带简历文件。面试题生成需要基于简历内容，请上传后继续（上传后自动续接，无需重新发送）。",
+            "data": {},
+        }
+
     async def load_resume(self, state, ctx: WorkflowRuntimeContext) -> dict:
-        """按 file_path 解析简历原文，emit tool_use block。
+        """按 file_path 解析简历原文；缺简历时 interrupt 弹上传卡，上传后续接解析。
 
         解析结果进 state.resume_text，同 task 内由 checkpoint 复用（无 Redis 缓存）。
         """
         writer = get_stream_writer()
         idx = ctx.emitter.next_block_index()
         file_path = str((state.get("resume_ref") or {}).get("file_path") or "")
+        # 缺简历 → interrupt 弹上传卡（LangGraph resume 时本节点重跑，
+        # interrupt() 第二次调用直接返回用户提交值，随后走正常解析）
+        if not file_path:
+            user_values = interrupt(self.build_resume_upload_interaction())
+            file_path = str(user_values.get("file_path") or "")
+            if not file_path:
+                raise ValidationError("未收到简历文件路径，无法继续")
         writer(ctx.emitter.emit_block_start(index=idx, block={
             "type": "tool_use", "tool_name": "load_resume",
             "display_name": "读取简历", "input": {"file_path": file_path}, "status": "running",
         }))
         try:
-            text = await self._loader.load_by_path(file_path=file_path) if file_path else ""
+            text = await self._loader.load_by_path(file_path=file_path)
         finally:
             writer(ctx.emitter.emit_block_stop(index=idx))
-        return {"resume_text": text}
+        return {"resume_text": text, "resume_ref": {"file_path": file_path}}
 
     async def suggest_dimensions(self, state, ctx: WorkflowRuntimeContext) -> dict:
         """AI 提议维度；支持驳回循环（已采纳保留 + 已否决替换 + 反馈优先）。

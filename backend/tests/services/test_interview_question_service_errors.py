@@ -98,3 +98,57 @@ async def test_suggest_dimensions_falls_back_on_empty_but_successful():
     result = await svc.suggest_dimensions(state, ctx)
     # 调用成功但空内容 → 走内置兜底维度（区别于调用失败的上抛）
     assert len(result["suggested_dimensions"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_build_resume_upload_interaction_payload():
+    """build_resume_upload_interaction 返回 resume_upload 类型 + request_id 前缀。"""
+    from unittest.mock import MagicMock
+    from app.services.interview_question_service import InterviewQuestionService
+    svc = InterviewQuestionService(model_router=MagicMock(), resume_loader=MagicMock())
+    payload = svc.build_resume_upload_interaction()
+    assert payload["interaction_type"] == "resume_upload"
+    assert payload["request_id"].startswith("resume_")
+    assert payload["title"]
+    assert payload["data"] == {}
+
+
+@pytest.mark.asyncio
+async def test_load_resume_interrupts_when_file_path_missing():
+    """缺简历时 load_resume 调 interrupt，用其返回的 file_path 解析。"""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.services.interview_question_service import InterviewQuestionService
+    loader = MagicMock()
+    loader.load_by_path = AsyncMock(return_value="简历原文")
+    svc = InterviewQuestionService(model_router=MagicMock(), resume_loader=loader)
+    state = {"resume_ref": {}}  # 无 file_path
+    ctx = MagicMock()
+    ctx.emitter.next_block_index.return_value = 0
+    ctx.emitter.emit_block_start.return_value = MagicMock()
+    ctx.emitter.emit_block_stop.return_value = MagicMock()
+    with patch("app.services.interview_question_service.interrupt",
+               return_value={"file_path": "/uploaded/resume.pdf", "file_name": "r.pdf"}) as mock_int:
+        with patch("app.services.interview_question_service.get_stream_writer", return_value=lambda _env: None):
+            result = await svc.load_resume(state, ctx)
+    mock_int.assert_called_once()
+    loader.load_by_path.assert_awaited_once_with(file_path="/uploaded/resume.pdf")
+    assert result["resume_text"] == "简历原文"
+    assert result["resume_ref"]["file_path"] == "/uploaded/resume.pdf"
+
+
+@pytest.mark.asyncio
+async def test_load_resume_no_interrupt_when_file_path_present():
+    """已附简历时不 interrupt，直接解析。"""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.services.interview_question_service import InterviewQuestionService
+    loader = MagicMock()
+    loader.load_by_path = AsyncMock(return_value="简历原文")
+    svc = InterviewQuestionService(model_router=MagicMock(), resume_loader=loader)
+    state = {"resume_ref": {"file_path": "/attached/resume.pdf"}}
+    ctx = MagicMock()
+    ctx.emitter.next_block_index.return_value = 0
+    with patch("app.services.interview_question_service.interrupt") as mock_int:
+        with patch("app.services.interview_question_service.get_stream_writer", return_value=lambda _env: None):
+            result = await svc.load_resume(state, ctx)
+    mock_int.assert_not_called()
+    assert result["resume_text"] == "简历原文"
