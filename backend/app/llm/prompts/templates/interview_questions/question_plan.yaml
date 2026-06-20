@@ -1,6 +1,6 @@
 name: question_plan
-version: "1.0"
-description: "基于简历和已选维度规划面试题生成计划"
+version: "1.1"
+description: "基于简历和已选维度规划面试题生成计划（支持驳回反馈循环）"
 variables:
   - name: resume_text
     required: true
@@ -13,7 +13,10 @@ variables:
     description: "用户指定的分析方向或关注点"
   - name: review_feedback
     required: false
-    description: "上一轮人工批阅的反馈，非空时表示需要按反馈重新规划"
+    description: "上一轮人工批阅的反馈，非空时表示需要按反馈重新规划（必须严格采纳）"
+  - name: previous_plan
+    required: false
+    description: "上一轮被驳回的计划（JSON 字符串，作为对比基线，避免原样复用）"
 template: |-
   # 角色
   你是资深企业招聘面试题规划专家，负责根据候选人简历和已选维度制定结构化的面试题生成计划。
@@ -29,8 +32,12 @@ template: |-
   {% if user_intent %}
   - 用户指定的分析方向：{{ user_intent }}
   {% endif %}
+  {% if previous_plan %}
+  - 上一轮被驳回的计划（仅作对比基线，不要原样复用）：
+    {{ previous_plan }}
+  {% endif %}
   {% if review_feedback %}
-  - 上一轮人工批阅反馈（必须按以下意见调整，否则不通过）：
+  - 上一轮人工批阅反馈（**必须严格按反馈调整，不可忽略；驳回反馈优先级高于其它规划逻辑**）：
     {{ review_feedback }}
   {% endif %}
 
@@ -40,6 +47,9 @@ template: |-
   维度的重要性应根据简历内容和{% if user_intent %}用户指定的分析方向{% else %}岗位匹配需求{% endif %}动态调整。
   题目数量按维度重要性分配，重要维度可分配 3-4 题，次要维度 1-2 题。
   每个维度的 focus 必须具体、可操作，说明该维度追问的核心考察点。
+  {% if review_feedback %}
+  **驳回反馈处理**：仔细解析反馈意图（要求增加题量？调整难度？换 focus 方向？），逐项落实到对应维度的 question_count / difficulty / focus 字段；若反馈与简历客观情况冲突，优先反馈。
+  {% endif %}
 
   # 输出格式
   只输出 JSON，不要输出 Markdown、解释或代码块：
