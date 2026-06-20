@@ -2,8 +2,12 @@
  * StepStrip：运行步骤条
  *
  * 数据来源：runState.steps（运行时 step.update 累积）+ workflow 静态节点模板
- * （workflow-step-templates.ts）。展示「已完成 N / 总 M 步」，分母恒为模板长度，
- * 驳回循环（同 step_id 重入）不增加分母。
+ * （workflow-step-templates.ts）。分母恒为模板长度，驳回循环（同 step_id 重入）不增加分母。
+ *
+ * 分子按运行态区分：
+ * - 运行中：已进入（非 pending）的步骤数 —— 节点 running 即计入，让"正在第 N 步"与
+ *   进度数字一致（如正在分析维度=2/8，而非只数已完成的 success=1/8）。
+ * - 非运行态（END/中断/出错）：真正成功（success）的步骤数 —— 失败步不计入"已完成"。
  *
  * 默认折叠为单行；展开后显示水平时间线，含未到达的 pending 项。
  * 步骤状态：待执行(灰圈) → 进行中(蓝旋转) → 已完成(绿勾) → 失败(红X)。
@@ -32,6 +36,12 @@ export function StepStrip({ steps, running, workflowType }: StepStripProps) {
 
   // 模板合并：runtime steps 按 step_id 替换模板项，长度 = 模板长度（异常分支可能追加未知 step）
   const mergedSteps = mergeStepsWithTemplate(workflowType, steps);
+  // 运行中分子 = 已进入（非 pending）的步骤数。tasks 流模式下节点生命周期为
+  // running → success/failed：节点一旦开始（running）就应计入进度，否则"正在分析维度"
+  // 时分子仍停在 1（只数 success），与用户直觉（已处于第 2 步=2）不符。
+  const reachedCount = mergedSteps.filter(s => s.status !== 'pending').length;
+  // 已完成分子 = 真正成功的步骤数。非运行态（END/中断暂停/出错）用它更准：
+  // 失败步不算"完成"，避免出错后头部仍显示"已完成 N 步"把失败计入。
   const successCount = mergedSteps.filter(s => s.status === 'success').length;
   // 分母恒为 workflow 模板静态长度，避免异常分支追加未知 step 时分母抖动；
   // 未知 workflow（fallback 路径）退回 mergedSteps.length
@@ -39,8 +49,8 @@ export function StepStrip({ steps, running, workflowType }: StepStripProps) {
 
   // 当前活跃步骤：取 runtime 中最后到达的 step（reducer.upsertStep 保证它在 runtime 末位，
   // mergeStepsWithTemplate 保证 runtime 段在前、未到达模板项 pending 在后）。
-  // 后端 step.update 在节点完成后触发，所以"最后到达 = 刚完成、即将转交下一节点 / 等用户输入"。
-  // 因此 mergedSteps 中最后一个非 pending 项就是 runtime 末位。
+  // tasks 流模式下节点开始即发 running、完成发 success，所以"最后到达的非 pending 项"
+  // 就是当前正在执行（running）或刚完成待转交（success）的节点。
   // 兜底：runtime 为空（流式刚开始）→ 用模板第一项作为活跃占位。
   const lastNonPending = [...mergedSteps].reverse().find(s => s.status !== 'pending');
   const activeStep = lastNonPending ?? mergedSteps[0];
@@ -65,7 +75,7 @@ export function StepStrip({ steps, running, workflowType }: StepStripProps) {
         <span>
           {running ? (
             <>
-              运行中 · {successCount} / {totalCount} 步
+              运行中 · {reachedCount} / {totalCount} 步
               {activeStep && (
                 <>
                   <span className="text-[#64748B]"> · </span>
