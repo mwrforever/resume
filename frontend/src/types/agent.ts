@@ -24,7 +24,7 @@ export type BlockStatus =
 
 /** interaction 类型 */
 export type InteractionType =
-  | 'dimension_selection' | 'plan_approval' | 'job_selection';
+  | 'dimension_selection' | 'plan_approval' | 'job_selection' | 'resume_upload';
 
 /** 6 种 block 联合类型（discriminated union on type） */
 export type AgentBlock =
@@ -110,6 +110,8 @@ export interface WorkspaceSession {
   selected_model_name: string | null;
   enable_thinking: boolean;
   status: number;
+  /** 累积步骤进度（进度栏持久化展示；后端 agent_session.progress） */
+  progress?: { workflow_type: WorkflowType; steps: AgentStep[] };
   last_message_time: string | null;
   create_time: string | null;
   update_time: string | null;
