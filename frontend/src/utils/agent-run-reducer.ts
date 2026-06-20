@@ -75,13 +75,18 @@ export function agentRunReducer(state: AgentRunState, env: AgentEnvelope): Agent
 
 // ---------- 辅助函数 ----------
 
-/** 更新或追加步骤 */
+/** 更新或追加步骤。
+ *
+ * 重入相同 step_id（驳回循环时同一节点再次产出 update）→ **移到末尾**，
+ * 让 steps[steps.length - 1] 始终代表"最后到达 = 当前活跃"的语义。
+ * 状态/detail 用最新一次到达的为准。
+ *
+ * 重要：此行为是 step.update 协议的语义基石，consumer（StepStrip / mergeStepsWithTemplate）
+ * 依赖该顺序判断当前活跃步骤，不可改回原地替换。
+ */
 function upsertStep(steps: AgentStep[], data: AgentStep): AgentStep[] {
-  const idx = steps.findIndex(s => s.step_id === data.step_id);
-  if (idx === -1) return [...steps, data];
-  const next = [...steps];
-  next[idx] = { ...steps[idx], ...data };
-  return next;
+  const filtered = steps.filter(s => s.step_id !== data.step_id);
+  return [...filtered, data];
 }
 
 /** 按 index 插入 block（已存在则覆盖） */
