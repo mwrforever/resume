@@ -32,6 +32,23 @@ from app.services.cache_service import CacheService
 
 logger = logging.getLogger(__name__)
 
+def _is_missing_checkpoint_error(exc: Exception) -> bool:
+    """判定是否为 checkpoint 丢失错误（InMemorySaver 服务重启后 resume）。
+
+    LangGraph 在 thread 无 checkpoint 时以 None 输入续接会抛错，含 "checkpoint"/
+    "no state"/"thread not found" 相关信息。宽松匹配避免漏判。
+
+    @param exc: graph 执行异常
+    @return True 表示属于 checkpoint 丢失场景，调用方应降级为 no_resumable_checkpoint 错误码
+    """
+    msg = str(exc).lower()
+    return (
+        "checkpoint" in msg
+        or "no state" in msg
+        or ("thread" in msg and "not found" in msg)
+    )
+
+
 STREAM_BUFFER_KEY = "agent:stream_buffer:{session_id}:{run_id}"
 STREAM_BUFFER_TTL = 1800  # 30 分钟
 # 本会话已分配的最大 block index 缓存（跨 run 全局递增）。
@@ -414,6 +431,138 @@ class AgentRuntimeService:
                 )
                 await self._buffer_append(session.id, run_id, finish_env)
                 yield finish_env
+            try:
+                await self._cache.client.delete(
+                    STREAM_BUFFER_KEY.format(session_id=session.id, run_id=run_id),
+                )
+            except Exception:
+                logger.exception("清理 stream buffer 失败：session_id=%s run_id=%s",
+                                 session.id, run_id)
+
+    async def resume_run(
+        self, *, session, runtime_config: LLMRuntimeConfigDTO, workflow_type: str,
+    ) -> AsyncIterator[AgentStreamEnvelope]:
+        """从 checkpoint 续接被中断的 run（A2）。
+
+        graph_input=None → LangGraph 从该 thread 最近 checkpoint 继续：被中断节点重跑
+        （部分输出已在历史消息，本次作为新 agent 消息追加），后续节点正常执行。
+        不推进 task_id（ii：不支持放弃，仅 END 推进）。
+
+        Args:
+            session: AgentSession ORM 对象（提供 current_task_id 作为 thread_id）
+            runtime_config: LLM 运行时配置
+            workflow_type: 工作流类型（决定从 _workflow_graphs 选取哪张图）
+
+        Yields:
+            AgentStreamEnvelope 协议事件（run.start(resume=True) → graph events → run.finish）
+        """
+        run_id = f"run_{uuid.uuid4().hex[:12]}"
+        # 解析本 run 的 block index 起始值（跨 run 全局递增，避免驳回循环时 index 冲突）
+        index_start = await self._resolve_block_index_start(session)
+        emitter = AgentStreamEmitter(
+            session_id=session.id, run_id=run_id, workflow_type=workflow_type,
+            index_start=index_start,
+        )
+        ctx = WorkflowRuntimeContext(
+            emitter=emitter, runtime_config=runtime_config,
+            interview_service=self._interview_service,
+            evaluation_service=self._evaluation_service,
+            resume_loader=self._resume_loader,
+            session_id=session.id, employee_id=session.employee_id, run_id=run_id,
+        )
+        # 发射 run.start：resume=True 让前端不清空 current_blocks，避免流式闪烁重建
+        start_env = emitter.emit_run_start(
+            enable_thinking=runtime_config.enable_thinking,
+            user_message_id=None,
+            resume=True,
+        )
+        await self._buffer_append(session.id, run_id, start_env)
+        yield start_env
+
+        envelope_buffer: list[AgentStreamEnvelope] = [start_env]
+        # 本 run 累积的 step.update 序列，续接模式下与已有 progress 合并
+        run_steps: list[dict] = []
+        runner = self._runner_factory(self._workflow_graphs[workflow_type])
+        thread_id = await self._resolve_thread_id(session)
+        graph_completed = False  # 仅"无异常 且 未中断（走到 END）"才视为完成
+        # client_aborted：客户端中途断开（fetch.abort），跳过 yield 但仍完成落库，
+        # 让用户在新一轮发送 / reload 时能看到中断前的内容
+        client_aborted = False
+        try:
+            try:
+                async for env in runner.astream(
+                    thread_id=thread_id, graph_input=None, ctx=ctx,
+                ):
+                    envelope_buffer.append(env)
+                    if env.type == "step.update":
+                        run_steps.append(env.data)
+                    await self._buffer_append(session.id, run_id, env)
+                    yield env
+            except (GeneratorExit, asyncio.CancelledError):
+                client_aborted = True
+                logger.info(
+                    "客户端中断 resume run，转入收尾落库：session_id=%s run_id=%s",
+                    session.id, run_id,
+                )
+                raise
+            except Exception as exc:
+                graph_completed = False
+                # checkpoint 丢失（服务重启 / InMemorySaver 内存清空）→ 专属错误码，前端降级为新会话
+                code = (
+                    "no_resumable_checkpoint"
+                    if _is_missing_checkpoint_error(exc)
+                    else "graph_execution_failed"
+                )
+                logger.exception("resume run 失败：session_id=%s run_id=%s", session.id, run_id)
+                err_env = emitter.emit_run_error(
+                    code=code, message=str(exc), retriable=False,
+                )
+                envelope_buffer.append(err_env)
+                await self._buffer_append(session.id, run_id, err_env)
+                yield err_env
+            else:
+                # 无异常：区分 interrupt（再次到交互卡片）与 END（真正完成）
+                graph_completed = not self._has_interrupt(envelope_buffer)
+        finally:
+            # 不论正常 / 异常 / 客户端中断，都把已生成的 envelopes 折叠落库
+            try:
+                agent_message = await self._persist_agent_message(
+                    session=session, user_message_id=None, run_id=run_id,
+                    envelopes=envelope_buffer, runtime_config=runtime_config,
+                    workflow_type=workflow_type,
+                )
+            except Exception:
+                logger.exception(
+                    "resume 收尾落库失败：session_id=%s run_id=%s aborted=%s",
+                    session.id, run_id, client_aborted,
+                )
+                agent_message = None
+            # 仅 graph 真正走到 END 才推进 task_id（A2：不支持放弃，保留 thread 供再次续接）。
+            # interrupt/异常/checkpoint 丢失保持不变以保证 resume 命中。
+            advance = graph_completed
+            next_task_id = await self._advance_task_id(session) if advance else None
+            # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
+            try:
+                await self._persist_block_index(session.id, emitter.max_block_index_used)
+            except Exception:
+                logger.exception("延时落库 block index 失败：session_id=%s", session.id)
+            # 持久化累积进度（reset=False：续接同 task，合并已有 steps）
+            try:
+                await self._persist_progress(
+                    session, run_steps, workflow_type, reset=False,
+                )
+            except Exception:
+                logger.exception(
+                    "resume_run 持久化 progress 失败：session_id=%s", session.id,
+                )
+            # 客户端已断开 → 不再 yield finish（连接已无效），仅完成落库后退出
+            if not client_aborted and agent_message is not None:
+                finish_env = emitter.emit_run_finish(
+                    agent_message_id=agent_message.id, next_task_id=next_task_id,
+                )
+                await self._buffer_append(session.id, run_id, finish_env)
+                yield finish_env
+            # 清理 Redis buffer
             try:
                 await self._cache.client.delete(
                     STREAM_BUFFER_KEY.format(session_id=session.id, run_id=run_id),

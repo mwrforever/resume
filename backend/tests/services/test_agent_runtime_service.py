@@ -403,3 +403,23 @@ async def test_stream_message_client_abort_does_not_advance_task_id():
         pass
     # task_id 不应被推进（无 current_task_id 写入）
     assert advance_calls == []
+
+
+@pytest.mark.asyncio
+async def test_resume_run_uses_none_input_on_same_thread():
+    """resume_run 以 graph_input=None 在同 thread 续接，不推进 task_id。"""
+    svc = _build_svc()
+    captured = {}
+    async def _astream(*, thread_id, graph_input, ctx):
+        captured["thread_id"] = thread_id
+        captured["graph_input"] = graph_input
+        yield ctx.emitter.emit_step(step_id="suggest_dimensions", title="分析维度", status="running")
+    svc._runner_factory = lambda graph: MagicMock(astream=_astream)
+    session = _make_session()  # current_task_id="existing-task-id"
+    session.progress = None
+    async for _env in svc.resume_run(
+        session=session, runtime_config=_runtime_cfg(), workflow_type="interview_questions",
+    ):
+        pass
+    assert captured["graph_input"] is None
+    assert captured["thread_id"] == "existing-task-id"
