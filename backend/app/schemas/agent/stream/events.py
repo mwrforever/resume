@@ -95,7 +95,7 @@ class BlockStopData(_AllowExtra):
 
 # ====== interaction ======
 
-InteractionType = Literal["dimension_selection", "plan_approval", "job_selection"]
+InteractionType = Literal["dimension_selection", "plan_approval", "job_selection", "resume_upload"]
 
 
 class InteractionRequestData(_AllowExtra):

@@ -73,3 +73,10 @@ def test_run_finish_data_optional_next_task_id():
     assert d1.next_task_id is None
     d2 = RunFinishData(agent_message_id=10, next_task_id="abc123")
     assert d2.next_task_id == "abc123"
+
+
+def test_interaction_type_includes_resume_upload():
+    """InteractionType 应包含 resume_upload（A1 简历缺失上传卡）。"""
+    from app.schemas.agent.stream.events import InteractionType
+    # Literal 的 __args__ 即成员元组
+    assert "resume_upload" in InteractionType.__args__
