@@ -302,6 +302,7 @@ CREATE TABLE IF NOT EXISTS `agent_session`
     `status`                TINYINT      NOT NULL DEFAULT 1 COMMENT '状态：1正常，0删除',
     `last_message_time`     DATETIME              DEFAULT NULL COMMENT '最近消息时间',
     `last_block_index`      INT          NOT NULL DEFAULT 0 COMMENT '本会话已分配的最大block index（跨run递增）',
+    `progress`              JSON                  DEFAULT NULL COMMENT '累积步骤进度（支撑进度栏持久化展示）',
     `create_time`           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     UNIQUE KEY `uk_session_key` (`session_key`),

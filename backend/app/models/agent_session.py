@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Index, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -30,5 +30,7 @@ class AgentSession(Base):
     last_message_time: Mapped[datetime | None] = mapped_column(DateTime)
     # 本会话已分配的最大 block index（跨 run 全局递增，保证 block index 不冲突）
     last_block_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 累积步骤进度 {workflow_type, steps:[{step_id,title,status,detail?}]}，支撑进度栏持久化展示
+    progress: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     update_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())

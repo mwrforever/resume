@@ -71,6 +71,8 @@ class AgentSessionItem(BaseModel):
     status: int
     selected_model_name: str | None = None
     enable_thinking: bool = False
+    # 累积步骤进度（进度栏持久化展示用；None 表示尚无运行记录）
+    progress: dict[str, Any] | None = None
     last_message_time: datetime | None = None
     create_time: datetime | None = None
     update_time: datetime | None = None
