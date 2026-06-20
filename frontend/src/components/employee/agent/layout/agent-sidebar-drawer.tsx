@@ -190,13 +190,15 @@ export function AgentSidebarDrawer({
               {/* 品牌色 dot：与底部 CTA / active rail 同色系，建立首尾呼应 */}
               <span className="w-1.5 h-1.5 rounded-full bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] shadow-[0_0_6px_rgba(14,165,233,0.55)] flex-shrink-0" aria-hidden />
               <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#475569]">会话</span>
-              {/* 计数 chip：仅在有可见会话时渲染；空态保持简洁 */}
-              {visible.length > 0 && (
-                <span className="px-1.5 py-px rounded-full text-[10px] font-semibold tabular-nums
+              {/* 运行中徽标：仅在有运行任务时渲染；空闲不打扰（替换原会话计数 chip，bug 3） */}
+              {runningIds.size > 0 && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-px rounded-full text-[10px] font-semibold tabular-nums
                                  text-[#0369A1]
                                  bg-[rgba(14,165,233,0.10)]
-                                 ring-1 ring-inset ring-[rgba(14,165,233,0.18)]">
-                  {visible.length}
+                                 ring-1 ring-inset ring-[rgba(14,165,233,0.18)]"
+                      title={`${runningIds.size} 个会话正在运行`}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#0EA5E9] animate-pulse" aria-hidden />
+                  <span>{runningIds.size} 运行中</span>
                 </span>
               )}
             </div>
