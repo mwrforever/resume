@@ -45,8 +45,14 @@ async def _request_dimension_selection(state: InterviewQuestionState, config) ->
     user_values = interrupt(payload)
     feedback = str(user_values.get("feedback") or user_values.get("user_feedback") or "").strip()
     if user_values.get("regenerate"):
-        # 驳回：记录标志 + feedback，由条件边 _route_after_dimension_selection 决定回 suggest_dimensions
-        return {"dimension_rejected": True, "dimension_feedback": feedback}
+        # 驳回：记录标志 + feedback + 用户分类反馈（已采纳保留、已否决替换），
+        # 由条件边 _route_after_dimension_selection 决定回 suggest_dimensions
+        return {
+            "dimension_rejected": True,
+            "dimension_feedback": feedback,
+            "accepted_dimensions": user_values.get("accepted_dimensions", []),
+            "rejected_dimensions": user_values.get("rejected_dimensions", []),
+        }
     # 确认：记录所选维度，由条件边进入 build_question_plan
     return {
         "selected_dimensions": user_values.get("selected_dimensions", []),
