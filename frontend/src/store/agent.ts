@@ -643,13 +643,51 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
             messages: detail?.messages ?? entry.messages,
             loaded: true,
             // 单次 setState 完成「running=false + 清空 current_blocks + 切到落库消息」三件事，
-            // React 一次提交切换 UI，避免帧间留白。
-            runState: { ...INITIAL_RUN_STATE, workflow_type: entry.runState.workflow_type },
+            // React 一次提交切换 UI，避免帧间留白。steps 是否保留交由 resolveRunStateAfterFinish。
+            runState: resolveRunStateAfterFinish(entry.runState, {
+              hasFinish: Boolean(pendingFinish),
+              nextTaskId,
+            }),
           },
         },
       };
     });
   }
+}
+
+/**
+ * 计算 run 收尾后的 runState（决定步骤进度是否跨「中断段」累积）。
+ *
+ * 背景：图一/图二都会被 interaction 中断（选维度、确认计划、选岗位等）拆成多个
+ * run 段，每段以 run.finish 结束。此前收尾时无条件把 runState 重置为 INITIAL
+ * （steps=[]），导致每段都从 0 重新计数 step.update，进度条永远停在
+ * 「1/8 + 当前运行中节点」。
+ *
+ * 判定依据 next_task_id（与后端语义一一对应，见 test_agent_runtime_service.py）：
+ * - 中断段：后端 interrupt 时不推进 task_id → run.finish 的 next_task_id 为 null
+ *   → 保留已累积 steps，下一段 resume（run.start.resume=true，reducer 不清 steps）
+ *   继续往后累积（2/8 → 4/8 → 8/8）。
+ * - 真正 END：后端推进 task_id → next_task_id 非空 → 全量清空，下一轮新问题从 0 起跑。
+ * - 客户端 abort：无 finish envelope（hasFinish=false）→ 视为终止，全量清空。
+ *
+ * 无论哪种路径都把 running 置 false、清空 current_blocks（INITIAL 默认值），
+ * 仅 workflow_type 始终保留（同会话工作流类型不变）。
+ *
+ * @param prev - 收尾前的 runState（含已累积 steps）
+ * @param finish - 收尾上下文：hasFinish 是否收到 run.finish；nextTaskId 其携带的 task_id
+ * @returns 收尾后的新 runState
+ */
+export function resolveRunStateAfterFinish(
+  prev: AgentRunState,
+  finish: { hasFinish: boolean; nextTaskId: string | null },
+): AgentRunState {
+  // 中断段：收到 finish 且未推进 task_id → 保留 steps 让进度跨段累积
+  const isInterruptPause = finish.hasFinish && !finish.nextTaskId;
+  return {
+    ...INITIAL_RUN_STATE,
+    workflow_type: prev.workflow_type,
+    ...(isInterruptPause ? { steps: prev.steps } : {}),
+  };
 }
 
 // ---------- 派生 selectors ----------
