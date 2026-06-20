@@ -12,7 +12,7 @@
  * resume_evaluation.py 中 user_values.get(...) 的 key）。
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { AgentBlock } from '@/types/agent';
 
 interface InteractionBlockProps {
@@ -534,51 +534,135 @@ function PlanApproval({ title, prompt, data, submitting, onSubmit }: SectionProp
   );
 }
 
-/** 岗位选择卡：提交 { selected_job_name: string }
+/** 岗位选择卡：分页（5/页）+ 手动搜索（按钮/Enter 触发，leading-edge 节流）。
+ *  提交 { selected_job_name }。不随输入自动过滤；节流防连点。
  *
  * 注意：本卡不含驳回 textarea + 按钮——岗位候选源是员工绑定岗位 DB 列表
  * （load_job_candidates 节点不调 LLM，候选岗固定），驳回重生成在后端无 LLM 支撑、
  * feedback 字段会被丢弃。移除驳回入口避免误导用户；如需切换岗位直接点选其它候选项即可。
  */
+const JOB_PAGE_SIZE = 5;
+const JOB_SEARCH_THROTTLE_MS = 300;
+
 function JobSelection({ title, prompt, data, submitting, onSubmit }: SectionProps) {
   const candidates = (data?.candidates ?? []) as Array<{ name?: unknown; description?: unknown }>;
   const [selected, setSelected] = useState<string | null>(null);
+  const [query, setQuery] = useState('');          // 输入框文本（未应用）
+  const [appliedQuery, setAppliedQuery] = useState(''); // 已应用的搜索词（决定过滤）
+  const [page, setPage] = useState(0);
+  const lastSearchRef = useRef(0);                 // 节流时间戳（不进 state）
+
+  // 过滤基于已应用的 appliedQuery（非输入中的 query，避免输入过程中列表抖动）
+  const filtered = appliedQuery.trim()
+    ? candidates.filter(c => {
+        const q = appliedQuery.trim().toLowerCase();
+        return String(c.name ?? '').toLowerCase().includes(q)
+            || String(c.description ?? '').toLowerCase().includes(q);
+      })
+    : candidates;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / JOB_PAGE_SIZE));
+  // 过滤结果收缩时夹紧当前页，避免落到空白页
+  const safePage = Math.min(page, totalPages - 1);
+  const pageJobs = filtered.slice(safePage * JOB_PAGE_SIZE, safePage * JOB_PAGE_SIZE + JOB_PAGE_SIZE);
+
+  /** 执行搜索：读输入框当前值 → 应用过滤 → 重置第 1 页。
+   *  leading-edge 节流：距上次执行不足 300ms 忽略（防连点 / Enter+点击叠加）。 */
+  const applySearch = () => {
+    const now = Date.now();
+    if (now - lastSearchRef.current < JOB_SEARCH_THROTTLE_MS) return;
+    lastSearchRef.current = now;
+    setAppliedQuery(query);
+    setPage(0);
+    // 已选岗位被新过滤结果排除时清空，避免提交一个用户看不见的选项
+    if (selected) {
+      const q = query.trim().toLowerCase();
+      const stillIn = candidates.some(c =>
+        String(c.name ?? '') === selected
+        && String(c.name ?? '').toLowerCase().includes(q));
+      if (!stillIn) setSelected(null);
+    }
+  };
+  /** 清除搜索词并重置节流，恢复全量分页。 */
+  const clearSearch = () => {
+    setQuery(''); setAppliedQuery(''); setPage(0); lastSearchRef.current = 0;
+  };
 
   return (
     <div className="rounded-md border border-[#0EA5E9]/40 bg-white shadow-sm px-4 py-3">
       <p className="text-sm font-semibold text-[#020617]">{title}</p>
       {prompt && <p className="text-xs text-[#64748B] mt-1 mb-3">{prompt}</p>}
 
-      <div className="space-y-1.5 mb-3">
-        {candidates.map((c, i) => {
-          const name = String(c.name ?? `岗位 ${i + 1}`);
-          const desc = c.description ? String(c.description) : null;
-          const isSelected = selected === name;
-          return (
-            <button
-              key={name}
-              type="button"
-              className={`w-full flex flex-col items-start px-3 py-2 rounded-md border text-left text-sm transition-all
-                ${isSelected
-                  ? 'border-[#0EA5E9] bg-[#0EA5E9]/5 text-[#0369A1]'
-                  : 'border-[#E2E8F0] bg-white hover:bg-[#F8FAFC] text-[#020617]'}`}
-              onClick={() => setSelected(name)}
-            >
-              <span className="font-medium">{name}</span>
-              {desc && <span className="text-[#94A3B8] text-xs mt-0.5">{desc}</span>}
-            </button>
-          );
-        })}
+      {/* 搜索框 + 搜索按钮（手动触发，输入过程不自动过滤） */}
+      <div className="flex items-center gap-2 px-3 py-2 mb-3 rounded-lg border bg-[#F1F5F9]
+                      focus-within:border-[#0EA5E9] focus-within:bg-white
+                      focus-within:shadow-[0_0_0_3px_rgba(14,165,233,0.18)] transition-all">
+        <svg className="w-4 h-4 text-[#94A3B8] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" strokeLinecap="round"/></svg>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); applySearch(); } }}
+          placeholder="输入岗位名称或技能方向，点击搜索"
+          className="flex-1 min-w-0 bg-transparent border-none outline-none text-sm text-[#020617] placeholder:text-[#94A3B8]"
+        />
+        {query && (
+          <button type="button" onClick={clearSearch} aria-label="清除搜索"
+                  className="text-[#94A3B8] hover:text-[#DC2626] text-sm px-1">×</button>
+        )}
+        <button type="button" onClick={applySearch}
+                className="px-3 py-1 rounded-md bg-gradient-to-b from-[#0EA5E9] to-[#0369A1]
+                           text-white text-xs font-semibold active:scale-95 transition-transform shrink-0">
+          搜索
+        </button>
       </div>
 
-      <button
-        type="button"
-        className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium
-                   hover:bg-[#0EA5E9] transition-colors
-                   disabled:opacity-50 disabled:cursor-not-allowed"
+      {/* 岗位列表（当前页） */}
+      {pageJobs.length === 0 ? (
+        <p className="text-xs text-[#94A3B8] mb-3 py-4 text-center">未找到匹配「{appliedQuery}」的岗位</p>
+      ) : (
+        <div className="space-y-1.5 mb-3">
+          {pageJobs.map((c, i) => {
+            const name = String(c.name ?? `岗位 ${i + 1}`);
+            const desc = c.description ? String(c.description) : null;
+            const isSelected = selected === name;
+            return (
+              <button key={name} type="button" aria-label={name}
+                className={`w-full flex flex-col items-start px-3 py-2 rounded-md border text-left text-sm transition-all
+                  ${isSelected ? 'border-[#0EA5E9] bg-[#0EA5E9]/5 text-[#0369A1]' : 'border-[#E2E8F0] bg-white hover:bg-[#F8FAFC] text-[#020617]'}`}
+                onClick={() => setSelected(name)}>
+                <span className="font-medium">{name}</span>
+                {desc && <span className="text-[#94A3B8] text-xs mt-0.5">{desc}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 分页器 */}
+      <div className="flex items-center justify-between pt-2 border-t border-[#E2E8F0] mb-3">
+        <span className="text-[11px] text-[#94A3B8] font-mono">
+          第 {safePage + 1} / {totalPages} 页 · 共 {filtered.length} 条
+        </span>
+        <div className="flex items-center gap-1.5">
+          <button type="button" aria-label="上一页" disabled={safePage === 0}
+                  onClick={() => setPage(p => Math.max(0, p - 1))}
+                  className="w-7 h-7 rounded-md border border-[#E2E8F0] bg-white text-[#64748B]
+                             disabled:opacity-35 hover:border-[#0EA5E9] hover:text-[#0369A1] flex items-center justify-center">‹</button>
+          {Array.from({ length: totalPages }).map((_, i) => (
+            <span key={i} className={`rounded-full transition-all ${i === safePage
+              ? 'w-4 h-1.5 bg-gradient-to-r from-[#0EA5E9] to-[#0369A1]' : 'w-1.5 h-1.5 bg-[#E2E8F0]'}`} />
+          ))}
+          <button type="button" aria-label="下一页" disabled={safePage >= totalPages - 1}
+                  onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                  className="w-7 h-7 rounded-md border border-[#E2E8F0] bg-white text-[#64748B]
+                             disabled:opacity-35 hover:border-[#0EA5E9] hover:text-[#0369A1] flex items-center justify-center">›</button>
+        </div>
+      </div>
+
+      <button type="button"
+        className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium hover:bg-[#0EA5E9] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         disabled={!selected || submitting}
-        onClick={() => selected && onSubmit({ selected_job_name: selected })}
-      >
+        onClick={() => selected && onSubmit({ selected_job_name: selected })}>
         {submitting ? '提交中…' : '确认选择'}
       </button>
     </div>
