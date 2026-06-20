@@ -351,9 +351,30 @@ function DimensionSelection({ title, prompt, data, submitting, onSubmit }: Secti
                      hover:bg-[#F8FAFC] transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={submitting}
-          onClick={() => onSubmit({ regenerate: true, feedback: feedback.trim() })}
+          onClick={() => {
+            // 已勾选维度 = 用户采纳的，驳回后必须保留
+            const accepted = candidates
+              .filter(c => selected.has(String(c.name ?? '')))
+              .map(c => ({
+                name: String(c.name ?? ''),
+                reason: c.reason ? String(c.reason) : '',
+              }));
+            // 未勾选维度 = 用户否决的，驳回后必须替换为新建议
+            const rejected = candidates
+              .filter(c => !selected.has(String(c.name ?? '')))
+              .map(c => ({
+                name: String(c.name ?? ''),
+                reason: c.reason ? String(c.reason) : '',
+              }));
+            onSubmit({
+              regenerate: true,
+              feedback: feedback.trim(),
+              accepted_dimensions: accepted,
+              rejected_dimensions: rejected,
+            });
+          }}
         >
-          驳回重新建议
+          {selected.size === 0 ? '全部驳回，重新建议' : `保留已选 ${selected.size} 个，调整其余`}
         </button>
       </div>
     </div>
