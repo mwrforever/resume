@@ -100,6 +100,44 @@ class AgentRuntimeService:
         except Exception:
             logger.exception("延时落库 last_block_index 失败：session_id=%s", session_id)
 
+    async def _persist_progress(
+        self, session, run_steps: list[dict], workflow_type: str, *, reset: bool,
+    ) -> None:
+        """把本 run 的 step.update 序列合并进 session.progress 并落库。
+
+        @param reset: True=新 task（stream_message），丢弃已有 steps；
+                      False=续接（resolve/resume），合并已有 steps（跨 interaction 段累积）。
+        """
+        existing: list[dict] = []
+        if not reset:
+            prog = getattr(session, "progress", None) or {}
+            existing = (prog.get("steps") or []) if isinstance(prog, dict) else []
+        # 按 step_id upsert：新覆盖旧（状态更新），保留首次出现顺序
+        by_id: dict[str, dict] = {}
+        for s in existing:
+            sid = str(s.get("step_id") or "")
+            if sid:
+                by_id[sid] = s
+        for s in run_steps:
+            sid = str(s.get("step_id") or "")
+            if not sid:
+                continue
+            entry: dict = {
+                "step_id": sid,
+                "title": s.get("title", ""),
+                "status": s.get("status", "pending"),
+            }
+            if s.get("detail"):
+                entry["detail"] = s["detail"]
+            by_id[sid] = entry
+        merged = list(by_id.values())
+        progress = {"workflow_type": workflow_type, "steps": merged}
+        try:
+            await self._repo.update_session(session.id, progress=progress)
+            session.progress = progress  # 保持内存对象新鲜
+        except Exception:
+            logger.exception("持久化 progress 失败：session_id=%s", session.id)
+
     @staticmethod
     def _has_interrupt(envelopes: list[AgentStreamEnvelope]) -> bool:
         """判断本 run 是否以 interrupt（人机交互卡片）结束。
@@ -146,6 +184,8 @@ class AgentRuntimeService:
         )
 
         envelope_buffer: list[AgentStreamEnvelope] = []
+        # 本 run 累积的 step.update 序列，供 finally 持久化到 session.progress
+        run_steps: list[dict] = []
 
         # 发射 run.start
         env = emitter.emit_run_start(
@@ -170,6 +210,8 @@ class AgentRuntimeService:
                     thread_id=thread_id, graph_input=graph_input, ctx=ctx,
                 ):
                     envelope_buffer.append(env)
+                    if env.type == "step.update":
+                        run_steps.append(env.data)
                     await self._buffer_append(session.id, run_id, env)
                     yield env
             except (GeneratorExit, asyncio.CancelledError):
@@ -217,6 +259,13 @@ class AgentRuntimeService:
                 await self._persist_block_index(session.id, emitter.max_block_index_used)
             except Exception:
                 logger.exception("延时落库 block index 失败：session_id=%s", session.id)
+            # 持久化累积进度到 session.progress（reset=True：新 task 丢弃旧 steps）
+            try:
+                await self._persist_progress(
+                    session, run_steps, body.workflow_type, reset=True,
+                )
+            except Exception:
+                logger.exception("stream_message 持久化 progress 失败：session_id=%s", session.id)
             # 客户端已断开 → 不再 yield finish（连接已无效），仅完成落库后退出
             if not client_aborted and agent_message is not None:
                 finish_env = emitter.emit_run_finish(
@@ -291,6 +340,8 @@ class AgentRuntimeService:
 
         # 进入 graph 恢复（Command(resume=values)）
         envelope_buffer: list[AgentStreamEnvelope] = [resolve_env, start_env]
+        # 本 run 累积的 step.update 序列，续接模式下与已有 progress 合并
+        run_steps: list[dict] = []
         runner = self._runner_factory(self._workflow_graphs[workflow_type])
         thread_id = await self._resolve_thread_id(session)
         graph_completed = False  # 仅"无异常 且 未中断（走到 END）"才视为完成
@@ -304,6 +355,8 @@ class AgentRuntimeService:
                     ctx=ctx,
                 ):
                     envelope_buffer.append(env)
+                    if env.type == "step.update":
+                        run_steps.append(env.data)
                     await self._buffer_append(session.id, run_id, env)
                     yield env
             except (GeneratorExit, asyncio.CancelledError):
@@ -348,6 +401,15 @@ class AgentRuntimeService:
                 await self._persist_block_index(session.id, emitter.max_block_index_used)
             except Exception:
                 logger.exception("延时落库 block index 失败：session_id=%s", session.id)
+            # 持久化累积进度（reset=False：续接，合并已有 steps）
+            try:
+                await self._persist_progress(
+                    session, run_steps, workflow_type, reset=False,
+                )
+            except Exception:
+                logger.exception(
+                    "resolve_interaction 持久化 progress 失败：session_id=%s", session.id,
+                )
             if not client_aborted and agent_message is not None:
                 finish_env = emitter.emit_run_finish(
                     agent_message_id=agent_message.id, next_task_id=next_task_id,

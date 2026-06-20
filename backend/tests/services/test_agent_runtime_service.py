@@ -314,3 +314,66 @@ async def test_stream_message_no_task_id_advance_on_interrupt():
     assert finish_env is not None
     # interrupt 时 task_id 不应推进
     assert finish_env.data["next_task_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_stream_message_persists_progress_reset_for_new_task():
+    """stream_message（新 task）持久化 progress：reset=True，仅含本 run 的 steps。"""
+    captured = {}
+    svc = _build_svc()
+
+    async def _astream(*, thread_id, graph_input, ctx):
+        yield ctx.emitter.emit_step(step_id="load_resume", title="读取简历", status="success")
+
+    svc._runner_factory = lambda graph: MagicMock(astream=_astream)
+    session = _make_session()
+    session.progress = {"workflow_type": "interview_questions", "steps": [
+        {"step_id": "old_step", "title": "旧", "status": "success"}]}
+
+    async def _capture_update(session_id, **kwargs):
+        if "progress" in kwargs:
+            captured["progress"] = kwargs["progress"]
+        return session
+
+    svc._repo.update_session = _capture_update
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+    async for _env in svc.stream_message(session=session, body=body, runtime_config=_runtime_cfg()):
+        pass
+
+    assert "progress" in captured
+    steps = captured["progress"]["steps"]
+    assert captured["progress"]["workflow_type"] == "interview_questions"
+    assert all(s["step_id"] != "old_step" for s in steps)  # reset：旧 task 步骤不残留
+    assert any(s["step_id"] == "load_resume" for s in steps)
+
+
+@pytest.mark.asyncio
+async def test_resolve_interaction_merges_progress_without_reset():
+    """resolve_interaction（续接）持久化 progress：reset=False，合并已有 steps。"""
+    captured = {}
+    svc = _build_svc()
+
+    async def _astream(*, thread_id, graph_input, ctx):
+        yield ctx.emitter.emit_step(step_id="suggest_dimensions", title="分析维度", status="success")
+
+    svc._runner_factory = lambda graph: MagicMock(astream=_astream)
+    session = _make_session()
+    session.progress = {"workflow_type": "interview_questions", "steps": [
+        {"step_id": "load_resume", "title": "读取简历", "status": "success"}]}
+
+    async def _capture_update(session_id, **kwargs):
+        if "progress" in kwargs:
+            captured["progress"] = kwargs["progress"]
+        return session
+
+    svc._repo.update_session = _capture_update
+    body = AgentInteractionSubmit(values={"selected_dimensions": []}, workflow_type="interview_questions")
+    async for _env in svc.resolve_interaction(
+        session=session, request_id="req1", body=body,
+        runtime_config=_runtime_cfg(), workflow_type="interview_questions",
+    ):
+        pass
+
+    steps = captured["progress"]["steps"]
+    ids = [s["step_id"] for s in steps]
+    assert "load_resume" in ids and "suggest_dimensions" in ids  # 合并
