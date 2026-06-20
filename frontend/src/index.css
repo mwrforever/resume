@@ -191,3 +191,38 @@
   0%, 100% { box-shadow: -3px 0 12px -4px rgba(14, 165, 233, 0.35); }
   50%      { box-shadow: -3px 0 16px -3px rgba(14, 165, 233, 0.55); }
 }
+
+/* ===== B1 ProgressTracker 光波效果 =====
+   说明：
+   - .progress-icon-pulse：running 步骤图标的呼吸光圈（品牌蓝扩散后收拢）
+   - .progress-flow-dot::after：已完成连接线上的流光点（从顶向下沿线下落，需父元素 position 定位） */
+.progress-icon-pulse {
+  box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.5);
+  animation: pt-icon-pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes pt-icon-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.5); }
+  70%  { box-shadow: 0 0 0 9px rgba(14, 165, 233, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0); }
+}
+
+/* 已完成连接线流光点（沿线下落） */
+.progress-flow-dot::after {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #7DD3FC;
+  box-shadow: 0 0 8px 2px rgba(125, 211, 252, 0.7);
+  animation: pt-flow-dot 2.4s cubic-bezier(0.2, 0, 0, 1) infinite;
+  pointer-events: none;
+}
+@keyframes pt-flow-dot {
+  0%   { top: -2px; opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
