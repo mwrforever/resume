@@ -53,6 +53,8 @@ function WorkspaceInner({
   // 思考模式/模型选择走 store action（区分空会话写全局默认 / 中途会话仅写当前会话）
   const toggleThinking = useAgentStore((s) => s.toggleThinking);
   const selectModel = useAgentStore((s) => s.selectModel);
+  // A2：中断恢复走 store.resumeRun（续接 LangGraph checkpoint，非重发）
+  const resumeRun = useAgentStore((s) => s.resumeRun);
   /** 空态快捷问答回填：可携带 workflow（点击评估类问答联动切换 Composer 模式） */
   const [prefill, setPrefill] = useState<{ prompt: string; workflow?: WorkflowType } | null>(null);
   // 记录最近一次发送入参，供错误态"重试"复用
@@ -124,6 +126,7 @@ function WorkspaceInner({
         onSubmitInteraction={submit}
         onPickPrompt={(prompt, workflow) => setPrefill({ prompt, workflow })}
         onRetry={handleRetry}
+        onResume={() => void resumeRun(sessionId)}
         onRetryFromLastUser={handleRetryFromLastUser}
       />
       <AgentComposer

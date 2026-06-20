@@ -52,16 +52,13 @@ export function AgentComposer({
   session, sending, hasPendingInteraction, lastWorkflow, prefill, onPrefillConsumed,
   onSend, onAbort, onToggleThinking, onPickModel, isEmptySession,
 }: AgentComposerProps) {
-  // sending=true 时（含人机交互等待）按钮显示红色"停止"可终止；
-  // 但纯流式运行中（非交互等待）禁用输入框，避免并发触发第二条流。
-  // 人机交互等待时流程已暂停，允许输入新指令（如补充需求/换思路）。
-  //
-  // interrupt 暂停时后端已 run.finish，sending=false；但流程仍未结束（等用户选择），
-  // 此时按钮应保持红色"中断"语义：点击 = 放弃当前 interaction 走新一轮发送。
-  // 输入框始终可输入（hasPendingInteraction 时 inputLocked=false）。
-  const inputLocked = sending && !hasPendingInteraction;
-  // 按钮"红/蓝"判定：纯运行中 OR 等待用户交互 → 红色中断；否则蓝色发送。
-  const showAbortButton = sending || hasPendingInteraction;
+  // A2（B+ii）：按钮区改"主发送(蓝) + 副暂停(红)"组合。
+  // - sending=true（流式中）：主按钮禁用（输入框锁），右侧显示红色"暂停"按钮（调 onAbort=fetch.abort，
+  //   中断后 InterruptBar 显示"恢复"语义，用户可继续）。
+  // - hasPendingInteraction=true（ii 等待用户选择）：主按钮禁用并提示"请先完成上方选择"，
+  //   不显示暂停按钮（无活跃流可断，且 interaction 仅由 END 推进 task_id，不支持放弃）。
+  // - 空闲：主按钮可发送（蓝），无暂停按钮。
+  const sendDisabled = sending || hasPendingInteraction;
   const [content, setContent] = useState('');
   // 初始模式取最近一条消息的 workflow_type；空会话回退默认 interview_questions。
   // WorkspaceInner 的 key={sessionId} 保证切会话时重挂载，useState 初值按会话回显正确模式，
@@ -93,9 +90,10 @@ export function AgentComposer({
   }, [content]);
 
   const submit = () => {
+    // A2：工作流未完成期间禁用发送（ii 等待用户选择 / 流式中）
+    if (sendDisabled) return;
     const trimmed = content.trim();
-    // 纯运行中禁发；人机交互等待时允许发送（流程已暂停）
-    if (!trimmed || inputLocked) return;
+    if (!trimmed) return;
     const ctxRefs = upload.kind === 'success'
       ? [{ type: 'resume', file_path: upload.file_path, file_name: upload.fileName }]
       : undefined;
@@ -250,23 +248,43 @@ export function AgentComposer({
 
           <span className="hidden sm:block text-[11px] text-[#94A3B8]">Ctrl+Enter 发送</span>
 
-          {/* 主操作按钮 morph：sending（含人机交互等待）红色"停止"可终止，否则蓝色"发送"。
-              interrupt 暂停时后端已 run.finish 但流程未结束，按钮保持红色"中断"以表达
-              "放弃当前选择、改发新消息"的语义；点击触发 onAbort，由 store 决定如何收尾。 */}
-          <button
-            type="button"
-            onClick={showAbortButton ? onAbort : submit}
-            disabled={!showAbortButton && !content.trim()}
-            className={`h-9 px-5 rounded-lg text-xs font-semibold transition-all active:scale-[0.97]
-                        inline-flex items-center gap-1.5 ${
-              showAbortButton
-                ? 'border border-[#DC2626] text-[#DC2626] hover:bg-[#FEE2E2] bg-white shadow-[0_2px_8px_-3px_rgba(220,38,38,0.35)]'
-                : 'bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] text-white ring-1 ring-inset ring-white/15 shadow-[0_4px_12px_-4px_rgba(3,105,161,0.5)] hover:shadow-[0_6px_16px_-4px_rgba(3,105,161,0.55)] disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none'
-            }`}
-          >
-            {showAbortButton ? <Square size={13} className="fill-current" /> : <Send size={13} />}
-            <span>{showAbortButton ? '中断' : '发送'}</span>
-          </button>
+          {/* A2：主按钮始终蓝色"发送"，工作流未完成期间 disabled。
+              ii 等待用户选择时改文案为"请先完成上方选择"；流式中独立"暂停"按钮调 fetch.abort，
+              用户中断后 InterruptBar 显示"恢复"语义续接 checkpoint。 */}
+          <div className="flex items-center gap-2">
+            {sending && (
+              <button
+                type="button"
+                onClick={onAbort}
+                title="暂停流式（之后可恢复）"
+                aria-label="暂停"
+                className="h-9 px-4 rounded-lg text-xs font-semibold
+                           border border-[#DC2626] text-[#DC2626]
+                           hover:bg-[#FEE2E2] bg-white
+                           shadow-[0_2px_8px_-3px_rgba(220,38,38,0.35)]
+                           active:scale-[0.97] transition-all
+                           inline-flex items-center gap-1.5"
+              >
+                <Square size={13} className="fill-current" />
+                <span>暂停</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={submit}
+              disabled={sendDisabled || !content.trim()}
+              className="h-9 px-5 rounded-lg text-xs font-semibold transition-all active:scale-[0.97]
+                         inline-flex items-center gap-1.5
+                         bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] text-white
+                         ring-1 ring-inset ring-white/15
+                         shadow-[0_4px_12px_-4px_rgba(3,105,161,0.5)]
+                         hover:shadow-[0_6px_16px_-4px_rgba(3,105,161,0.55)]
+                         disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
+            >
+              <Send size={13} />
+              <span>{hasPendingInteraction ? '请先完成上方选择' : '发送'}</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

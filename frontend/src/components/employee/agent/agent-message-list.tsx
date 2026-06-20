@@ -27,12 +27,15 @@ export interface AgentMessageListProps {
   onPickPrompt?: (prompt: string, workflow?: WorkflowType) => void;
   /** 错误重试（仅 runState.error 红色 callout 使用） */
   onRetry?: () => void;
-  /** 中断重发（用最后一条 user 消息内容重新发起，bug 1） */
+  /** 中断恢复（调 store.resumeRun 续接 checkpoint，非重发）。
+   *  仅在中断态 InterruptBar 使用；提供时显示"恢复"按钮，缺省则回退到"重试"按钮。 */
+  onResume?: () => void;
+  /** 中断重发（用最后一条 user 消息内容重新发起，作为 onResume 缺省时的兜底） */
   onRetryFromLastUser?: () => void;
 }
 
 export function AgentMessageList({
-  messages, runState, sending, onSubmitInteraction, onPickPrompt, onRetry, onRetryFromLastUser,
+  messages, runState, sending, onSubmitInteraction, onPickPrompt, onRetry, onResume, onRetryFromLastUser,
 }: AgentMessageListProps) {
   const { ref, followIfNeeded, forceSmoothToBottom } = useFollowBottom();
 
@@ -143,13 +146,16 @@ export function AgentMessageList({
           </div>
         )}
 
-        {/* 中断提示（bug 1）：刷新打断或后端 error 后，最后一条 agent 消息含 streaming block 时显示。
+        {/* 中断提示（bug 1 / A2）：刷新打断或后端 error 后，最后一条 agent 消息含 streaming block 时显示。
             仅在没有正在跑的 run 时显示（避免和流式状态条同屏）；
-            runState.error 红色 callout 与本 pill 不会同屏（前者依赖 runState.error，后者依赖 !runState.running 且无 runState.error）。 */}
-        {!runState.running && !runState.error && isLastAgentMessageInterrupted(messages) && onRetryFromLastUser && (
+            runState.error 红色 callout 与本 pill 不会同屏（前者依赖 runState.error，后者依赖 !runState.running 且无 runState.error）。
+            A2：中断态默认走"恢复"按钮（onResume 续接 checkpoint）；onResume 缺省时回退"重试"（onRetryFromLastUser 重发）。 */}
+        {!runState.running && !runState.error && isLastAgentMessageInterrupted(messages) && (onResume || onRetryFromLastUser) && (
           <InterruptBar
-            onRetry={onRetryFromLastUser}
-            retrying={sending}
+            onRetry={onRetryFromLastUser ?? (() => {})}
+            onResume={onResume}
+            isError={false}
+            resuming={sending}
           />
         )}
       </div>

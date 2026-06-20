@@ -1,29 +1,50 @@
 /**
- * InterruptBar：中断提示条
+ * InterruptBar：中断/错误提示条
  *
- * 用途：刷新页面或后端错误打断流式 run 后，被截断的 agent 消息底部展示
- * 单行 pill：橙色感叹号 + 「本次任务已中断」+ 重试图标按钮。
+ * 两种形态：
+ * - 中断态（isError 缺省或 false，且提供 onResume）：
+ *     页面刷新 / 客户端断开打断流式 run 后，被截断的 agent 消息底部展示
+ *     单行 pill：橙色感叹号 + 「本次任务已中断」+「恢复」按钮（调 onResume 续接 checkpoint）。
+ * - 错误态（isError=true）：
+ *     后端返回 run.finish error 后展示，文案改为「运行出错了」，按钮「重试」调 onRetry 重发。
  *
  * 触发条件由调用方判定（最后一条 agent 消息含 status='streaming' 的 block）。
- * 重试 = 用最后一条 user 消息内容重新调 sendMessage（由父组件处理）。
  *
  * 视觉沿用项目 sky/orange 体系，不引入新 token。
  */
 
-import { Loader2, RotateCw } from 'lucide-react';
-
 export interface InterruptBarProps {
-  /** 重试触发回调：父组件用最后一条 user 消息内容重新发送 */
+  /** 重试触发回调（错误态用：放弃当前 task 重发） */
   onRetry: () => void;
-  /** 重试是否进行中（true 时按钮禁用 + 图标转 spinner） */
+  /** 恢复触发回调（中断态用：续接 LangGraph checkpoint，非重发）。提供时显示"恢复"按钮 */
+  onResume?: () => void;
+  /** 是否错误态（true=重试语义；false/缺省=中断态恢复语义） */
+  isError?: boolean;
+  /** 重试是否进行中（错误态按钮禁用） */
   retrying?: boolean;
+  /** 恢复是否进行中（中断态按钮禁用） */
+  resuming?: boolean;
 }
 
-export function InterruptBar({ onRetry, retrying = false }: InterruptBarProps) {
+export function InterruptBar({
+  onRetry,
+  onResume,
+  isError = false,
+  retrying = false,
+  resuming = false,
+}: InterruptBarProps) {
+  // 是否走"恢复"分支：非错误态且提供了 onResume 回调
+  const isResumeMode = !isError && !!onResume;
+  const label = isResumeMode ? '本次任务已中断' : '运行出错了';
+  const handleClick = isResumeMode ? onResume : onRetry;
+  const busy = isResumeMode ? resuming : retrying;
+  const title = isResumeMode ? (resuming ? '恢复中…' : '恢复运行') : (retrying ? '重试中…' : '重试');
+  const buttonText = isResumeMode ? (resuming ? '恢复中…' : '恢复') : (retrying ? '重试中…' : '重试');
+
   return (
     <div
       role="status"
-      aria-label="本次任务已中断"
+      aria-label={label}
       className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full
                  bg-[#FFF7ED] border border-[#FB923C]/40
                  text-[12.5px] text-[#9A3412] font-medium mt-3"
@@ -37,25 +58,20 @@ export function InterruptBar({ onRetry, retrying = false }: InterruptBarProps) {
       >
         !
       </span>
-      <span>本次任务已中断</span>
+      <span>{label}</span>
       <button
         type="button"
-        onClick={onRetry}
-        disabled={retrying}
-        title={retrying ? '重试中…' : '重试'}
-        aria-label={retrying ? '重试中' : '重试'}
-        className="inline-flex w-6 h-6 rounded-full ml-1
+        onClick={handleClick}
+        disabled={busy}
+        title={title}
+        aria-label={title}
+        className="inline-flex items-center gap-1 h-6 px-2 rounded-full ml-1 text-[12px]
                    text-[#EA580C]
                    hover:bg-[#EA580C]/10
                    disabled:opacity-60 disabled:cursor-not-allowed
-                   items-center justify-center
                    transition-colors"
       >
-        {retrying ? (
-          <Loader2 size={14} className="animate-spin" />
-        ) : (
-          <RotateCw size={14} />
-        )}
+        {buttonText}
       </button>
     </div>
   );
