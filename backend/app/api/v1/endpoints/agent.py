@@ -309,6 +309,49 @@ async def submit_interaction(
     return EventSourceResponse(_generator())
 
 
+# ============================= 续接 resume =============================
+
+
+@agent_router.post("/sessions/{session_id}/resume")
+async def resume_session(
+    body: AgentInteractionSubmit,
+    session_id: int = Path(..., ge=1),
+    current_user: dict = Depends(get_current_user),
+    session_svc: AgentSessionService = Depends(_get_session_service),
+    runtime_svc: AgentRuntimeService = Depends(_get_runtime_service),
+    llm_svc: LlmConfigService = Depends(_get_llm_service),
+):
+    """续接被中断的 run（A2）。
+
+    场景：流式 run 被 client_aborted 打断（刷新/断网/点中断），task_id 未推进、
+    checkpoint 完好。本端点以 graph_input=None 在同 thread 续接，从断点继续。
+    服务重启后 checkpoint 丢失 → 返回 run.error(no_resumable_checkpoint)。
+    """
+    session = await session_svc._require_session(session_id, current_user)
+    workflow_type = body.workflow_type
+    # 模型名：前端 runtime_options 优先，否则回退会话持久化值
+    model_name = (
+        body.runtime_options.model_name
+        if body.runtime_options and body.runtime_options.model_name
+        else session.selected_model_name
+    )
+    runtime_config = await llm_svc.get_runtime_config(current_user, model_name)
+    # thinking 开关为发送时动态参数，续接 run 沿用前端携带的 runtime_options；缺省关闭
+    enable_thinking = bool(
+        body.runtime_options and body.runtime_options.enable_thinking is not None
+        and body.runtime_options.enable_thinking
+    )
+    runtime_config = runtime_config.model_copy(update={"enable_thinking": enable_thinking})
+
+    async def _generator():
+        async for env in runtime_svc.resume_run(
+            session=session, runtime_config=runtime_config, workflow_type=workflow_type,
+        ):
+            yield {"event": "agent", "data": env.model_dump_json()}
+
+    return EventSourceResponse(_generator())
+
+
 # ============================= 中断 interrupt =============================
 
 
