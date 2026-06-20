@@ -377,3 +377,29 @@ async def test_resolve_interaction_merges_progress_without_reset():
     steps = captured["progress"]["steps"]
     ids = [s["step_id"] for s in steps]
     assert "load_resume" in ids and "suggest_dimensions" in ids  # 合并
+
+
+@pytest.mark.asyncio
+async def test_stream_message_client_abort_does_not_advance_task_id():
+    """client_aborted 不再推进 task_id（A2：保留 checkpoint 供续接）。"""
+    svc = _build_svc()
+    async def _astream(*, thread_id, graph_input, ctx):
+        yield ctx.emitter.emit_step(step_id="load_resume", title="读取简历", status="running")
+        raise GeneratorExit
+    svc._runner_factory = lambda graph: MagicMock(astream=_astream)
+    advance_calls = []
+    async def _update(session_id, **kwargs):
+        if "current_task_id" in kwargs:
+            advance_calls.append(kwargs["current_task_id"])
+        return _make_session()
+    svc._repo.update_session = _update
+    session = _make_session()
+    session.progress = None
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+    try:
+        async for _env in svc.stream_message(session=session, body=body, runtime_config=_runtime_cfg()):
+            pass
+    except GeneratorExit:
+        pass
+    # task_id 不应被推进（无 current_task_id 写入）
+    assert advance_calls == []

@@ -249,10 +249,9 @@ class AgentRuntimeService:
                     session.id, run_id, client_aborted,
                 )
                 agent_message = None
-            # 仅 graph 真正走到 END 才推进 task_id；客户端中断 → 也推进，保证下一轮新问题走全新
-            # LangGraph thread（用户语义是"放弃前面的、用新问题重新问"，不是续接）。
+            # 仅 graph 真正走到 END 才推进 task_id（A2：client_aborted 保留 thread 供续接）。
             # interrupt/异常保持不变以保证 resume 命中正确 checkpoint。
-            advance = (graph_completed) or client_aborted
+            advance = graph_completed
             next_task_id = await self._advance_task_id(session) if advance else None
             # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
             try:
@@ -392,10 +391,9 @@ class AgentRuntimeService:
                     session.id, run_id, client_aborted,
                 )
                 agent_message = None
-            # 仅 graph 真正走到 END 才推进 task_id；客户端中断 → 也推进，与 stream_message 同构
-            # （放弃当前 thread，下一轮新问题走全新 LangGraph thread）。
+            # 仅 graph 真正走到 END 才推进 task_id（A2：client_aborted 保留 thread 供续接）。
             # 驳回循环 / 异常保持不变以保证 resume 命中。
-            advance = graph_completed or client_aborted
+            advance = graph_completed
             next_task_id = await self._advance_task_id(session) if advance else None
             try:
                 await self._persist_block_index(session.id, emitter.max_block_index_used)
