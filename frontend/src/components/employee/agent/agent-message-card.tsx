@@ -15,7 +15,6 @@ import type { AgentMessage, AgentRunState } from '@/types/agent';
 import { Sparkles } from 'lucide-react';
 import { BlockRenderer } from './blocks/block-renderer';
 import { attachReasoning } from './blocks/group-blocks';
-import { StepStrip } from './step-strip';
 
 export interface AgentMessageCardProps {
   message: AgentMessage;
@@ -31,7 +30,7 @@ export interface AgentMessageCardProps {
 }
 
 export function AgentMessageCard({
-  message, runState, streaming, showSkeleton, submitting, onSubmitInteraction,
+  message, streaming, showSkeleton, submitting, onSubmitInteraction,
 }: AgentMessageCardProps) {
   const blocks = attachReasoning(message.content.blocks ?? []);
 
@@ -73,23 +72,6 @@ export function AgentMessageCard({
               <span className="font-mono">{message.model_name}</span>
             </>
           ) : null}
-        </div>
-
-        {/* StepStrip：仅流式时渲染（使用模板补齐 pending 项）；max-height 折叠过渡避免直接 unmount 跳动。
-            空 steps 时仍渲染 0/M 起跑态——StepStrip 内部用 workflow 模板填出全 pending 占位。 */}
-        <div
-          className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]
-                      ${streaming && runState
-                        ? 'max-h-[200px] opacity-100 mb-2'
-                        : 'max-h-0 opacity-0'}`}
-        >
-          {streaming && runState && (
-            <StepStrip
-              steps={runState.steps}
-              running={runState.running}
-              workflowType={runState.workflow_type}
-            />
-          )}
         </div>
 
         {/* Blocks：space-y-3 替代 divide-y（保留 rail 视觉） */}
