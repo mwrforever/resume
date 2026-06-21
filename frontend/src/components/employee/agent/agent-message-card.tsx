@@ -7,20 +7,19 @@
  * - 仅业务结果块（interview_questions / evaluation_report）由各自渲染器内
  *   使用 result-card 浮起，作为唯一"突出层"；
  * - 流式与历史复用同一个本组件：streaming flag 切换 rail 颜色 / 段头文案 /
- *   railGlow 呼吸光 / StepStrip 折叠 / QuestionSkeleton 显隐 / 段尾可见性，
+ *   railGlow 呼吸光 / QuestionSkeleton 显隐 / 段尾可见性，
  *   流式 → reload 历史时 DOM 节点不重建，仅 className/子节点增减 → 无视觉跳动。
+ *   （进度展示已迁至右侧 ProgressTracker，本组件不再承载步骤进度。）
  */
 
-import type { AgentMessage, AgentRunState } from '@/types/agent';
+import type { AgentMessage } from '@/types/agent';
 import { Sparkles } from 'lucide-react';
 import { BlockRenderer } from './blocks/block-renderer';
 import { attachReasoning } from './blocks/group-blocks';
 
 export interface AgentMessageCardProps {
   message: AgentMessage;
-  /** 流式期间透传当前 runState（用于渲染 StepStrip）；历史为 null */
-  runState?: AgentRunState | null;
-  /** 是否处于流式渲染状态（伪消息）：影响段头文案 / rail 颜色 / railGlow / StepStrip 可见性 */
+  /** 是否处于流式渲染状态（伪消息）：影响段头文案 / rail 颜色 / railGlow 呼吸光 */
   streaming?: boolean;
   /** fanout 期间题目骨架屏（仅 streaming 有效） */
   showSkeleton?: boolean;
@@ -34,7 +33,7 @@ export function AgentMessageCard({
 }: AgentMessageCardProps) {
   const blocks = attachReasoning(message.content.blocks ?? []);
 
-  // 流式期间即使无 block 也要渲染外壳（让用户看到 StepStrip 进度）；历史无 block 不渲染
+  // 流式期间即使无 block 也要渲染外壳（承载伪消息 blocks 与 QuestionSkeleton）；历史无 block 不渲染
   if (blocks.length === 0 && !streaming) return null;
 
   // rail border-image：流式更亮（sky300 起），历史主蓝（sky500 起），切换时无节点重建

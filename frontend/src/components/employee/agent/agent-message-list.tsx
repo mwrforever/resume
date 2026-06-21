@@ -4,8 +4,8 @@
  * 流式与历史共用同一管线：
  * - 历史消息：messages.map(MessageRow)
  * - 流式正在构造：与历史共用 AgentMessageCard 外壳（agent 头像 + accent 条 + divide blocks）
- *   渲染为"伪消息"。这样流式 → reload 历史时，DOM 结构一致，只有内容增减 + 头部
- *   StepStrip 折叠，避免视觉跳动。
+ *   渲染为"伪消息"。这样流式 → reload 历史时，DOM 结构一致，只有内容增减，
+ *   避免视觉跳动。进度展示已由右侧 ProgressTracker 承载，本列表不再渲染步骤进度。
  */
 
 import { useEffect, useMemo } from 'react';
@@ -61,7 +61,6 @@ export function AgentMessageList({
   // 把流式 runState 包装成"伪消息"，复用 AgentMessageCard 外壳：
   // - id 用固定 -1（不会与真实消息冲突）
   // - blocks 取自 runState.current_blocks
-  // - 通过把 runState 透传给 AgentMessageCard 的 runState 入参，渲染 StepStrip
   // 此举让"流式 → reload 历史"切换时 DOM 结构一致，仅内容发生增减，避免高度跳动。
   const pseudoStreamingMessage = useMemo<AgentMessage | null>(() => {
     if (!runState.running) return null;
@@ -108,7 +107,6 @@ export function AgentMessageList({
         {pseudoStreamingMessage && (
           <AgentMessageCard
             message={pseudoStreamingMessage}
-            runState={runState}
             submitting={sending}
             onSubmitInteraction={onSubmitInteraction}
             streaming
@@ -233,7 +231,6 @@ function MessageRow({
   return (
     <AgentMessageCard
       message={message}
-      runState={null}
       submitting={submitting}
       onSubmitInteraction={onSubmitInteraction}
     />
