@@ -535,6 +535,25 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     const lastMsg = entry?.messages?.[entry.messages.length - 1];
     const workflowType: WorkflowType =
       lastMsg?.workflow_type ?? entry?.runState.workflow_type ?? 'interview_questions';
+    // Bug2 修复：刷新后内存 runState.steps=[]，resume 前用持久化 session.progress.steps
+    // 初始化为基线。这样 resume 后到达的 step.update 经 upsertStep 在已有 N 步上累积更新，
+    // 不再因 selectProgressSource 优先取仅含 1 步的 runState.steps 而从完整 N 步回退。
+    const persisted = entry?.session?.progress;
+    if (persisted && persisted.steps.length > 0) {
+      set((s) => ({
+        runs: {
+          ...s.runs,
+          [sessionId]: {
+            ...getRun(s.runs, sessionId),
+            runState: {
+              ...getRun(s.runs, sessionId).runState,
+              steps: persisted.steps,
+              workflow_type: persisted.workflow_type,
+            },
+          },
+        },
+      }));
+    }
     const ac = new AbortController();
     abortControllers.set(sessionId, ac);
     set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true } } }));
