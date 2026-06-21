@@ -5,7 +5,7 @@
  * - 历史消息：messages.map(MessageRow)
  * - 流式正在构造：与历史共用 AgentMessageCard 外壳（agent 头像 + accent 条 + divide blocks）
  *   渲染为"伪消息"。这样流式 → reload 历史时，DOM 结构一致，只有内容增减，
- *   避免视觉跳动。进度展示已由右侧 ProgressTracker 承载，本列表不再渲染步骤进度。
+ *   避免视觉跳动。进度展示已由右上角悬浮进度岛 FloatingProgress 承载，本列表不再渲染步骤进度。
  */
 
 import { useEffect, useMemo } from 'react';
@@ -52,7 +52,7 @@ export function AgentMessageList({
   // 空态：无历史消息 + 无 run 进行中（所有 hooks 已在上方无条件执行，符合 Hooks 规则）
   if (messages.length === 0 && !runState.running) {
     return (
-      <div ref={ref} className="flex-1 overflow-y-auto bg-[#F8FAFC]">
+      <div ref={ref} className="flex-1 overflow-y-auto thin-scroll bg-[#F8FAFC]">
         <EmptyState onPickPrompt={onPickPrompt ?? (() => {})} />
       </div>
     );
@@ -89,7 +89,7 @@ export function AgentMessageList({
   const showSkeleton = runState.running && hasToolRunning && !hasQuestionBlock;
 
   return (
-    <div ref={ref} className="flex-1 overflow-y-auto bg-[#F8FAFC]">
+    <div ref={ref} className="flex-1 overflow-y-auto thin-scroll bg-[#F8FAFC]">
       <div className="mx-auto max-w-[880px] px-4 py-6 space-y-6">
         {messages.map(msg => (
           <MessageRow

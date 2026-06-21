@@ -8,7 +8,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { AgentMessageList } from './agent-message-list';
 import { AgentComposer } from './agent-composer';
-import { ProgressTracker } from './progress-tracker/progress-tracker';
+import { FloatingProgress } from './progress-tracker/floating-progress';
+import { selectProgressSource } from './progress-source';
 import { useAgentRun } from '@/hooks/use-agent-run';
 import { useAgentStore } from '@/store/agent';
 import type { SendInput } from '@/hooks/use-agent-run';
@@ -118,20 +119,16 @@ function WorkspaceInner({
 
   // 同时同步上层 sessions 数组与 hook 内 session（hook 内的才是 Composer 的渲染源）
 
-  // 进度栏数据源：流式中用 runState.steps（实时），否则用 session.progress.steps（持久化）
-  // - 流式：当前运行步骤，实时更新
-  // - 非流式：从后端回写的 session.progress（T1/T5/T6 已就绪），刷新/历史回看同样可用
-  // 空 steps 时 ProgressTracker 内 mergeStepsWithTemplate 会用 workflow 模板填全 pending 占位
-  const progressSteps = runState.running
-    ? runState.steps
-    : (session.progress?.steps ?? []);
-  const progressWorkflow = runState.running
-    ? runState.workflow_type
-    : (session.progress?.workflow_type
-        ?? (messages.length > 0 ? messages[messages.length - 1].workflow_type : 'interview_questions'));
+  // 进度数据源（修复 Bug1：取信息更完整的一方，避免结束瞬间闪空）
+  const progress = selectProgressSource({
+    runStateSteps: runState.steps,
+    runStateWorkflow: runState.workflow_type,
+    sessionProgress: session.progress ?? null,
+    lastMessageWorkflow: messages.length > 0 ? messages[messages.length - 1].workflow_type : undefined,
+  });
 
   return (
-    <div className="flex flex-1 min-w-0">
+    <div className="relative flex flex-1 min-w-0">
       <main className="flex flex-1 flex-col min-w-0">
         <AgentMessageList
           messages={messages}
@@ -161,10 +158,11 @@ function WorkspaceInner({
           isEmptySession={messages.length === 0}
         />
       </main>
-      <ProgressTracker
-        steps={progressSteps}
+      {/* 右上角悬浮进度岛（替换旧侧边第三栏） */}
+      <FloatingProgress
+        steps={progress.steps}
         running={runState.running}
-        workflowType={progressWorkflow}
+        workflowType={progress.workflowType}
       />
     </div>
   );

@@ -9,7 +9,7 @@
  * - 流式与历史复用同一个本组件：streaming flag 切换 rail 颜色 / 段头文案 /
  *   railGlow 呼吸光 / QuestionSkeleton 显隐 / 段尾可见性，
  *   流式 → reload 历史时 DOM 节点不重建，仅 className/子节点增减 → 无视觉跳动。
- *   （进度展示已迁至右侧 ProgressTracker，本组件不再承载步骤进度。）
+ *   （进度展示已迁至右上角悬浮进度岛 FloatingProgress，本组件不再承载步骤进度。）
  */
 
 import type { AgentMessage } from '@/types/agent';
