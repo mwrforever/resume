@@ -16,6 +16,7 @@ import { create } from 'zustand';
 import { employeeAgentApi } from '@/api/employee/agent';
 import { INITIAL_RUN_STATE, agentRunReducer } from '@/utils/agent-run-reducer';
 import { isDefaultTitle, makeTitleFromContent } from '@/utils/title';
+import { hasPendingInteraction } from '@/components/employee/agent/interaction-utils';
 import type {
   AgentEnvelope, AgentMessage, AgentRunState, WorkflowType, WorkspaceSession,
 } from '@/types/agent';
@@ -372,6 +373,19 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     if (prevRun) {
       abortControllers.get(sessionId)?.abort();
       try { await prevRun; } catch { /* abort 抛错忽略，落库逻辑在 finally 中已完成 */ }
+    }
+
+    // Bug4：interrupt 人机交互等待态发送——此时无进行中的流式 run（上方 prevRun 为空），
+    // 但工作流停在未完成的 interaction。先调 /abort 标记该 interaction 为 expired 并推进
+    // task_id（后端新开 LangGraph thread 隔离，不会误续接旧 checkpoint），再发新一轮。
+    // 仅对真实会话（正 id）执行；虚拟会话 / 无 pending 时跳过。
+    if (sessionId >= 0 && hasPendingInteraction(get().runs[sessionId]?.messages ?? [])) {
+      try {
+        await employeeAgentApi.abortSession(sessionId);
+      } catch (err) {
+        // 中断失败仍继续发送：后端新 thread 隔离，旧 pending 最坏停留为未过期，不阻断主流程
+        console.error('发送前自动中断 pending interaction 失败，继续发送', err);
+      }
     }
 
     // 虚拟会话（负 id）：先真正建会话，再发消息

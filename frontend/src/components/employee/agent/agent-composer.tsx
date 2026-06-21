@@ -18,9 +18,6 @@ import { ResumeFileIcon } from './resume-file-icon';
 export interface AgentComposerProps {
   session: WorkspaceSession;
   sending: boolean;
-  /** 是否处于人机交互等待（pending interaction block）。
-   *  此时流程已暂停等用户输入，输入框不显示"停止/进行中"，应可正常输入新指令。 */
-  hasPendingInteraction: boolean;
   /** 最近一条消息的 workflow_type；用于回显当前会话已选模式（空会话回退默认值） */
   lastWorkflow: WorkflowType;
   /** 空态快捷问答回填：prompt 必填，workflow 可选（联动切换模式） */
@@ -49,17 +46,16 @@ type UploadState =
   | { kind: 'error'; message: string };
 
 export function AgentComposer({
-  session, sending, hasPendingInteraction, lastWorkflow, prefill, onPrefillConsumed,
+  session, sending, lastWorkflow, prefill, onPrefillConsumed,
   onSend, onAbort, onToggleThinking, onPickModel, isEmptySession,
 }: AgentComposerProps) {
-  // A2（B+ii）：按钮区改"主发送(蓝) + 副暂停(红)"组合。
-  // - sending=true（流式中）：主按钮禁用（输入框锁），右侧显示红色"暂停"按钮（调 onAbort=fetch.abort，
-  //   中断后 InterruptBar 显示"恢复"语义，用户可继续）。
-  // - hasPendingInteraction=true（ii 等待用户选择）：主按钮禁用并提示"请先完成上方选择"，
-  //   不显示暂停按钮（无活跃流可断，且 interaction 仅由 END 推进 task_id，不支持放弃）。
-  // - 空闲：主按钮可发送（蓝），无暂停按钮。
-  const sendDisabled = sending || hasPendingInteraction;
   const [content, setContent] = useState('');
+  // Bug4：按钮互斥 + interrupt 态可发送。
+  // - sending=true（流式中）：仅显示红色"暂停"按钮，隐藏"发送"。
+  // - 非 sending：仅显示"发送"按钮（含 interrupt 等待态——此时允许发送，
+  //   由 store.sendMessage 在发送前自动中断未完成的 interaction 工作流）。
+  // sendDisabled 只看流式中与空输入，不再用 hasPendingInteraction 拦截发送。
+  const sendDisabled = sending || !content.trim();
   // 初始模式取最近一条消息的 workflow_type；空会话回退默认 interview_questions。
   // WorkspaceInner 的 key={sessionId} 保证切会话时重挂载，useState 初值按会话回显正确模式，
   // 不会用上一个会话的模式覆盖当前会话（多会话模式隔离）。
@@ -90,10 +86,9 @@ export function AgentComposer({
   }, [content]);
 
   const submit = () => {
-    // A2：工作流未完成期间禁用发送（ii 等待用户选择 / 流式中）
+    // 流式中或空输入禁止发送（sendDisabled 已含两者）
     if (sendDisabled) return;
     const trimmed = content.trim();
-    if (!trimmed) return;
     const ctxRefs = upload.kind === 'success'
       ? [{ type: 'resume', file_path: upload.file_path, file_name: upload.fileName }]
       : undefined;
@@ -248,11 +243,11 @@ export function AgentComposer({
 
           <span className="hidden sm:block text-[11px] text-[#94A3B8]">Ctrl+Enter 发送</span>
 
-          {/* A2：主按钮始终蓝色"发送"，工作流未完成期间 disabled。
-              ii 等待用户选择时改文案为"请先完成上方选择"；流式中独立"暂停"按钮调 fetch.abort，
-              用户中断后 InterruptBar 显示"恢复"语义续接 checkpoint。 */}
+          {/* Bug4：按钮互斥。流式中仅显示红色"暂停"（调 onAbort=fetch.abort）；
+              非 sending 仅显示蓝色"发送"。interrupt 等待态也走发送分支，
+              由 store.sendMessage 在发送前自动中断未完成工作流。 */}
           <div className="flex items-center gap-2">
-            {sending && (
+            {sending ? (
               <button
                 type="button"
                 onClick={onAbort}
@@ -268,22 +263,23 @@ export function AgentComposer({
                 <Square size={13} className="fill-current" />
                 <span>暂停</span>
               </button>
+            ) : (
+              <button
+                type="button"
+                onClick={submit}
+                disabled={sendDisabled}
+                className="h-9 px-5 rounded-lg text-xs font-semibold transition-all active:scale-[0.97]
+                           inline-flex items-center gap-1.5
+                           bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] text-white
+                           ring-1 ring-inset ring-white/15
+                           shadow-[0_4px_12px_-4px_rgba(3,105,161,0.5)]
+                           hover:shadow-[0_6px_16px_-4px_rgba(3,105,161,0.55)]
+                           disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
+              >
+                <Send size={13} />
+                <span>发送</span>
+              </button>
             )}
-            <button
-              type="button"
-              onClick={submit}
-              disabled={sendDisabled || !content.trim()}
-              className="h-9 px-5 rounded-lg text-xs font-semibold transition-all active:scale-[0.97]
-                         inline-flex items-center gap-1.5
-                         bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] text-white
-                         ring-1 ring-inset ring-white/15
-                         shadow-[0_4px_12px_-4px_rgba(3,105,161,0.5)]
-                         hover:shadow-[0_6px_16px_-4px_rgba(3,105,161,0.55)]
-                         disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
-            >
-              <Send size={13} />
-              <span>{hasPendingInteraction ? '请先完成上方选择' : '发送'}</span>
-            </button>
           </div>
         </div>
       </div>
