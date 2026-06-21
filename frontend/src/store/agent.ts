@@ -61,6 +61,9 @@ interface AgentStoreState {
   /** 拉取会话详情（含消息列表），若已 loaded 则跳过 */
   ensureLoaded: (id: number) => Promise<void>;
   createSession: (workflow?: WorkflowType) => Promise<void>;
+  /** 幂等引导：进入工作台时确保存在一个空虚拟会话作为 activeId（StrictMode 双跑/HMR 重挂载不重复建）。
+   *  Bug1：activeId 初始化收敛到此单一路径，refreshSessions 不再写 activeId。 */
+  bootstrap: () => void;
   /** 局部更新会话字段（如切换模型/思考开关），同步 sessions 与 runs[id].session */
   updateSession: (patch: Partial<WorkspaceSession> & { id?: number }) => void;
   /** 设置思考模式全局默认（同步写 localStorage，仅影响之后新建会话） */
@@ -206,8 +209,16 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     // 兜底降序：即便后端未排序，前端也保证新的在上（按 last_message_time）
     items.sort((a, b) => (b.last_message_time ?? '').localeCompare(a.last_message_time ?? ''));
     set((s) => {
-      // 首次加载且无 activeId 时，默认激活第一个会话
-      const activeId = s.activeId ?? (items.length ? items[0].id : null);
+      // Bug1 根因修复：refreshSessions 不再自动选 items[0] 为 activeId。
+      // activeId 的初始化收敛为单一路径（bootstrap 自动新建空虚拟会话），
+      // 避免与自动新建竞争时 activeId 短暂指向历史会话 A → ensureLoaded 拉到 A 的历史消息串史。
+      // 唯一例外：当前 activeId 指向的会话已不在新列表（被删/失效），置 null 交由 bootstrap 兜底。
+      // 注意虚拟会话（负 id）不在后端列表中，需排除以免被误置 null。
+      const stillExists =
+        s.activeId === null
+        || s.activeId < 0
+        || items.some(it => it.id === s.activeId);
+      const activeId = stillExists ? s.activeId : null;
       // 同步 sessions 列表里的最新字段到 runs[id].session（若已加载）。
       // 思考开关/模型名是前端会话级状态，后端值是 DB 默认值，必须保留本地值不覆盖。
       const runs = { ...s.runs };
@@ -282,6 +293,23 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
       return { sessions: [virtualSession, ...realSessions], activeId: virtualSession.id, runs };
     });
     set({ creating: false });
+  },
+
+  bootstrap: () => {
+    // 幂等：已存在空虚拟会话（负 id 且未发送过消息）则不再新建。
+    // 用 isEmptyVirtual 判定，覆盖 StrictMode 双跑 / HMR 重挂载场景，
+    // 替代原 layout 组件里不可靠的 useRef 守护。
+    const { sessions, activeId } = get();
+    const existingVirtual = sessions.find(isEmptyVirtual);
+    if (existingVirtual) {
+      // 已有空虚拟会话：仅在 activeId 未指向它时纠正，绝不新建第二个
+      if (activeId !== existingVirtual.id) set({ activeId: existingVirtual.id });
+      return;
+    }
+    // 已有激活的真实会话则不打扰（用户可能正在某会话里）
+    if (activeId !== null) return;
+    // 无任何激活会话 → 新建一个空虚拟会话（复用 createSession 的虚拟会话逻辑）
+    void get().createSession();
   },
 
   updateSession: (patch) => {

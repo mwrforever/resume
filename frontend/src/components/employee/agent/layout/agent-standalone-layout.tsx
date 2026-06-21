@@ -8,7 +8,7 @@
  * 会话新建/删除/重命名均由 store 处理；搜索改为弹窗分页（侧栏不再内联搜索）。
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { AgentTopbar } from './agent-topbar';
 import { AgentSidebarDrawer } from './agent-sidebar-drawer';
 import { AgentWorkspace } from '../agent-workspace';
@@ -21,6 +21,7 @@ export function AgentStandaloneLayout() {
   const refreshSessions = useAgentStore((s) => s.refreshSessions);
   const setActive = useAgentStore((s) => s.setActive);
   const createSession = useAgentStore((s) => s.createSession);
+  const bootstrap = useAgentStore((s) => s.bootstrap);
 
   const activeSession = sessions.find(s => s.id === activeId) ?? null;
 
@@ -30,17 +31,12 @@ export function AgentStandaloneLayout() {
   }, [refreshSessions]);
 
   // 进入工作台默认打开「新建会话页」：
-  // sessions 加载完成后，若无激活会话（首次进入 / 无历史会话），自动新建一个空虚拟会话。
-  // 用 ref 防重复触发，避免每次 sessions 变化都新建。
-  const didAutoCreate = useRef(false);
+  // 调用 store 幂等 bootstrap，确保存在一个空虚拟会话作为 activeId。
+  // 幂等判定收敛到 store（isEmptyVirtual），不再依赖组件 useRef——
+  // 后者在 StrictMode 双跑 / HMR 重挂载下会失效，是 Bug1 串史的加固缺口。
   useEffect(() => {
-    if (didAutoCreate.current) return;
-    // sessions 已至少加载过一次（非初始空数组也允许，避免无会话用户卡住）
-    if (activeId === null) {
-      didAutoCreate.current = true;
-      void createSession();
-    }
-  }, [activeId, createSession]);
+    bootstrap();
+  }, [bootstrap]);
 
   // Tab 标题
   useEffect(() => {
