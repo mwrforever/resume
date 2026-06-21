@@ -32,6 +32,8 @@ export function ProgressPill({ active, reached, total, open, onToggle }: Progres
     <button
       type="button"
       onClick={onToggle}
+      aria-expanded={open}
+      aria-label={`流程进度 ${reached}/${total} 步，当前${active.title}，点击${open ? '收起' : '展开'}详情`}
       className="flex items-center gap-2.5 h-11 pl-2 pr-3.5 rounded-full cursor-pointer
                  bg-white/80 backdrop-blur-xl backdrop-saturate-150
                  border border-white/60 active:scale-[0.98] transition-transform
