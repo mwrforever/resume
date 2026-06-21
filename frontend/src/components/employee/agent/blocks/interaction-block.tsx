@@ -5,6 +5,7 @@
  *     - dimension_selection：候选维度多选 + 补充意见 → 提交 { selected_dimensions, user_feedback? }
  *     - plan_approval：可编辑计划 → 批准 { approved: true, edited_plan } / 驳回 { approved: false, feedback? }
  *     - job_selection：候选岗位单选 → 提交 { selected_job_name: string }
+ *     - resume_upload：上传简历 → 提交 { file_path, file_name }（缺简历时 interrupt 触发）
  * - submitted：已提交，显示已选值
  * - expired：超时未提交
  *
@@ -14,6 +15,7 @@
 
 import { useRef, useState } from 'react';
 import type { AgentBlock } from '@/types/agent';
+import { employeeAgentApi } from '@/api/employee/agent';
 
 interface InteractionBlockProps {
   block: AgentBlock & { type: 'interaction' };
@@ -70,6 +72,15 @@ export function InteractionBlock({ block, submitting, onSubmit }: InteractionBlo
           onSubmit={(vals) => onSubmit?.(request_id, vals)}
         />
       );
+    case 'resume_upload':
+      return (
+        <ResumeUpload
+          title={title}
+          prompt={prompt}
+          submitting={submitting}
+          onSubmit={(vals) => onSubmit?.(request_id, vals)}
+        />
+      );
     default:
       // 未知 interaction_type：展示标题与提示，避免直接吞掉
       return (
@@ -111,6 +122,19 @@ function ResolvedInteraction({
       {interactionType === 'job_selection' && (
         <ReadOnlyJobSelection data={data} values={values} />
       )}
+      {interactionType === 'resume_upload' && (
+        <ReadOnlyResumeUpload values={values} />
+      )}
+    </div>
+  );
+}
+
+/** 只读简历上传回看：显示用户当时上传的文件名。 */
+function ReadOnlyResumeUpload({ values }: { values: Record<string, unknown> }) {
+  const fileName = String((values as { file_name?: unknown })?.file_name ?? '');
+  return (
+    <div className="text-xs text-[#334155]">
+      {fileName ? <>已上传简历：<span className="font-medium text-[#0369A1]">{fileName}</span></> : '未上传简历'}
     </div>
   );
 }
@@ -664,6 +688,88 @@ function JobSelection({ title, prompt, data, submitting, onSubmit }: SectionProp
         disabled={!selected || submitting}
         onClick={() => selected && onSubmit({ selected_job_name: selected })}>
         {submitting ? '提交中…' : '确认选择'}
+      </button>
+    </div>
+  );
+}
+
+/** 简历上传卡（A1）：缺简历时 interrupt 弹出。
+ *  上传走 POST /employee/agent/resumes 拿 file_path，确认后提交 {file_path, file_name}。
+ *  uploadState: idle → uploading → success(file_path,file_name) → error(msg)。 */
+type UploadState =
+  | { kind: 'idle' }
+  | { kind: 'uploading'; fileName: string }
+  | { kind: 'success'; file_path: string; file_name: string }
+  | { kind: 'error'; message: string };
+
+function ResumeUpload({ title, prompt, submitting, onSubmit }: {
+  title: string;
+  prompt: string;
+  submitting?: boolean;
+  onSubmit: (values: Record<string, unknown>) => void;
+}) {
+  const [upload, setUpload] = useState<UploadState>({ kind: 'idle' });
+
+  /** 选取文件后立即上传，成功后保留 file_path/file_name 等待用户确认提交。 */
+  const onPickFile = async (file: File) => {
+    setUpload({ kind: 'uploading', fileName: file.name });
+    try {
+      const resp = await employeeAgentApi.uploadResume(file);
+      const data = resp.data?.data ?? resp.data;
+      if (data?.file_path) {
+        setUpload({ kind: 'success', file_path: data.file_path, file_name: data.file_name ?? file.name });
+      } else {
+        setUpload({ kind: 'error', message: '上传失败：响应缺少 file_path' });
+      }
+    } catch (err: unknown) {
+      setUpload({ kind: 'error', message: err instanceof Error ? err.message : '上传失败' });
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-[#0EA5E9]/40 bg-white shadow-sm px-4 py-3">
+      <p className="text-sm font-semibold text-[#020617]">{title}</p>
+      {prompt && <p className="text-xs text-[#64748B] mt-1 mb-3">{prompt}</p>}
+
+      {upload.kind === 'success' ? (
+        // 已上传：展示文件名 + 重传入口
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#E0F2FE] border border-[#0EA5E9]/20 mb-3">
+          <span className="text-[#0369A1] text-xs font-medium truncate flex-1">已上传 · {upload.file_name}</span>
+          <button type="button" onClick={() => setUpload({ kind: 'idle' })}
+                  className="text-[#94A3B8] hover:text-[#DC2626] text-xs">重传</button>
+        </div>
+      ) : (
+        // 上传 dropzone（点击/拖拽）
+        <label className="block cursor-pointer mb-3">
+          <div className="border-2 border-dashed border-[#CBD5E1] rounded-lg px-4 py-6 text-center bg-[#F0F9FF]
+                          hover:border-[#0EA5E9] hover:bg-[#E0F2FE] transition-all">
+            {upload.kind === 'uploading' ? (
+              <span className="text-xs text-[#0369A1]">上传中… {upload.fileName}</span>
+            ) : upload.kind === 'error' ? (
+              <span className="text-xs text-[#DC2626]">{upload.message}</span>
+            ) : (
+              <>
+                <div className="text-sm font-medium text-[#020617]">点击或拖拽简历到此处上传</div>
+                <div className="text-[11px] text-[#64748B] mt-1">上传后将自动继续流程，无需重新发送</div>
+                <div className="flex gap-1.5 justify-center mt-2">
+                  {['PDF', 'DOCX', 'DOC'].map(f => (
+                    <span key={f} className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-white text-[#64748B] border border-[#E2E8F0]">{f}</span>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          <input type="file" accept=".pdf,.docx,.doc" className="hidden"
+                 aria-label="上传简历"
+                 onChange={e => { const f = e.target.files?.[0]; if (f) void onPickFile(f); e.target.value = ''; }} />
+        </label>
+      )}
+
+      <button type="button"
+        className="px-4 py-1.5 rounded-md bg-[#0369A1] text-white text-sm font-medium hover:bg-[#0EA5E9] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        disabled={upload.kind !== 'success' || submitting}
+        onClick={() => upload.kind === 'success' && onSubmit({ file_path: upload.file_path, file_name: upload.file_name })}>
+        {submitting ? '提交中…' : '确认'}
       </button>
     </div>
   );
