@@ -2,9 +2,8 @@
  * Workflow 节点清单（与后端 backend/app/llm/graphs/workflows/step_labels.py 保持一致）。
  *
  * 用途：StepStrip 的「N / M 步」分母 = 该 workflow 的静态节点数。
- * mergeStepsWithTemplate 按 runtime 到达顺序输出已到达节点，未到达的模板节点
- * 以 pending 追加到末尾（详见该函数 JSDoc）。runtime 去重 + 重入移末尾由
- * agent-run-reducer.upsertStep 保证，本文件信任该契约不再二次去重。
+ * mergeStepsWithTemplate 恒按模板拓扑顺序输出，runtime 仅贡献节点的 status / detail。
+ * 这样渲染顺序与 runtime 到达顺序解耦，避免「跳顶 / 已完成节点变 pending」类视觉抖动。
  *
  * **同步约束**：后端 step_labels.py 增删节点时必须同步本文件。
  */
@@ -51,16 +50,15 @@ export const WORKFLOW_STEP_TEMPLATES: Record<WorkflowType, StepTemplate[]> = {
 /**
  * 把模板与运行时 step.update 序列合并为完整步骤数组。
  *
- * 新语义（与 agent-run-reducer.upsertStep 配合）：
- * - 输入的 runtimeSteps 已由 reducer 保证「同 step_id 不重复 + 重入移到末尾」
- * - 第一遍：按 runtime 顺序输出已到达的 step（保留模板 title 标准化）
- * - 第二遍：把模板里**未在 runtime 出现**的 step 按模板拓扑顺序追加到末尾，状态 pending
- * - 结果数组前 N 项 = runtime 已到达节点（按到达顺序），后 M 项 = 模板未到达节点（按模板顺序）
- *
- * 这让 StepStrip 的"当前活跃步骤" = runtime 末位节点（mergedSteps 中最后一个非 pending 项）。
+ * 新语义（模板顺序优先，与 agent-run-reducer.upsertStep 解耦）：
+ * - 渲染顺序恒等于模板拓扑顺序，不再受 runtime 到达顺序影响
+ * - 命中 runtime 的节点：保留模板 title 作为权威标题，status / detail 取自 runtime
+ * - 未命中 runtime 的节点：status = 'pending' 占位
+ * - 渲染顺序只由模板决定，状态只由 runtime 决定 —— 根治「跳顶 / 已完成变未完成」
+ * - 兜底：runtime 出现但不在模板内的未知 step_id，按到达顺序追加末尾（异常分支可观测）
  *
  * @param workflow workflow_type；未在 WORKFLOW_STEP_TEMPLATES 中的值走 fallback（直接返回 runtimeSteps）
- * @param runtimeSteps runState.steps，由 reducer 保证去重后按 runtime 顺序
+ * @param runtimeSteps runState.steps，由 reducer 保证同 step_id 去重
  * @returns 合并后的步骤数组（长度 = 模板长度；runtime 含未知 step_id 时会更长）
  */
 export function mergeStepsWithTemplate(
@@ -70,28 +68,27 @@ export function mergeStepsWithTemplate(
   const template = WORKFLOW_STEP_TEMPLATES[workflow];
   if (!template) return runtimeSteps;  // fallback：未知 workflow
 
-  // 模板 title 索引：命中时保留模板权威 title
-  const tmplTitleByStepId = new Map(template.map(t => [t.step_id, t.title]));
-  const runtimeStepIds = new Set(runtimeSteps.map(s => s.step_id));
+  // runtime 状态索引：step_id → 运行时步骤（提供 status / detail）
+  const runtimeByStepId = new Map(runtimeSteps.map(s => [s.step_id, s]));
 
-  const merged: AgentStep[] = [];
-
-  // 第一遍：按 runtime 顺序输出，命中模板时取模板 title
-  for (const s of runtimeSteps) {
-    const tmplTitle = tmplTitleByStepId.get(s.step_id);
-    merged.push({
-      step_id: s.step_id,
-      title: tmplTitle ?? s.title,
-      status: s.status,
-      ...(s.detail !== undefined ? { detail: s.detail } : {}),
-    });
-  }
-
-  // 第二遍：模板里未出现在 runtime 的，按模板顺序追加 pending 占位
-  for (const t of template) {
-    if (!runtimeStepIds.has(t.step_id)) {
-      merged.push({ step_id: t.step_id, title: t.title, status: 'pending' });
+  // 按模板拓扑顺序产出：命中 runtime 用其 status/detail，否则 pending 占位。
+  // 渲染顺序只由模板决定，状态只由 runtime 决定 —— 两者解耦，根治"跳顶 / 已完成变未完成"。
+  const merged: AgentStep[] = template.map(t => {
+    const r = runtimeByStepId.get(t.step_id);
+    if (r) {
+      return {
+        step_id: t.step_id,
+        title: t.title,
+        status: r.status,
+        ...(r.detail !== undefined ? { detail: r.detail } : {}),
+      };
     }
+    return { step_id: t.step_id, title: t.title, status: 'pending' };
+  });
+
+  // 兜底：runtime 出现但不在模板内的未知 step_id，按到达顺序追加末尾（异常分支可观测）
+  for (const s of runtimeSteps) {
+    if (!template.some(t => t.step_id === s.step_id)) merged.push(s);
   }
 
   return merged;
