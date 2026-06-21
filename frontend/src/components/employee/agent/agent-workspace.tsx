@@ -158,12 +158,18 @@ function WorkspaceInner({
           isEmptySession={messages.length === 0}
         />
       </main>
-      {/* 右上角悬浮进度岛（替换旧侧边第三栏） */}
-      <FloatingProgress
-        steps={progress.steps}
-        running={runState.running}
-        workflowType={progress.workflowType}
-      />
+      {/* 右上角悬浮进度岛（替换旧侧边第三栏）。
+          Bug3：仅在已有消息（已发送到后端）时渲染；新建/空会话不显示，
+          避免空 steps 经模板填充成 pending 节点后误显一串灰节点。 */}
+      {messages.length > 0 && (
+        <div data-testid="floating-progress">
+          <FloatingProgress
+            steps={progress.steps}
+            running={runState.running}
+            workflowType={progress.workflowType}
+          />
+        </div>
+      )}
     </div>
   );
 }
