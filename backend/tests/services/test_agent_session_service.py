@@ -17,6 +17,7 @@ def _make_session_orm(**overrides) -> MagicMock:
         id=1, session_key="k", current_task_id="t1", employee_id=2, title="T",
         selected_model_name=None, enable_thinking=0, status=1,
         last_message_time=None, create_time=None, update_time=None,
+        progress=None,  # T1 新增列：显式 None 避免 MagicMock 自动属性被 pydantic 当作非法 dict
     )
     defaults.update(overrides)
     m = MagicMock(**defaults)
