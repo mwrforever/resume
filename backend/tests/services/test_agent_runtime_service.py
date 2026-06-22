@@ -691,3 +691,98 @@ async def test_stream_message_persists_under_anyio_cancel_scope():
     )
 
 
+@pytest.mark.asyncio
+async def test_stream_message_marks_interrupted_on_client_abort():
+    """客户端中断时落库的 agent 消息 content 必须含 interrupted=True。
+
+    验证 _persist_agent_message 在 client_aborted=True 时给 content 打显式标记，
+    供前端 reload 后识别中断态（根除依赖 block streaming 状态的「碰运气式」判定）。
+    """
+    import anyio
+
+    svc = _build_svc()
+    started = anyio.Event()
+
+    async def _astream(*, thread_id, graph_input, ctx):
+        # 产出一个 step 让 envelope_buffer 非空，然后模拟长 LLM 调用等被 cancel
+        yield ctx.emitter.emit_step(step_id="load_resume", title="读取简历", status="running")
+        started.set()
+        await anyio.sleep(30)
+
+    svc._runner_factory = lambda graph: MagicMock(astream=_astream)
+    svc._repo.next_message_order = AsyncMock(side_effect=[1, 2])
+
+    # 捕获 create_message 每次 content 参数，断言 agent 消息（第 2 次）被打 interrupted 标记
+    created_contents: list[dict] = []
+
+    async def _capture_create(**kwargs):
+        created_contents.append(kwargs.get("content"))
+        return MagicMock(id=10 + len(created_contents))
+
+    svc._repo.create_message = _capture_create
+    svc._repo.commit = AsyncMock()
+    svc._repo.update_session = AsyncMock()
+    svc._cache.client.delete = AsyncMock()
+    svc._cache.client.append = AsyncMock()
+    svc._cache.client.expire = AsyncMock()
+
+    session = _make_session()
+    session.progress = None
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+
+    async def _run():
+        async for _ in svc.stream_message(session=session, body=body, runtime_config=_runtime_cfg()):
+            pass
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(_run)
+        await started.wait()
+        tg.cancel_scope.cancel()
+
+    # user + agent 两条消息；agent（第 2 条）必须含 interrupted=True
+    assert len(created_contents) >= 2, "agent 消息未落库"
+    agent_content = created_contents[1]
+    assert agent_content.get("interrupted") is True, (
+        f"client_aborted 时 agent 消息 content 缺少 interrupted=True：{agent_content}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_message_no_interrupted_mark_on_normal_end():
+    """正常 END 时落库的 agent 消息 content 不应含 interrupted 字段。"""
+
+    svc = _build_svc()
+
+    async def _astream(*, thread_id, graph_input, ctx):
+        yield ctx.emitter.emit_step(step_id="load_resume", title="读取简历", status="success")
+        yield ctx.emitter.emit_block_start(index=0, block={"type": "text", "text": "", "status": "streaming"})
+        yield ctx.emitter.emit_block_stop(index=0)
+
+    svc._runner_factory = lambda graph: MagicMock(astream=_astream)
+    svc._repo.next_message_order = AsyncMock(side_effect=[1, 2])
+
+    created_contents: list[dict] = []
+
+    async def _capture_create(**kwargs):
+        created_contents.append(kwargs.get("content"))
+        return MagicMock(id=10 + len(created_contents))
+
+    svc._repo.create_message = _capture_create
+    svc._repo.commit = AsyncMock()
+    svc._repo.update_session = AsyncMock()
+    svc._cache.client.delete = AsyncMock()
+    svc._cache.client.append = AsyncMock()
+    svc._cache.client.expire = AsyncMock()
+
+    session = _make_session()
+    session.progress = None
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+
+    async for _ in svc.stream_message(session=session, body=body, runtime_config=_runtime_cfg()):
+        pass
+
+    assert len(created_contents) >= 2
+    agent_content = created_contents[1]
+    assert "interrupted" not in agent_content, (
+        f"正常 END 不应打 interrupted 标记：{agent_content}"
+    )

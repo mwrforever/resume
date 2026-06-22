@@ -267,6 +267,7 @@ class AgentRuntimeService:
                         session=session, user_message=user_message, run_id=run_id,
                         envelopes=envelope_buffer, runtime_config=runtime_config,
                         workflow_type=body.workflow_type,
+                        client_aborted=client_aborted,
                     )
                 except Exception:
                     logger.exception(
@@ -427,6 +428,7 @@ class AgentRuntimeService:
                         session=session, user_message=None, run_id=run_id,
                         envelopes=envelope_buffer, runtime_config=runtime_config,
                         workflow_type=workflow_type,
+                        client_aborted=client_aborted,
                     )
                 except Exception:
                     logger.exception(
@@ -573,6 +575,7 @@ class AgentRuntimeService:
                         session=session, user_message=None, run_id=run_id,
                         envelopes=envelope_buffer, runtime_config=runtime_config,
                         workflow_type=workflow_type,
+                        client_aborted=client_aborted,
                     )
                 except Exception:
                     logger.exception(
@@ -774,9 +777,17 @@ class AgentRuntimeService:
         self, *, session, user_message, run_id: str,
         envelopes: list[AgentStreamEnvelope],
         runtime_config: LLMRuntimeConfigDTO, workflow_type: str,
+        client_aborted: bool = False,
     ):
-        """把 envelope 序列折叠为 blocks 并落库 agent 消息。"""
+        """把 envelope 序列折叠为 blocks 并落库 agent 消息。
+
+        client_aborted=True 时在 content 写入 interrupted=True 显式标记，
+        供前端 reload 后识别中断态（不依赖 block 的 streaming 状态）。
+        """
         blocks = self._envelopes_to_blocks(envelopes)
+        content: dict[str, Any] = {"blocks": blocks}
+        if client_aborted:
+            content["interrupted"] = True
         try:
             msg = await self._repo.create_message(
                 session_id=session.id,
@@ -784,7 +795,7 @@ class AgentRuntimeService:
                 role="agent",
                 workflow_type=workflow_type,
                 run_id=run_id,
-                content={"blocks": blocks},
+                content=content,
                 model_name=runtime_config.model_name,
                 sort_order=await self._repo.next_message_order(session.id),
             )
