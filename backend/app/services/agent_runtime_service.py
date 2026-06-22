@@ -752,6 +752,12 @@ class AgentRuntimeService:
                         "投递会话标题精化任务失败（忽略）：session_id=%s err=%s",
                         session.id, exc,
                     )
+        # 独立 commit user 消息（+ 标题），让其立即对并发读取可见。
+        # 修复：repo.create_message 内部 add+flush 仅当前事务可见；若不 commit 而依赖
+        # stream_message 的 finally，客户端中断时前端 runEnvelopes 收尾调 getSession（新 db
+        # session，事务隔离）可能读到未 commit 的空 messages，用空数组覆盖乐观消息，
+        # 导致 messages.length===0 && !running → EmptyState（第一条消息尤为明显，无历史兜底）。
+        await self._repo.commit()
         return msg
 
     @staticmethod

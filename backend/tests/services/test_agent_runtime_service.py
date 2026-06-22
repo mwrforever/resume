@@ -786,3 +786,30 @@ async def test_stream_message_no_interrupted_mark_on_normal_end():
     assert "interrupted" not in agent_content, (
         f"正常 END 不应打 interrupted 标记：{agent_content}"
     )
+
+
+@pytest.mark.asyncio
+async def test_create_user_message_commits_independently():
+    """_create_user_message 独立 commit user 消息，不依赖 stream_message finally。
+
+    修复：原先只 flush 不 commit（repo.create_message 内部用 add+flush，对其他 db
+    connection 不可见）。客户端中断时前端 runEnvelopes 收尾立即调 getSession（新 db
+    session，事务隔离），若后端 finally 还未 commit，list_messages 读到空 messages，
+    前端用空数组覆盖乐观消息 → messages.length===0 && !running → EmptyState。
+    第一条消息尤为明显（无历史 commit 消息兜底）。独立 commit 让 user 消息立即可见。
+    """
+    svc = _build_svc()
+    svc._repo.create_message = AsyncMock(return_value=MagicMock(id=10))
+    svc._repo.next_message_order = AsyncMock(return_value=1)
+    svc._repo.update_session = AsyncMock()
+    svc._repo.commit = AsyncMock()
+
+    session = _make_session()
+    session.title = None  # 触发标题设置分支
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+
+    svc._repo.commit.reset_mock()
+    await svc._create_user_message(session, body, run_id="r1", runtime_config=_runtime_cfg())
+
+    # user 消息落库后立即 commit（不等 stream_message finally）
+    svc._repo.commit.assert_awaited()
