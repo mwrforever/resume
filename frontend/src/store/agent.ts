@@ -207,8 +207,8 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     });
     const data = resp.data?.data ?? resp.data;
     const items = (data?.items ?? []) as WorkspaceSession[];
-    // 兜底降序：即便后端未排序，前端也保证新的在上（按 last_message_time）
-    items.sort((a, b) => (b.last_message_time ?? '').localeCompare(a.last_message_time ?? ''));
+    // 议题：会话排序统一用 create_time，由后端 list_sessions 返回时已排好；
+    // 前端不再二次重排，避免与后端排序键打架。
     set((s) => {
       // Bug1 根因修复：refreshSessions 不再自动选 items[0] 为 activeId。
       // activeId 的初始化收敛为单一路径（bootstrap 自动新建空虚拟会话），

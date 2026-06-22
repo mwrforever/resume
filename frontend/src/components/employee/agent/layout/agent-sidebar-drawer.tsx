@@ -36,28 +36,31 @@ export interface AgentSidebarDrawerProps {
 
 const STORAGE_KEY = 'agent-sidebar-expanded';
 
-/** 按 last_message_time 降序排序会话（新的在上）。
+/** 按 create_time 降序排序会话（新的在上）。
  *
  * 仅供折叠态 Popover 复用（折叠态不分组，平铺最近会话）；展开态走 groupSessionsByTime。
  * 空时间视为最早（排到末尾）。
+ *
+ * 议题：会话排序统一用创建时间（不再用 last_message_time）。
  *
  * 导出供单测与折叠态 Popover 复用。
  */
 export function sortSessionsByTime(sessions: WorkspaceSession[]): WorkspaceSession[] {
   return [...sessions].sort((a, b) =>
-    (b.last_message_time ?? '').localeCompare(a.last_message_time ?? ''),
+    (b.create_time ?? '').localeCompare(a.create_time ?? ''),
   );
 }
 
 /** 会话时间分组：今日 / 本周 / 更早。
  *
  * 边界规则：
- * - 今日：last_message_time >= 本地今天 00:00
- * - 本周：本周一 00:00 <= last_message_time < 今日 00:00
+ * - 今日：create_time >= 本地今天 00:00
+ * - 本周：本周一 00:00 <= create_time < 今日 00:00
  * - 更早：本周一之前 / 空时间 / 解析失败
  * - 同组内按时间降序；空 / 无效时间项追加到「更早」末尾，按 id 升序稳定
  *
  * 周首遵循 ISO（周一为第一天），与 sortSessionsByTime 共用排序语义。
+ * 分组键为 create_time（议题：会话排序统一用创建时间）。
  *
  * 导出供单测与展开态侧栏渲染复用；折叠态侧栏不分组。
  */
@@ -89,7 +92,7 @@ export function groupSessionsByTime(
   const earlierInvalid: WorkspaceSession[] = [];
 
   for (const s of sessions) {
-    const t = s.last_message_time;
+    const t = s.create_time;
     if (!t) {
       earlierInvalid.push(s);
       continue;
@@ -104,9 +107,9 @@ export function groupSessionsByTime(
     else earlierValid.push({ s, ms });
   }
 
-  // 同组内按时间降序
+  // 同组内按创建时间降序
   const byTimeDesc = (a: WorkspaceSession, b: WorkspaceSession) =>
-    (b.last_message_time ?? '').localeCompare(a.last_message_time ?? '');
+    (b.create_time ?? '').localeCompare(a.create_time ?? '');
   today.sort(byTimeDesc);
   thisWeek.sort(byTimeDesc);
   earlierValid.sort((a, b) => b.ms - a.ms);

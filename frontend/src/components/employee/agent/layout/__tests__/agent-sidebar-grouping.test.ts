@@ -1,20 +1,22 @@
 /**
  * 会话分组（今日 / 本周 / 更早）单测。
  *
- * 边界规则：
- * - 今日：last_message_time >= 本地今天 00:00
- * - 本周：本周一 00:00 <= last_message_time < 今日 00:00
- * - 更早：last_message_time < 本周一 00:00 或解析失败 / 为空
+ * 边界规则（分组键 = create_time，议题：会话排序统一用创建时间）：
+ * - 今日：create_time >= 本地今天 00:00
+ * - 本周：本周一 00:00 <= create_time < 今日 00:00
+ * - 更早：create_time < 本周一 00:00 或解析失败 / 为空
  * - 周一计算用 ISO（周一为周首）
- * - 同组内按时间降序
+ * - 同组内按创建时间降序
  */
 
 import { describe, it, expect } from 'vitest';
 import type { WorkspaceSession } from '@/types/agent';
 import { groupSessionsByTime } from '../agent-sidebar-drawer';
 
-/** 构造最小合法 WorkspaceSession（仅 last_message_time / id 有意义） */
-function mk(id: number, lastMessageTime: string): WorkspaceSession {
+/** 构造最小合法 WorkspaceSession。
+ *  create_time 决定分组/排序；last_message_time 故意设为远未来干扰项，以验证函数读的是 create_time。
+ */
+function mk(id: number, createTime: string, lastMessageTime = '2099-12-31T00:00:00Z'): WorkspaceSession {
   return {
     id,
     session_key: `k${id}`,
@@ -25,8 +27,8 @@ function mk(id: number, lastMessageTime: string): WorkspaceSession {
     enable_thinking: false,
     status: 0,
     last_message_time: lastMessageTime,
-    create_time: lastMessageTime,
-    update_time: lastMessageTime,
+    create_time: createTime,
+    update_time: createTime,
   };
 }
 
@@ -113,5 +115,15 @@ describe('groupSessionsByTime', () => {
     const original = [...sessions];
     groupSessionsByTime(sessions, NOW);
     expect(sessions).toEqual(original);
+  });
+
+  it('以 create_time（非 last_message_time）判定分组', () => {
+    // create_time 在上周、last_message_time 在远未来 → 应落「更早」而非「今日」
+    const sessions = [
+      mk(1, isoAt(2026, 5, 14, 12), '2099-12-31T00:00:00Z'),
+    ];
+    const groups = groupSessionsByTime(sessions, NOW);
+    expect(groups.find(g => g.key === 'today')!.items).toEqual([]);
+    expect(groups.find(g => g.key === 'earlier')!.items.map(s => s.id)).toEqual([1]);
   });
 });
