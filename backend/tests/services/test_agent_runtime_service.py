@@ -439,3 +439,157 @@ async def test_resume_run_emits_run_finish_on_success():
     )]
     assert "run.start" in events
     assert "run.finish" in events  # 若 _persist_agent_message 失败则 finish 不发出，测试会失败
+
+
+@pytest.mark.asyncio
+async def test_stream_message_commits_after_persisting_progress():
+    """Cluster 1 回归：stream_message 的 finally 必须在 _persist_progress 后再 commit 一次。
+
+    _persist_agent_message 内部已 commit（覆盖 agent 消息）；其后 _advance_task_id /
+    _persist_block_index / _persist_progress 的 flush 在新事务中，必须在 finally 末尾再
+    commit 一次，否则 session.progress 等被回滚（DB NULL）。
+    """
+    calls: list[str] = []
+    svc = _build_svc()
+
+    async def _track_commit():
+        calls.append("commit")
+
+    async def _track_update(session_id, **kwargs):
+        if "progress" in kwargs:
+            calls.append("progress")
+        return session
+
+    svc._repo.commit = _track_commit
+    svc._repo.update_session = _track_update
+
+    session = _make_session()
+    session.progress = None
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+    async for _env in svc.stream_message(session=session, body=body, runtime_config=_runtime_cfg()):
+        pass
+
+    # 最后一次 progress 写入之后必须存在 commit
+    assert "progress" in calls, f"未观察到 progress 写入：{calls}"
+    last_progress_idx = max(i for i, c in enumerate(calls) if c == "progress")
+    assert "commit" in calls[last_progress_idx + 1:], (
+        f"progress 写入后未 commit（session.progress 会被回滚）：{calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_interaction_commits_after_persisting_progress():
+    """Cluster 1 回归：resolve_interaction 的 finally 必须在 _persist_progress 后再 commit。"""
+    calls: list[str] = []
+    svc = _build_svc()
+
+    async def _astream(*, thread_id, graph_input, ctx):
+        yield ctx.emitter.emit_step(step_id="suggest_dimensions", title="分析维度", status="success")
+    svc._runner_factory = lambda graph: MagicMock(astream=_astream)
+
+    async def _track_commit():
+        calls.append("commit")
+
+    async def _track_update(session_id, **kwargs):
+        if "progress" in kwargs:
+            calls.append("progress")
+        return session
+
+    svc._repo.commit = _track_commit
+    svc._repo.update_session = _track_update
+
+    session = _make_session()
+    session.progress = None
+    body = AgentInteractionSubmit(values={"selected_dimensions": []}, workflow_type="interview_questions")
+    async for _env in svc.resolve_interaction(
+        session=session, request_id="req1", body=body,
+        runtime_config=_runtime_cfg(), workflow_type="interview_questions",
+    ):
+        pass
+
+    assert "progress" in calls, f"未观察到 progress 写入：{calls}"
+    last_progress_idx = max(i for i, c in enumerate(calls) if c == "progress")
+    assert "commit" in calls[last_progress_idx + 1:], (
+        f"progress 写入后未 commit：{calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_run_commits_after_persisting_progress():
+    """Cluster 1 回归：resume_run 的 finally 必须在 _persist_progress 后再 commit。"""
+    calls: list[str] = []
+    svc = _build_svc()
+
+    async def _astream(*, thread_id, graph_input, ctx):
+        yield ctx.emitter.emit_step(step_id="suggest_dimensions", title="分析维度", status="success")
+    svc._runner_factory = lambda graph: MagicMock(astream=_astream)
+
+    async def _track_commit():
+        calls.append("commit")
+
+    async def _track_update(session_id, **kwargs):
+        if "progress" in kwargs:
+            calls.append("progress")
+        return session
+
+    svc._repo.commit = _track_commit
+    svc._repo.update_session = _track_update
+
+    session = _make_session()
+    session.progress = None
+    async for _env in svc.resume_run(
+        session=session, runtime_config=_runtime_cfg(), workflow_type="interview_questions",
+    ):
+        pass
+
+    assert "progress" in calls, f"未观察到 progress 写入：{calls}"
+    last_progress_idx = max(i for i, c in enumerate(calls) if c == "progress")
+    assert "commit" in calls[last_progress_idx + 1:], (
+        f"progress 写入后未 commit：{calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_abort_pending_interaction_commits_after_advancing_task_id():
+    """Cluster 1 回归：abort_pending_interaction 推进 task_id 后必须 commit。
+
+    现状：过期标记的 commit（行内）已落库，但其后 _advance_task_id 的 flush 无 commit，
+    DB 仍是旧 task_id → 下次发送无法正确隔离。
+    """
+    calls: list[str] = []
+    svc = AgentRuntimeService.__new__(AgentRuntimeService)  # 跳过 __init__
+    svc._repo = MagicMock()
+
+    # 一条含 pending interaction block 的 agent 消息
+    pending_msg = MagicMock()
+    pending_msg.id = 5
+    pending_msg.content = {"blocks": [
+        {"type": "interaction", "request_id": "r1", "status": "pending"}
+    ]}
+    svc._repo.list_messages = AsyncMock(return_value=[pending_msg])
+
+    async def _track_commit():
+        calls.append("commit")
+
+    async def _track_update(session_id, **kwargs):
+        if "current_task_id" in kwargs:
+            calls.append("task_id")
+        return MagicMock()
+
+    async def _track_update_msg(mid, content):
+        calls.append("msg_content")
+
+    svc._repo.commit = _track_commit
+    svc._repo.update_session = _track_update
+    svc._repo.update_message_content = _track_update_msg
+
+    session = _make_session()
+    await svc.abort_pending_interaction(session=session)
+
+    # task_id 推进之后必须存在 commit
+    assert "task_id" in calls, f"未观察到 task_id 推进：{calls}"
+    last_task_idx = max(i for i, c in enumerate(calls) if c == "task_id")
+    assert "commit" in calls[last_task_idx + 1:], (
+        f"task_id 推进后未 commit（DB 仍是旧 task_id）：{calls}"
+    )
+

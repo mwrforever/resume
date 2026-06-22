@@ -282,6 +282,13 @@ class AgentRuntimeService:
                 )
             except Exception:
                 logger.exception("stream_message 持久化 progress 失败：session_id=%s", session.id)
+            # Cluster 1：提交本 run 的 task_id / block_index / progress 更新。
+            # _persist_agent_message 的内部 commit 只覆盖 agent 消息；以上三项 flush 在新事务中，
+            # 必须显式 commit 才不会被响应结束时回滚（否则 session.progress 等在 DB 里为 NULL）。
+            try:
+                await self._repo.commit()
+            except Exception:
+                logger.exception("stream_message 收尾 commit 失败：session_id=%s", session.id)
             # 客户端已断开 → 不再 yield finish（连接已无效），仅完成落库后退出
             if not client_aborted and agent_message is not None:
                 finish_env = emitter.emit_run_finish(
@@ -425,6 +432,11 @@ class AgentRuntimeService:
                 logger.exception(
                     "resolve_interaction 持久化 progress 失败：session_id=%s", session.id,
                 )
+            # Cluster 1：提交续接 run 的 task_id / block_index / progress 更新（同 stream_message）
+            try:
+                await self._repo.commit()
+            except Exception:
+                logger.exception("resolve_interaction 收尾 commit 失败：session_id=%s", session.id)
             if not client_aborted and agent_message is not None:
                 finish_env = emitter.emit_run_finish(
                     agent_message_id=agent_message.id, next_task_id=next_task_id,
@@ -555,6 +567,11 @@ class AgentRuntimeService:
                 logger.exception(
                     "resume_run 持久化 progress 失败：session_id=%s", session.id,
                 )
+            # Cluster 1：提交续接 run 的 task_id / block_index / progress 更新（同 stream_message）
+            try:
+                await self._repo.commit()
+            except Exception:
+                logger.exception("resume_run 收尾 commit 失败：session_id=%s", session.id)
             # 客户端已断开 → 不再 yield finish（连接已无效），仅完成落库后退出
             if not client_aborted and agent_message is not None:
                 finish_env = emitter.emit_run_finish(
@@ -883,6 +900,8 @@ class AgentRuntimeService:
         # 2) 推进 task_id，下一轮新问题走全新 LangGraph thread
         try:
             await self._advance_task_id(session)
+            # Cluster 1：推进 task_id 后必须 commit，否则 DB 仍是旧 task_id、下次发送无法隔离
+            await self._repo.commit()
             logger.info("用户中断 interrupt：session_id=%s 已推进 task_id", session.id)
         except Exception:
             logger.exception("中断后推进 task_id 失败：session_id=%s", session.id)
