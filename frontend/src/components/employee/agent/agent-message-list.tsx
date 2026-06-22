@@ -49,19 +49,12 @@ export function AgentMessageList({
     if (!runState.running) forceSmoothToBottom();
   }, [runState.running, forceSmoothToBottom]);
 
-  // 空态：无历史消息 + 无 run 进行中（所有 hooks 已在上方无条件执行，符合 Hooks 规则）
-  if (messages.length === 0 && !runState.running) {
-    return (
-      <div ref={ref} className="flex-1 overflow-y-auto thin-scroll bg-[#F8FAFC]">
-        <EmptyState onPickPrompt={onPickPrompt ?? (() => {})} />
-      </div>
-    );
-  }
-
   // 把流式 runState 包装成"伪消息"，复用 AgentMessageCard 外壳：
   // - id 用固定 -1（不会与真实消息冲突）
   // - blocks 取自 runState.current_blocks
   // 此举让"流式 → reload 历史"切换时 DOM 结构一致，仅内容发生增减，避免高度跳动。
+  // 必须在下方 early return 之前调用——否则 running 切换时 hook 数量变化会触发
+  // "Rendered fewer hooks than expected" 崩溃（中断瞬间白屏）。
   const pseudoStreamingMessage = useMemo<AgentMessage | null>(() => {
     if (!runState.running) return null;
     if (runState.current_blocks.length === 0 && runState.steps.length === 0) return null;
@@ -79,6 +72,15 @@ export function AgentMessageList({
       create_time: null,
     };
   }, [runState.running, runState.current_blocks, runState.steps.length, runState.run_id, runState.workflow_type]);
+
+  // 空态：无历史消息 + 无 run 进行中（所有 hooks 已在上方无条件执行，符合 Hooks 规则）
+  if (messages.length === 0 && !runState.running) {
+    return (
+      <div ref={ref} className="flex-1 overflow-y-auto thin-scroll bg-[#F8FAFC]">
+        <EmptyState onPickPrompt={onPickPrompt ?? (() => {})} />
+      </div>
+    );
+  }
 
   // 骨架屏条件：有 tool_use(running) 但还没产出 interview_questions
   // （fanout 并行生成期间，让用户看到题目正在加载）
