@@ -625,6 +625,11 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
       delete runs[id];
       return { sessions, activeId, runs };
     });
+    // 删除最后一个会话后自动创建新虚拟会话，避免工作台空白（应默认展示新建会话页）。
+    // createSession 内部 set 与上方 set 同步紧跟，React 批处理合并为一次渲染，无闪烁。
+    if (get().sessions.length === 0) {
+      void get().createSession();
+    }
   },
 
   renameSession: async (id, title) => {
@@ -708,6 +713,8 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
 async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<AgentEnvelope>) {
   let pendingFinish: AgentEnvelope | null = null;
   let hasError = false;
+  // 当前 run 的 run_id（从 run.start 提取），供收尾 reload 判断 agent 消息是否落库
+  let currentRunId: string | null = null;
   const dispatch = (env: AgentEnvelope) => {
     useAgentStore.setState((s) => {
       const entry = getRun(s.runs, sessionId);
@@ -721,6 +728,9 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
   };
   try {
     for await (const env of iter) {
+      if (env.type === 'run.start') {
+        currentRunId = env.data.run_id;
+      }
       if (env.type === 'run.finish') {
         pendingFinish = env;
         continue;
@@ -742,9 +752,27 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
   // envelope，如代理意外断开）都走同一收尾——reload 落库消息 + 结算 runState，
   // 避免流式卡与 pending 交互卡残留。reload 是幂等的（仅重新拉会话），多走一次无副作用。
   {
-    // 强制重新拉取落库消息（覆盖乐观消息），再单次 setState 切换流式卡 → 新消息
-    const resp = await employeeAgentApi.getSession(sessionId);
-    const detail = resp.data?.data ?? resp.data;
+    // 强制重新拉取落库消息（覆盖乐观消息），再单次 setState 切换流式卡 → 新消息。
+    // 客户端中断时后端 finally（shield 保护落库 agent 消息）与本 reload 并发，可能读到
+    // agent 消息未 commit 的状态（fanout 维度 block 消失）。用 run_id 匹配重试等其落库。
+    let detail: { session?: WorkspaceSession | null; messages?: AgentMessage[] } | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const resp = await employeeAgentApi.getSession(sessionId);
+      detail = (resp.data?.data ?? resp.data) as {
+        session?: WorkspaceSession | null;
+        messages?: AgentMessage[];
+      };
+      // 已知 run_id 且非错误态时，检查本 run 的 agent 消息是否落库；
+      // 否则（run.start 未到 / 错误态）直接用首次结果，不重试。
+      if (!currentRunId || hasError || attempt === 2) break;
+      const landed = detail?.messages ?? [];
+      const hasAgent = landed.some(
+        (m) => m.role === 'agent' && m.run_id === currentRunId,
+      );
+      if (hasAgent) break;
+      // agent 消息还没落库（后端 finally 在 shield 中跑），延迟后重试
+      await new Promise((r) => setTimeout(r, 200));
+    }
     // run.finish 携带的 next_task_id：后端在 graph 正常 END 时已 update session 表；
     // abort 路径无 finish envelope，task_id 由后端 finally 决定（中断不推进，保证 resume 命中）。
     const nextTaskId = pendingFinish
