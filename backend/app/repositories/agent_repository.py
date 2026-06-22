@@ -51,7 +51,9 @@ class AgentRepository:
         if keyword:
             query = query.where(AgentSession.title.like(f"%{keyword}%"))
         result = await self._db.execute(
-            query.order_by(AgentSession.update_time.desc(), AgentSession.id.desc()).offset(skip).limit(limit)
+            query.order_by(
+                AgentSession.create_time.desc(), AgentSession.id.desc(),
+            ).offset(skip).limit(limit)
         )
         return result.scalars().all()
 
