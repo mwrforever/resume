@@ -43,9 +43,9 @@ describe('deleteSession 删除最后一个会话', () => {
   });
 
   it('删除非最后一个会话时不创建新虚拟会话', async () => {
-    useAgentStore.setState((s) => ({
+    useAgentStore.setState({
       sessions: [{ id: 1, title: 's1' } as never, { id: 2, title: 's2' } as never],
-    }));
+    });
     await useAgentStore.getState().deleteSession(1);
     const state = useAgentStore.getState();
     // 仍有会话，不创建虚拟会话
