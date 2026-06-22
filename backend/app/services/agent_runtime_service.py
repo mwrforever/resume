@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator, Callable
 from datetime import datetime
 from typing import Any
 
+import anyio
 from langgraph.types import Command
 
 from app.core.exceptions import ValidationError
@@ -254,43 +255,49 @@ class AgentRuntimeService:
         finally:
             # 不论正常 / 异常 / 客户端中断，都把已生成的 envelopes 折叠落库；
             # 客户端中断时跳过 yield 与 task_id 推进（保留 thread 让下一轮 resume 命中 checkpoint）。
-            persist_failed = False
-            try:
-                agent_message = await self._persist_agent_message(
-                    session=session, user_message=user_message, run_id=run_id,
-                    envelopes=envelope_buffer, runtime_config=runtime_config,
-                    workflow_type=body.workflow_type,
-                )
-            except Exception:
-                logger.exception(
-                    "收尾落库失败：session_id=%s run_id=%s aborted=%s",
-                    session.id, run_id, client_aborted,
-                )
-                agent_message = None
-                persist_failed = True
-            # 仅 graph 真正走到 END 才推进 task_id（A2：client_aborted 保留 thread 供续接）。
-            # interrupt/异常保持不变以保证 resume 命中正确 checkpoint。
-            advance = graph_completed
-            next_task_id = await self._advance_task_id(session) if advance else None
-            # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
-            try:
-                await self._persist_block_index(session.id, emitter.max_block_index_used)
-            except Exception:
-                logger.exception("延时落库 block index 失败：session_id=%s", session.id)
-            # 持久化累积进度到 session.progress（reset=True：新 task 丢弃旧 steps）
-            try:
-                await self._persist_progress(
-                    session, run_steps, body.workflow_type, reset=True,
-                )
-            except Exception:
-                logger.exception("stream_message 持久化 progress 失败：session_id=%s", session.id)
-            # Cluster 1：提交本 run 的 task_id / block_index / progress 更新。
-            # _persist_agent_message 的内部 commit 只覆盖 agent 消息；以上三项 flush 在新事务中，
-            # 必须显式 commit 才不会被响应结束时回滚（否则 session.progress 等在 DB 里为 NULL）。
-            try:
-                await self._repo.commit()
-            except Exception:
-                logger.exception("stream_message 收尾 commit 失败：session_id=%s", session.id)
+            #
+            # shield：sse_starlette 断连时 EventSourceResponse.cancel_on_finish 会取消整个
+            # anyio cancel scope，连带打断 finally 内 in-flight 的 DB await → 连接弄脏、被连接池
+            # 终止、ROLLBACK 都失败 → user+agent 消息全丢。shield=True 让本段对 outer cancel
+            # scope 免疫，DB 操作完整跑完、连接不脏、正常 commit。（正常 END 路径无取消，shield 无副作用）
+            with anyio.CancelScope(shield=True):
+                persist_failed = False
+                try:
+                    agent_message = await self._persist_agent_message(
+                        session=session, user_message=user_message, run_id=run_id,
+                        envelopes=envelope_buffer, runtime_config=runtime_config,
+                        workflow_type=body.workflow_type,
+                    )
+                except Exception:
+                    logger.exception(
+                        "收尾落库失败：session_id=%s run_id=%s aborted=%s",
+                        session.id, run_id, client_aborted,
+                    )
+                    agent_message = None
+                    persist_failed = True
+                # 仅 graph 真正走到 END 才推进 task_id（A2：client_aborted 保留 thread 供续接）。
+                # interrupt/异常保持不变以保证 resume 命中正确 checkpoint。
+                advance = graph_completed
+                next_task_id = await self._advance_task_id(session) if advance else None
+                # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
+                try:
+                    await self._persist_block_index(session.id, emitter.max_block_index_used)
+                except Exception:
+                    logger.exception("延时落库 block index 失败：session_id=%s", session.id)
+                # 持久化累积进度到 session.progress（reset=True：新 task 丢弃旧 steps）
+                try:
+                    await self._persist_progress(
+                        session, run_steps, body.workflow_type, reset=True,
+                    )
+                except Exception:
+                    logger.exception("stream_message 持久化 progress 失败：session_id=%s", session.id)
+                # Cluster 1：提交本 run 的 task_id / block_index / progress 更新。
+                # _persist_agent_message 的内部 commit 只覆盖 agent 消息；以上三项 flush 在新事务中，
+                # 必须显式 commit 才不会被响应结束时回滚（否则 session.progress 等在 DB 里为 NULL）。
+                try:
+                    await self._repo.commit()
+                except Exception:
+                    logger.exception("stream_message 收尾 commit 失败：session_id=%s", session.id)
             # 落库失败：发 run.error(persist_failed) 让前端显式报错，不静默丢数据
             if persist_failed and not client_aborted:
                 err_env = emitter.emit_run_error(
@@ -412,42 +419,44 @@ class AgentRuntimeService:
                 graph_completed = not self._has_interrupt(envelope_buffer)
         finally:
             # 不论何种结束路径都要落库 agent 消息（含中断），保证可终止状态后内容不丢
-            persist_failed = False
-            try:
-                agent_message = await self._persist_agent_message(
-                    session=session, user_message=None, run_id=run_id,
-                    envelopes=envelope_buffer, runtime_config=runtime_config,
-                    workflow_type=workflow_type,
-                )
-            except Exception:
-                logger.exception(
-                    "resume 收尾落库失败：session_id=%s run_id=%s aborted=%s",
-                    session.id, run_id, client_aborted,
-                )
-                agent_message = None
-                persist_failed = True
-            # 仅 graph 真正走到 END 才推进 task_id（A2：client_aborted 保留 thread 供续接）。
-            # 驳回循环 / 异常保持不变以保证 resume 命中。
-            advance = graph_completed
-            next_task_id = await self._advance_task_id(session) if advance else None
-            try:
-                await self._persist_block_index(session.id, emitter.max_block_index_used)
-            except Exception:
-                logger.exception("延时落库 block index 失败：session_id=%s", session.id)
-            # 持久化累积进度（reset=False：续接，合并已有 steps）
-            try:
-                await self._persist_progress(
-                    session, run_steps, workflow_type, reset=False,
-                )
-            except Exception:
-                logger.exception(
-                    "resolve_interaction 持久化 progress 失败：session_id=%s", session.id,
-                )
-            # Cluster 1：提交续接 run 的 task_id / block_index / progress 更新（同 stream_message）
-            try:
-                await self._repo.commit()
-            except Exception:
-                logger.exception("resolve_interaction 收尾 commit 失败：session_id=%s", session.id)
+            # shield：同 stream_message，保护 DB 持久化不被 sse_starlette cancel scope 打断
+            with anyio.CancelScope(shield=True):
+                persist_failed = False
+                try:
+                    agent_message = await self._persist_agent_message(
+                        session=session, user_message=None, run_id=run_id,
+                        envelopes=envelope_buffer, runtime_config=runtime_config,
+                        workflow_type=workflow_type,
+                    )
+                except Exception:
+                    logger.exception(
+                        "resume 收尾落库失败：session_id=%s run_id=%s aborted=%s",
+                        session.id, run_id, client_aborted,
+                    )
+                    agent_message = None
+                    persist_failed = True
+                # 仅 graph 真正走到 END 才推进 task_id（A2：client_aborted 保留 thread 供续接）。
+                # 驳回循环 / 异常保持不变以保证 resume 命中。
+                advance = graph_completed
+                next_task_id = await self._advance_task_id(session) if advance else None
+                try:
+                    await self._persist_block_index(session.id, emitter.max_block_index_used)
+                except Exception:
+                    logger.exception("延时落库 block index 失败：session_id=%s", session.id)
+                # 持久化累积进度（reset=False：续接，合并已有 steps）
+                try:
+                    await self._persist_progress(
+                        session, run_steps, workflow_type, reset=False,
+                    )
+                except Exception:
+                    logger.exception(
+                        "resolve_interaction 持久化 progress 失败：session_id=%s", session.id,
+                    )
+                # Cluster 1：提交续接 run 的 task_id / block_index / progress 更新（同 stream_message）
+                try:
+                    await self._repo.commit()
+                except Exception:
+                    logger.exception("resolve_interaction 收尾 commit 失败：session_id=%s", session.id)
             # 落库失败：发 run.error(persist_failed) 让前端显式报错，不静默丢数据
             if persist_failed and not client_aborted:
                 err_env = emitter.emit_run_error(
@@ -556,43 +565,45 @@ class AgentRuntimeService:
                 graph_completed = not self._has_interrupt(envelope_buffer)
         finally:
             # 不论正常 / 异常 / 客户端中断，都把已生成的 envelopes 折叠落库
-            persist_failed = False
-            try:
-                agent_message = await self._persist_agent_message(
-                    session=session, user_message=None, run_id=run_id,
-                    envelopes=envelope_buffer, runtime_config=runtime_config,
-                    workflow_type=workflow_type,
-                )
-            except Exception:
-                logger.exception(
-                    "resume 收尾落库失败：session_id=%s run_id=%s aborted=%s",
-                    session.id, run_id, client_aborted,
-                )
-                agent_message = None
-                persist_failed = True
-            # 仅 graph 真正走到 END 才推进 task_id（A2：不支持放弃，保留 thread 供再次续接）。
-            # interrupt/异常/checkpoint 丢失保持不变以保证 resume 命中。
-            advance = graph_completed
-            next_task_id = await self._advance_task_id(session) if advance else None
-            # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
-            try:
-                await self._persist_block_index(session.id, emitter.max_block_index_used)
-            except Exception:
-                logger.exception("延时落库 block index 失败：session_id=%s", session.id)
-            # 持久化累积进度（reset=False：续接同 task，合并已有 steps）
-            try:
-                await self._persist_progress(
-                    session, run_steps, workflow_type, reset=False,
-                )
-            except Exception:
-                logger.exception(
-                    "resume_run 持久化 progress 失败：session_id=%s", session.id,
-                )
-            # Cluster 1：提交续接 run 的 task_id / block_index / progress 更新（同 stream_message）
-            try:
-                await self._repo.commit()
-            except Exception:
-                logger.exception("resume_run 收尾 commit 失败：session_id=%s", session.id)
+            # shield：同 stream_message，保护 DB 持久化不被 sse_starlette cancel scope 打断
+            with anyio.CancelScope(shield=True):
+                persist_failed = False
+                try:
+                    agent_message = await self._persist_agent_message(
+                        session=session, user_message=None, run_id=run_id,
+                        envelopes=envelope_buffer, runtime_config=runtime_config,
+                        workflow_type=workflow_type,
+                    )
+                except Exception:
+                    logger.exception(
+                        "resume 收尾落库失败：session_id=%s run_id=%s aborted=%s",
+                        session.id, run_id, client_aborted,
+                    )
+                    agent_message = None
+                    persist_failed = True
+                # 仅 graph 真正走到 END 才推进 task_id（A2：不支持放弃，保留 thread 供再次续接）。
+                # interrupt/异常/checkpoint 丢失保持不变以保证 resume 命中。
+                advance = graph_completed
+                next_task_id = await self._advance_task_id(session) if advance else None
+                # 延时落库 block index：本 run 已分配的 index 不能被下一 run 复用
+                try:
+                    await self._persist_block_index(session.id, emitter.max_block_index_used)
+                except Exception:
+                    logger.exception("延时落库 block index 失败：session_id=%s", session.id)
+                # 持久化累积进度（reset=False：续接同 task，合并已有 steps）
+                try:
+                    await self._persist_progress(
+                        session, run_steps, workflow_type, reset=False,
+                    )
+                except Exception:
+                    logger.exception(
+                        "resume_run 持久化 progress 失败：session_id=%s", session.id,
+                    )
+                # Cluster 1：提交续接 run 的 task_id / block_index / progress 更新（同 stream_message）
+                try:
+                    await self._repo.commit()
+                except Exception:
+                    logger.exception("resume_run 收尾 commit 失败：session_id=%s", session.id)
             # 落库失败：发 run.error(persist_failed) 让前端显式报错，不静默丢数据
             if persist_failed and not client_aborted:
                 err_env = emitter.emit_run_error(

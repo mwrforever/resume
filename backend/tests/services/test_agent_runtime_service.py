@@ -622,3 +622,72 @@ async def test_stream_message_emits_persist_failed_on_agent_message_save_error()
     assert error_envs[-1].data["code"] == "persist_failed"
     assert error_envs[-1].data["retriable"] is True
 
+
+@pytest.mark.asyncio
+async def test_stream_message_persists_under_anyio_cancel_scope():
+    """sse_starlette 断连时 anyio cancel scope 会取消 finally 里的 DB 持久化。
+
+    复现线上 bug：客户端中断 → EventSourceResponse.cancel_on_finish 取消 scope →
+    finally 内 _persist_agent_message 的 DB await 被中途取消 → 连接弄脏、user+agent
+    消息全没落库 → 前端 reload 拿不到 partial 消息、InterruptBar 不显示。
+
+    修复：finally 里的 DB 持久化段用 anyio.CancelScope(shield=True) 包裹，对 outer
+    cancel scope 免疫，DB 操作完整跑完、连接不脏、正常 commit。
+
+    本测试用 anyio.create_task_group + cancel_scope.cancel() 模拟 sse_starlette 的
+    取消；断言 agent 消息（第 2 次 create_message）也被落库（shield 前：被取消打断了）。
+    """
+    import anyio
+
+    svc = _build_svc()
+    started = anyio.Event()
+
+    async def _astream(*, thread_id, graph_input, ctx):
+        yield ctx.emitter.emit_step(step_id="load_resume", title="读取简历", status="running")
+        started.set()  # anyio.Event.set() 是同步方法
+        # 模拟长 LLM 调用，等被 cancel
+        await anyio.sleep(30)
+
+    svc._runner_factory = lambda graph: MagicMock(astream=_astream)
+
+    # 让 agent 消息的 next_message_order（finally 内第一个 DB await）慢到可被取消打断
+    order_calls = 0
+
+    async def _slow_next_order(session_id):
+        nonlocal order_calls
+        order_calls += 1
+        if order_calls >= 2:  # finally 内 agent 消息那次
+            await anyio.sleep(0.5)
+        return order_calls
+
+    svc._repo.next_message_order = _slow_next_order
+
+    create_count = 0
+
+    async def _count_create(**kwargs):
+        nonlocal create_count
+        create_count += 1
+        return MagicMock(id=10 + create_count)
+
+    svc._repo.create_message = _count_create
+
+    session = _make_session()
+    session.progress = None
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+
+    async def _run():
+        async for _ in svc.stream_message(session=session, body=body, runtime_config=_runtime_cfg()):
+            pass
+
+    # 在 anyio task group 里跑 stream_message；发出一个事件后取消 scope（模拟断连）
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(_run)
+        await started.wait()
+        tg.cancel_scope.cancel()
+
+    # 断言：user + agent 两条消息都落库了（agent 是第 2 次 create_message）
+    assert create_count >= 2, (
+        f"agent 消息未落库（anyio cancel scope 打断了 finally 的持久化）：create_count={create_count}"
+    )
+
+
