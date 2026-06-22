@@ -392,7 +392,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     let realSessionId = sessionId;
     if (sessionId < 0) {
       const virtualId = sessionId;
-      set((s) => ({ runs: { ...s.runs, [virtualId]: { ...getRun(s.runs, virtualId), sending: true } } }));
+      set((s) => ({ runs: { ...s.runs, [virtualId]: { ...getRun(s.runs, virtualId), sending: true, runState: { ...getRun(s.runs, virtualId).runState, aborted: false } } } }));
       try {
         const resp = await employeeAgentApi.createSession({ title: undefined });
         const newSession = (resp.data?.data ?? resp.data) as WorkspaceSession;
@@ -433,7 +433,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
 
     const ac = new AbortController();
     abortControllers.set(realSessionId, ac);
-    set((s) => ({ runs: { ...s.runs, [realSessionId]: { ...getRun(s.runs, realSessionId), sending: true } } }));
+    set((s) => ({ runs: { ...s.runs, [realSessionId]: { ...getRun(s.runs, realSessionId), sending: true, runState: { ...getRun(s.runs, realSessionId).runState, aborted: false } } } }));
 
     // 乐观追加用户消息（负数临时 id，reload 后替换）
     const optimisticUserMessage: AgentMessage = {
@@ -540,7 +540,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     }
     const ac = new AbortController();
     abortControllers.set(sessionId, ac);
-    set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true } } }));
+    set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true, runState: { ...getRun(s.runs, sessionId).runState, aborted: false } } } }));
     // 同 sendMessage：把 run 包装为 promise 注册到 runningRunPromises，
     // 让"中断后再发"路径能 await 等其落库 finally 执行完。
     const runPromise = (async () => {
@@ -590,7 +590,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     }
     const ac = new AbortController();
     abortControllers.set(sessionId, ac);
-    set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true } } }));
+    set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true, runState: { ...getRun(s.runs, sessionId).runState, aborted: false } } } }));
     // 同 submitInteraction：把 run 包装为 promise 注册到 runningRunPromises，
     // 让"中断后再发"路径能 await 等其落库 finally 执行完。
     const runPromise = (async () => {
@@ -639,11 +639,20 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
   },
 
   abort: (sessionId) => {
-    // 中断分两路径：
-    // 1) 流式 run 进行中（ac 存在）→ fetch.abort() 切断流，后端 finally 落库（含中断前内容）
-    // 2) interrupt 暂停态（ac 已 delete）→ 调后端 /abort 端点：
-    //    标记 pending interaction block 为 expired + 推进 task_id，再 reload 拉到落库消息
+    // 中断分两路径，都立即置 aborted=true 让 InterruptBar 瞬间显示（不等 reload）：
+    // 1) 流式 run 进行中（ac 存在）→ fetch.abort() 切断流，后端 finally 落库（含中断前内容 + content.interrupted）
+    // 2) interrupt 暂停态（ac 已 delete）→ 调后端 /abort 端点标记 pending interaction 为 expired
     const ac = abortControllers.get(sessionId);
+    // 先置 aborted（两条路径共用），UI 即时响应
+    set((s) => ({
+      runs: {
+        ...s.runs,
+        [sessionId]: {
+          ...getRun(s.runs, sessionId),
+          runState: { ...getRun(s.runs, sessionId).runState, aborted: true },
+        },
+      },
+    }));
     if (ac) {
       ac.abort();
       return;
@@ -813,10 +822,13 @@ export function resolveRunStateAfterFinish(
   }
   // 中断段：收到 finish 且未推进 task_id → 保留 steps 让进度跨段累积
   const isInterruptPause = finish.hasFinish && !finish.nextTaskId;
+  // 客户端主动中断（无 finish、无 error、前端已置 aborted）→ 保留 aborted 让 InterruptBar 显示
+  const preserveAborted = !finish.hasFinish && !finish.hasError && prev.aborted;
   return {
     ...INITIAL_RUN_STATE,
     workflow_type: prev.workflow_type,
     ...(isInterruptPause ? { steps: prev.steps } : {}),
+    ...(preserveAborted ? { aborted: true } : {}),
   };
 }
 
