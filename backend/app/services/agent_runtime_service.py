@@ -790,7 +790,7 @@ class AgentRuntimeService:
         client_aborted=True 时在 content 写入 interrupted=True 显式标记，
         供前端 reload 后识别中断态（不依赖 block 的 streaming 状态）。
         """
-        blocks = self._envelopes_to_blocks(envelopes)
+        blocks = self._envelopes_to_blocks(envelopes, client_aborted=client_aborted)
         content: dict[str, Any] = {"blocks": blocks}
         if client_aborted:
             content["interrupted"] = True
@@ -816,13 +816,18 @@ class AgentRuntimeService:
             raise
 
     @staticmethod
-    def _envelopes_to_blocks(envelopes: list[AgentStreamEnvelope]) -> list[dict[str, Any]]:
+    def _envelopes_to_blocks(
+        envelopes: list[AgentStreamEnvelope],
+        client_aborted: bool = False,
+    ) -> list[dict[str, Any]]:
         """把 envelope 序列折叠成 block 数组。
 
         规则：
         - block.start 建立骨架
         - block.delta 累加 text/text_delta、覆盖 status/output、一次性写满业务卡
         - block.stop 标记完成（streaming → success）
+        - client_aborted=True 时，未收到 block.stop 的 streaming block 统一标记为 cancelled
+          （如 fanout 并发生成的多维度 tool_use block 中断时），避免前端刷新后永久显示"运行中"
         """
         blocks_by_index: dict[int, dict[str, Any]] = {}
         for env in envelopes:
@@ -861,6 +866,13 @@ class AgentRuntimeService:
                     # streaming → success（除非业务已显式标记其他状态）
                     if blocks_by_index[idx].get("status") == "streaming":
                         blocks_by_index[idx]["status"] = "success"
+        # 客户端中断：未收到 block.stop 的 block 保持 streaming，前端会永久显示"运行中"
+        # （fanout 多维度 tool_use block 尤其明显）。中断即终态，统一标记为 cancelled，
+        # 前端显示"已取消"；消息级 content.interrupted=True 表达整体中断语义。
+        if client_aborted:
+            for block in blocks_by_index.values():
+                if block.get("status") == "streaming":
+                    block["status"] = "cancelled"
         return [blocks_by_index[i] for i in sorted(blocks_by_index)]
 
     async def _buffer_append(

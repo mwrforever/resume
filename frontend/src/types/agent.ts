@@ -19,7 +19,7 @@ export const WORKFLOW_LABELS: Record<WorkflowType, string> = {
 
 /** block 状态枚举 */
 export type BlockStatus =
-  | 'streaming' | 'success' | 'failed'
+  | 'streaming' | 'success' | 'failed' | 'cancelled'
   | 'pending' | 'submitted' | 'rejected' | 'expired';
 
 /** interaction 类型 */

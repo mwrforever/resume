@@ -813,3 +813,58 @@ async def test_create_user_message_commits_independently():
 
     # user 消息落库后立即 commit（不等 stream_message finally）
     svc._repo.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_envelopes_to_blocks_marks_streaming_cancelled_on_client_abort():
+    """client_aborted 时，未收到 block.stop 的 streaming block 标记为 cancelled（已取消）。
+
+    修复：fanout 并发生成多维度问答时中断，部分维度 tool_use block 未收到 block.stop，
+    保持 streaming 状态落库。前端刷新读到 streaming，ToolUseBlock（isRunning=status===
+    'streaming'）永久显示"运行中"图标。修复后落库前把 streaming → cancelled，前端
+    显示"已取消"（区别于 success 绿勾、failed 红错）。
+    """
+    svc = _build_svc()
+    emitter = AgentStreamEmitter(
+        session_id=1, run_id="r1", workflow_type="interview_questions", index_start=0,
+    )
+    # 模拟 fanout：两个维度 tool_use block.start（streaming），均未 block.stop（中断）
+    envelopes = [
+        emitter.emit_block_start(index=0, block={
+            "type": "tool_use", "tool_name": "gen", "display_name": "技术",
+            "status": "streaming", "input": {},
+        }),
+        emitter.emit_block_start(index=1, block={
+            "type": "tool_use", "tool_name": "gen", "display_name": "沟通",
+            "status": "streaming", "input": {},
+        }),
+    ]
+    blocks = svc._envelopes_to_blocks(envelopes, client_aborted=True)
+    statuses = [b.get("status") for b in blocks]
+    assert statuses == ["cancelled", "cancelled"], (
+        f"client_aborted 时所有 streaming block 应标记为 cancelled：{statuses}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_envelopes_to_blocks_no_abort_keeps_streaming_until_stop():
+    """非中断路径：未 block.stop 的 block 保持 streaming（现有行为不变）。
+
+    回归保护：client_aborted 默认 False，不影响正常流式路径（block.stop 才转 success）。
+    """
+    svc = _build_svc()
+    emitter = AgentStreamEmitter(
+        session_id=1, run_id="r1", workflow_type="interview_questions", index_start=0,
+    )
+    envelopes = [
+        emitter.emit_block_start(index=0, block={
+            "type": "tool_use", "tool_name": "gen", "display_name": "技术",
+            "status": "streaming", "input": {},
+        }),
+        # 未 block.stop
+    ]
+    # 默认 client_aborted=False
+    blocks = svc._envelopes_to_blocks(envelopes)
+    assert blocks[0].get("status") == "streaming", (
+        f"非中断路径 streaming block 应保持 streaming（等 block.stop 转 success）：{blocks[0]}"
+    )
