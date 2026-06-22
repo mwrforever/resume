@@ -17,6 +17,31 @@ import { EmptyState } from './empty-state';
 import { ResumeFileIcon } from './resume-file-icon';
 import { AgentMessageCard } from './agent-message-card';
 
+/**
+ * InterruptBar 显示判定（双信号 OR 兜底）。
+ *
+ * ① runState.aborted：前端即时信号。用户点击「暂停」瞬间置 true，不限 running 状态，
+ *   中断瞬间与 pseudoStreamingMessage 同屏（内容冻结 + 中断提示），不等 reload。
+ * ② !running && !sending && last.content.interrupted：后端持久化信号。刷新/断网恢复场景，
+ *   aborted 已随内存丢失，靠 DB 标记兜底。!sending 排除重试发起窗口（aborted 已清但
+ *   run.start 未到达、上一轮 content.interrupted 仍在）避免残留误导。
+ *
+ * error 非空时不显示（走红色 callout，互斥）。
+ */
+export function shouldShowInterruptBar(
+  runState: AgentRunState,
+  messages: AgentMessage[],
+  sending: boolean,
+): boolean {
+  if (runState.error) return false;
+  if (runState.aborted) return true;
+  if (!runState.running && !sending) {
+    const last = messages[messages.length - 1];
+    return last?.content?.interrupted === true;
+  }
+  return false;
+}
+
 export interface AgentMessageListProps {
   messages: AgentMessage[];
   runState: AgentRunState;
@@ -28,14 +53,12 @@ export interface AgentMessageListProps {
   /** 错误重试（仅 runState.error 红色 callout 使用） */
   onRetry?: () => void;
   /** 中断恢复（调 store.resumeRun 续接 checkpoint，非重发）。
-   *  仅在中断态 InterruptBar 使用；提供时显示"恢复"按钮，缺省则回退到"重试"按钮。 */
+   *  仅在中断态 InterruptBar 使用；提供时显示"重试"按钮。 */
   onResume?: () => void;
-  /** 中断重发（用最后一条 user 消息内容重新发起，作为 onResume 缺省时的兜底） */
-  onRetryFromLastUser?: () => void;
 }
 
 export function AgentMessageList({
-  messages, runState, sending, onSubmitInteraction, onPickPrompt, onRetry, onResume, onRetryFromLastUser,
+  messages, runState, sending, onSubmitInteraction, onPickPrompt, onRetry, onResume,
 }: AgentMessageListProps) {
   const { ref, followIfNeeded, forceSmoothToBottom } = useFollowBottom();
 
@@ -150,46 +173,13 @@ export function AgentMessageList({
           </div>
         )}
 
-        {/* 中断提示（bug 1 / A2）：刷新打断或后端 error 后，最后一条 agent 消息含 streaming block 时显示。
-            仅在没有正在跑的 run 时显示（避免和流式状态条同屏）；
-            runState.error 红色 callout 与本 pill 不会同屏（前者依赖 runState.error，后者依赖 !runState.running 且无 runState.error）。
-            A2：中断态默认走"恢复"按钮（onResume 续接 checkpoint）；onResume 缺省时回退"重试"（onRetryFromLastUser 重发）。 */}
-        {!runState.running && !runState.error && isLastAgentMessageInterrupted(messages) && (onResume || onRetryFromLastUser) && (
-          <InterruptBar
-            onRetry={onRetryFromLastUser ?? (() => {})}
-            onResume={onResume}
-            isError={false}
-            resuming={sending}
-          />
+        {/* 中断提示：双信号 OR（shouldShowInterruptBar 纯函数封装，见文件顶部） */}
+        {shouldShowInterruptBar(runState, messages, sending ?? false) && onResume && (
+          <InterruptBar onResume={onResume} />
         )}
       </div>
     </div>
   );
-}
-
-/**
- * 判定最后一条 agent 消息是否被中断。
- *
- * 后端在客户端断开 / 后端 error 时，finally 块仍把已生成的 envelopes 折叠落库
- * （agent_runtime_service._persist_agent_message），但部分 block 来不及发 block.stop，
- * 落库时 status 仍为 'streaming'。
- *
- * 其它结束路径不会留 streaming：
- * - 正常 END：全 success
- * - interrupt 暂停（人机交互卡）：interaction block 是 pending（runner.py:107 emit 时就是 pending）
- *   text/tool_use 都是 success
- * - 用户 abort：interaction 是 expired
- *
- * 因此 'streaming' 是「被中断」的精确信号，pending interaction 不会误命中。
- *
- * @param messages 落库消息数组
- * @returns true 表示最后一条 agent 消息被中断（应渲染 InterruptBar）
- */
-export function isLastAgentMessageInterrupted(messages: AgentMessage[]): boolean {
-  if (messages.length === 0) return false;
-  const last = messages[messages.length - 1];
-  if (last.role !== 'agent') return false;
-  return (last.content.blocks ?? []).some(b => b.status === 'streaming');
 }
 
 /** 单条消息渲染 */
