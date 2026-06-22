@@ -20,10 +20,12 @@ interface StepRowProps {
   step: AgentStep;
   /** 是否最后一行（最后一行不渲染下方连接线） */
   isLast: boolean;
+  /** 节点序号（1-based）。提供时在 pending 空圈内显示数字，未提供则空圈（向后兼容） */
+  index?: number;
 }
 
 /** 单行步骤渲染 */
-export function StepRow({ step, isLast }: StepRowProps) {
+export function StepRow({ step, isLast, index }: StepRowProps) {
   const isRunning = step.status === 'running';
   return (
     <motion.div
@@ -40,7 +42,7 @@ export function StepRow({ step, isLast }: StepRowProps) {
               : 'bg-[#E2E8F0]'}`}
         />
       )}
-      <StepIcon status={step.status} />
+      <StepIcon status={step.status} index={index} />
       <div className="pt-[3px] min-w-0">
         <div className="text-[13px] font-medium leading-tight">
           {isRunning ? (
@@ -68,8 +70,8 @@ export function StepRow({ step, isLast }: StepRowProps) {
   );
 }
 
-/** 步骤图标：按状态返回四种样式 */
-function StepIcon({ status }: { status: AgentStep['status'] }) {
+/** 步骤图标：按状态返回四种样式；pending 态提供 index 时圈内显示序号 */
+function StepIcon({ status, index }: { status: AgentStep['status']; index?: number }) {
   if (status === 'success') {
     return (
       <span className="w-7 h-7 rounded-[9px] bg-[#DCFCE7] text-[#16A34A] flex items-center justify-center relative z-[2]">
@@ -95,8 +97,10 @@ function StepIcon({ status }: { status: AgentStep['status'] }) {
       </span>
     );
   }
-  // pending：白底灰边空圈
+  // pending：白底灰边圈；提供 index 时圈内显示序号（议题 4）
   return (
-    <span className="w-7 h-7 rounded-[9px] bg-white border-2 border-[#CBD5E1] flex items-center justify-center relative z-[2]" />
+    <span className="w-7 h-7 rounded-[9px] bg-white border-2 border-[#CBD5E1] flex items-center justify-center relative z-[2] text-[12px] font-semibold text-[#64748B]">
+      {index}
+    </span>
   );
 }

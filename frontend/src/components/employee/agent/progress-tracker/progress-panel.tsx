@@ -58,7 +58,7 @@ export function ProgressPanel({ steps, reached, total }: ProgressPanelProps) {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: i * 0.04, type: 'spring', stiffness: 120, damping: 20 }}
             >
-              <StepRow step={s} isLast={i === visible.length - 1} />
+              <StepRow step={s} isLast={i === visible.length - 1} index={i + 1} />
             </motion.div>
           ))}
         </AnimatePresence>
