@@ -79,7 +79,9 @@ export function AgentMessageList({
   // 必须在下方 early return 之前调用——否则 running 切换时 hook 数量变化会触发
   // "Rendered fewer hooks than expected" 崩溃（中断瞬间白屏）。
   const pseudoStreamingMessage = useMemo<AgentMessage | null>(() => {
-    if (!runState.running) return null;
+    // 流式中（running）或中断后本地兜底（aborted + current_blocks 非空，reload 尚未替换为落库消息）。
+    // 中断时 store.abort 已把 streaming block 标记为 cancelled，这里继续渲染让 UI 立即显示「已取消」。
+    if (!runState.running && !runState.aborted) return null;
     if (runState.current_blocks.length === 0 && runState.steps.length === 0) return null;
     return {
       id: -1,
@@ -94,7 +96,7 @@ export function AgentMessageList({
       sort_order: Number.MAX_SAFE_INTEGER,
       create_time: null,
     };
-  }, [runState.running, runState.current_blocks, runState.steps.length, runState.run_id, runState.workflow_type]);
+  }, [runState.running, runState.aborted, runState.current_blocks, runState.steps.length, runState.run_id, runState.workflow_type]);
 
   // 空态：无历史消息 + 无 run 进行中（所有 hooks 已在上方无条件执行，符合 Hooks 规则）
   if (messages.length === 0 && !runState.running) {

@@ -649,15 +649,25 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     // 2) interrupt 暂停态（ac 已 delete）→ 调后端 /abort 端点标记 pending interaction 为 expired
     const ac = abortControllers.get(sessionId);
     // 先置 aborted（两条路径共用），UI 即时响应
-    set((s) => ({
-      runs: {
-        ...s.runs,
-        [sessionId]: {
-          ...getRun(s.runs, sessionId),
-          runState: { ...getRun(s.runs, sessionId).runState, aborted: true },
+    set((s) => {
+      const entry = getRun(s.runs, sessionId);
+      const rs = entry.runState;
+      // 中断瞬间本地把 streaming block 标记为 cancelled，并保留 current_blocks：
+      // pseudoStreamingMessage 靠 aborted 继续渲染，UI 立即显示维度「已取消」，
+      // 不依赖 reload（后端 finally 落库 agent 消息与本 reload 并发，可能读到空）。
+      const finalizedBlocks = rs.current_blocks.map((b) =>
+        b.status === 'streaming' ? { ...b, status: 'cancelled' as const } : b,
+      );
+      return {
+        runs: {
+          ...s.runs,
+          [sessionId]: {
+            ...entry,
+            runState: { ...rs, aborted: true, current_blocks: finalizedBlocks },
+          },
         },
-      },
-    }));
+      };
+    });
     if (ac) {
       ac.abort();
       return;
@@ -715,6 +725,8 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
   let hasError = false;
   // 当前 run 的 run_id（从 run.start 提取），供收尾 reload 判断 agent 消息是否落库
   let currentRunId: string | null = null;
+  // 客户端中断标志：收尾时若落库尚未含 agent 消息，保留本地固化的 current_blocks 兜底
+  let clientAborted = false;
   const dispatch = (env: AgentEnvelope) => {
     useAgentStore.setState((s) => {
       const entry = getRun(s.runs, sessionId);
@@ -747,32 +759,25 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
       err instanceof DOMException && err.name === 'AbortError'
       || (err as { name?: string })?.name === 'AbortError';
     if (!isAbort) throw err;
+    clientAborted = true;
   }
   // 收尾：无条件执行。正常 finish / 客户端 abort / 后端 error / 流自然结束（无任何终态
   // envelope，如代理意外断开）都走同一收尾——reload 落库消息 + 结算 runState，
   // 避免流式卡与 pending 交互卡残留。reload 是幂等的（仅重新拉会话），多走一次无副作用。
   {
-    // 强制重新拉取落库消息（覆盖乐观消息），再单次 setState 切换流式卡 → 新消息。
-    // 客户端中断时后端 finally（shield 保护落库 agent 消息）与本 reload 并发，可能读到
-    // agent 消息未 commit 的状态（fanout 维度 block 消失）。用 run_id 匹配重试等其落库。
-    let detail: { session?: WorkspaceSession | null; messages?: AgentMessage[] } | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const resp = await employeeAgentApi.getSession(sessionId);
-      detail = (resp.data?.data ?? resp.data) as {
-        session?: WorkspaceSession | null;
-        messages?: AgentMessage[];
-      };
-      // 已知 run_id 且非错误态时，检查本 run 的 agent 消息是否落库；
-      // 否则（run.start 未到 / 错误态）直接用首次结果，不重试。
-      if (!currentRunId || hasError || attempt === 2) break;
-      const landed = detail?.messages ?? [];
-      const hasAgent = landed.some(
-        (m) => m.role === 'agent' && m.run_id === currentRunId,
-      );
-      if (hasAgent) break;
-      // agent 消息还没落库（后端 finally 在 shield 中跑），延迟后重试
-      await new Promise((r) => setTimeout(r, 200));
-    }
+    // reload 一次拿落库消息。中断时若后端 finally 尚未 commit agent 消息，读到的 messages
+    // 不含本 run agent —— 此时保留本地固化的 current_blocks（pseudoStreamingMessage 继续渲染
+    // cancelled block），不依赖 reload 时序；读到则替换为落库消息并清 current_blocks。
+    const resp = await employeeAgentApi.getSession(sessionId);
+    const detail = (resp.data?.data ?? resp.data) as {
+      session?: WorkspaceSession | null;
+      messages?: AgentMessage[];
+    } | null;
+    const landed = detail?.messages ?? null;
+    const landedHasAgent = !!(
+      landed && currentRunId
+      && landed.some((m) => m.role === 'agent' && m.run_id === currentRunId)
+    );
     // run.finish 携带的 next_task_id：后端在 graph 正常 END 时已 update session 表；
     // abort 路径无 finish envelope，task_id 由后端 finally 决定（中断不推进，保证 resume 命中）。
     const nextTaskId = pendingFinish
@@ -788,21 +793,27 @@ async function runEnvelopes(sessionId: number, iter: AsyncIterableIterator<Agent
         ? mergeLocalRuntime(remoteSession, entry.session)
         : entry.session;
       if (session && nextTaskId) session.current_task_id = nextTaskId;
+      // 中断且落库尚未含 agent 消息：保留本地 messages + current_blocks（pseudoStreamingMessage
+      // 兜底显示 cancelled block）；否则用落库 messages 替换 + resolveRunStateAfterFinish 清 current_blocks。
+      const preserveLocal = clientAborted && !landedHasAgent;
+      const messages = preserveLocal ? entry.messages : (landed ?? entry.messages);
+      const resolved = resolveRunStateAfterFinish(entry.runState, {
+        hasFinish: Boolean(pendingFinish),
+        nextTaskId,
+        hasError,
+      });
+      const runState = preserveLocal
+        ? { ...resolved, aborted: true, current_blocks: entry.runState.current_blocks }
+        : resolved;
       return {
         runs: {
           ...s.runs,
           [sessionId]: {
             ...entry,
             session,
-            messages: detail?.messages ?? entry.messages,
+            messages,
             loaded: true,
-            // 单次 setState 完成「running=false + 清空 current_blocks + 切到落库消息」三件事，
-            // React 一次提交切换 UI，避免帧间留白。steps/error 是否保留交由 resolveRunStateAfterFinish。
-            runState: resolveRunStateAfterFinish(entry.runState, {
-              hasFinish: Boolean(pendingFinish),
-              nextTaskId,
-              hasError,
-            }),
+            runState,
           },
         },
       };
