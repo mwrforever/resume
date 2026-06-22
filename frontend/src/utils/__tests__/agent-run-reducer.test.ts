@@ -54,3 +54,33 @@ describe('agent-run-reducer · upsertStep 重入语义', () => {
     expect(s.steps[0].detail).toBe('重做');
   });
 });
+
+describe('agent-run-reducer · aborted 标志', () => {
+  it('INITIAL_RUN_STATE.aborted 默认 false', () => {
+    expect(INITIAL_RUN_STATE.aborted).toBe(false);
+  });
+
+  function makeRunStart(resume = false): AgentEnvelope {
+    return {
+      v: 1, seq: 0, ts: 0, run_id: 'r1', session_id: 1,
+      type: 'run.start',
+      data: {
+        run_id: 'r1', workflow_type: 'interview_questions',
+        enable_thinking: false, user_message_id: null,
+        ...(resume ? { resume: true } : {}),
+      },
+    };
+  }
+
+  it('run.start（非 resume）清除 aborted', () => {
+    const abortedState: AgentRunState = { ...INITIAL_RUN_STATE, aborted: true };
+    const next = agentRunReducer(abortedState, makeRunStart(false));
+    expect(next.aborted).toBe(false);
+  });
+
+  it('run.start（resume）清除 aborted', () => {
+    const abortedState: AgentRunState = { ...INITIAL_RUN_STATE, aborted: true };
+    const next = agentRunReducer(abortedState, makeRunStart(true));
+    expect(next.aborted).toBe(false);
+  });
+});

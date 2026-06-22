@@ -23,7 +23,7 @@ describe('resumeRun action', () => {
       1: {
         session: { id: 1, enable_thinking: false, selected_model_name: null } as never,
         messages: [{ id: 5, workflow_type: 'interview_questions' } as never],
-        runState: { workflow_type: 'interview_questions' } as never,
+        runState: { workflow_type: 'interview_questions', aborted: false } as never,
         sending: false, loaded: true,
       },
     },

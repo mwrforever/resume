@@ -38,7 +38,7 @@ function seedSession(messages: AgentMessage[]) {
       1: {
         session: { id: 1, enable_thinking: false, selected_model_name: null } as never,
         messages,
-        runState: { running: false, workflow_type: 'interview_questions', steps: [], current_blocks: [], error: null, run_id: null, enable_thinking: false },
+        runState: { running: false, workflow_type: 'interview_questions', steps: [], current_blocks: [], error: null, run_id: null, enable_thinking: false, aborted: false },
         sending: false, loaded: true,
       },
     },

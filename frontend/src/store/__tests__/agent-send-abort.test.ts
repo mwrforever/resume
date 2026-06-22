@@ -39,7 +39,7 @@ describe('Bug4 sendMessage 发送前自动中断', () => {
         1: {
           session: { id: 1, enable_thinking: false, selected_model_name: null } as never,
           messages: [pendingAgentMsg],
-          runState: { running: false, workflow_type: 'interview_questions', steps: [], current_blocks: [], error: null, run_id: null, enable_thinking: false },
+          runState: { running: false, workflow_type: 'interview_questions', steps: [], current_blocks: [], error: null, run_id: null, enable_thinking: false, aborted: false },
           sending: false, loaded: true,
         },
       },

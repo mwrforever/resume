@@ -37,7 +37,7 @@ describe('Bug2 resumeRun 进度基线', () => {
           progress: { workflow_type: 'interview_questions', steps: persistedSteps },
         } as never,
         messages: [{ id: 5, role: 'agent', workflow_type: 'interview_questions' } as never],
-        runState: { workflow_type: 'interview_questions', steps: [] } as never,
+        runState: { workflow_type: 'interview_questions', steps: [], aborted: false } as never,
         sending: false, loaded: true,
       },
     },

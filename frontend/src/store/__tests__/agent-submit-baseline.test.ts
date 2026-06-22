@@ -45,7 +45,7 @@ describe('submitInteraction 进度基线', () => {
         } as never,
         messages: [{ id: 5, role: 'agent', workflow_type: 'interview_questions' } as never],
         // 刷新后内存 runState.steps 为空——基线只能从 session.progress 取
-        runState: { workflow_type: 'interview_questions', steps: [] } as never,
+        runState: { workflow_type: 'interview_questions', steps: [], aborted: false } as never,
         sending: false, loaded: true,
       },
     },

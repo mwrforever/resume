@@ -20,11 +20,11 @@ if (!Element.prototype.scrollTo) {
 
 const runningState: AgentRunState = {
   running: true, run_id: 'r1', workflow_type: 'interview_questions',
-  enable_thinking: false, steps: [], current_blocks: [], error: null,
+  enable_thinking: false, steps: [], current_blocks: [], error: null, aborted: false,
 };
 const idleState: AgentRunState = {
   running: false, run_id: null, workflow_type: 'interview_questions',
-  enable_thinking: false, steps: [], current_blocks: [], error: null,
+  enable_thinking: false, steps: [], current_blocks: [], error: null, aborted: false,
 };
 
 describe('AgentMessageList hooks 安全', () => {

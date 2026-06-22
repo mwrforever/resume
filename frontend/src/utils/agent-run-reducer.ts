@@ -23,6 +23,7 @@ export const INITIAL_RUN_STATE: AgentRunState = {
   steps: [],
   current_blocks: [],
   error: null,
+  aborted: false,
 };
 
 /**
@@ -38,7 +39,8 @@ export function agentRunReducer(state: AgentRunState, env: AgentEnvelope): Agent
       const data = env.data;
       // resume（续接）：interaction 提交后的 run，不清空 current_blocks 避免闪烁重建
       if (data.resume) {
-        return { ...state, running: true, error: null };
+        // 新一轮 run 开始即清中断态
+        return { ...state, running: true, error: null, aborted: false };
       }
       return {
         running: true,
@@ -48,6 +50,7 @@ export function agentRunReducer(state: AgentRunState, env: AgentEnvelope): Agent
         steps: [],
         current_blocks: [],
         error: null,
+        aborted: false,
       };
     }
     case 'run.finish':

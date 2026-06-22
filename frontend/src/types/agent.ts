@@ -90,7 +90,12 @@ export interface AgentMessage {
   role: 'user' | 'agent';
   workflow_type: WorkflowType;
   run_id: string | null;
-  content: { blocks: AgentBlock[]; context_refs?: Array<Record<string, unknown>> };
+  content: {
+    blocks: AgentBlock[];
+    context_refs?: Array<Record<string, unknown>>;
+    /** 后端 client_aborted 时落库的持久化中断标记 */
+    interrupted?: boolean;
+  };
   model_name: string | null;
   token_count: number | null;
   sort_order: number;
@@ -136,6 +141,8 @@ export interface AgentRunState {
   steps: AgentStep[];
   current_blocks: AgentBlock[];
   error: { code: string; message: string } | null;
+  /** 用户主动中断标志（前端即时信号；run.start 清除） */
+  aborted: boolean;
 }
 
 // ====== 业务卡 payload ======
