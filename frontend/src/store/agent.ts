@@ -518,6 +518,26 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
       lastMsg?.workflow_type
       ?? entry?.runState.workflow_type
       ?? 'interview_questions';
+    // 进度基线（Bug2 孪生修复）：刷新后内存 runState.steps=[]，提交前用持久化
+    // session.progress.steps 初始化为基线。resolve_interaction 只对中断点之后的节点
+    // 发 step.update，若不载入基线，selectProgressSource 会优先取仅含后续几步的
+    // runState.steps → 进度从中断前的完整 N 步回退到 2/8、之前节点置灰。
+    const persisted = entry?.session?.progress;
+    if (persisted && persisted.steps.length > 0) {
+      set((s) => ({
+        runs: {
+          ...s.runs,
+          [sessionId]: {
+            ...getRun(s.runs, sessionId),
+            runState: {
+              ...getRun(s.runs, sessionId).runState,
+              steps: persisted.steps,
+              workflow_type: persisted.workflow_type,
+            },
+          },
+        },
+      }));
+    }
     const ac = new AbortController();
     abortControllers.set(sessionId, ac);
     set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true } } }));
