@@ -47,6 +47,9 @@ def _is_missing_checkpoint_error(exc: Exception) -> bool:
         "checkpoint" in msg
         or "no state" in msg
         or ("thread" in msg and "not found" in msg)
+        # resume 时 thread 无 checkpoint（MemorySaver 重启 / HMR / 多 worker 清空）→
+        # LangGraph 从 __start__ 开始但 graph_input=None → EmptyInputError: Received no input for __start__
+        or "received no input" in msg
     )
 
 

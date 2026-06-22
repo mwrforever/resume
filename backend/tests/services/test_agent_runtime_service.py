@@ -868,3 +868,19 @@ async def test_envelopes_to_blocks_no_abort_keeps_streaming_until_stop():
     assert blocks[0].get("status") == "streaming", (
         f"非中断路径 streaming block 应保持 streaming（等 block.stop 转 success）：{blocks[0]}"
     )
+
+
+def test_is_missing_checkpoint_error_recognizes_empty_input():
+    """EmptyInputError（resume 时 thread 无 checkpoint）识别为 checkpoint 丢失。
+
+    场景：MemorySaver（内存 checkpointer）在后端重启 / HMR / 多 worker 后清空，
+    resume_run 用 graph_input=None 续接时 thread 无 checkpoint，LangGraph 从 __start__
+    开始但无 input → EmptyInputError: Received no input for __start__。
+    修复：识别该错误为 no_resumable_checkpoint，前端降级显示「流程状态已过期」。
+    """
+    from app.services.agent_runtime_service import _is_missing_checkpoint_error
+    # LangGraph EmptyInputError 的消息形式
+    exc = Exception("Received no input for __start__")
+    assert _is_missing_checkpoint_error(exc) is True, (
+        "EmptyInputError 应识别为 checkpoint 丢失（resume thread 无 checkpoint）"
+    )
