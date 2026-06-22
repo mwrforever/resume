@@ -593,3 +593,32 @@ async def test_abort_pending_interaction_commits_after_advancing_task_id():
         f"task_id 推进后未 commit（DB 仍是旧 task_id）：{calls}"
     )
 
+
+@pytest.mark.asyncio
+async def test_stream_message_emits_persist_failed_on_agent_message_save_error():
+    """agent 消息落库失败时必须发 run.error(persist_failed)，而非静默跳过 finish。
+
+    模拟 _persist_agent_message 内部 create_message 抛异常（如 DB 不可写），
+    断言 SSE 流里收到 run.error 且 code='persist_failed'、retriable=True。
+    """
+    svc = _build_svc()
+    # create_message 第一次（user 消息）正常、第二次（agent 消息）抛异常
+    svc._repo.create_message = AsyncMock(side_effect=[
+        MagicMock(id=10),  # user message
+        RuntimeError("db write failed"),  # agent message 落库失败
+    ])
+    svc._repo.next_message_order = AsyncMock(side_effect=[1, 2])
+    svc._repo.rollback = AsyncMock()
+
+    session = _make_session()
+    session.progress = None
+    body = AgentMessageCreate(content="hi", workflow_type="interview_questions")
+    error_envs = []
+    async for env in svc.stream_message(session=session, body=body, runtime_config=_runtime_cfg()):
+        if env.type == "run.error":
+            error_envs.append(env)
+
+    assert len(error_envs) >= 1, "落库失败未发出 run.error"
+    assert error_envs[-1].data["code"] == "persist_failed"
+    assert error_envs[-1].data["retriable"] is True
+

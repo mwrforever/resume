@@ -254,6 +254,7 @@ class AgentRuntimeService:
         finally:
             # 不论正常 / 异常 / 客户端中断，都把已生成的 envelopes 折叠落库；
             # 客户端中断时跳过 yield 与 task_id 推进（保留 thread 让下一轮 resume 命中 checkpoint）。
+            persist_failed = False
             try:
                 agent_message = await self._persist_agent_message(
                     session=session, user_message=user_message, run_id=run_id,
@@ -266,6 +267,7 @@ class AgentRuntimeService:
                     session.id, run_id, client_aborted,
                 )
                 agent_message = None
+                persist_failed = True
             # 仅 graph 真正走到 END 才推进 task_id（A2：client_aborted 保留 thread 供续接）。
             # interrupt/异常保持不变以保证 resume 命中正确 checkpoint。
             advance = graph_completed
@@ -289,8 +291,15 @@ class AgentRuntimeService:
                 await self._repo.commit()
             except Exception:
                 logger.exception("stream_message 收尾 commit 失败：session_id=%s", session.id)
-            # 客户端已断开 → 不再 yield finish（连接已无效），仅完成落库后退出
-            if not client_aborted and agent_message is not None:
+            # 落库失败：发 run.error(persist_failed) 让前端显式报错，不静默丢数据
+            if persist_failed and not client_aborted:
+                err_env = emitter.emit_run_error(
+                    code="persist_failed", message="消息落库失败，请重试", retriable=True,
+                )
+                envelope_buffer.append(err_env)
+                await self._buffer_append(session.id, run_id, err_env)
+                yield err_env
+            elif not client_aborted and agent_message is not None:
                 finish_env = emitter.emit_run_finish(
                     agent_message_id=agent_message.id, next_task_id=next_task_id,
                 )
@@ -403,6 +412,7 @@ class AgentRuntimeService:
                 graph_completed = not self._has_interrupt(envelope_buffer)
         finally:
             # 不论何种结束路径都要落库 agent 消息（含中断），保证可终止状态后内容不丢
+            persist_failed = False
             try:
                 agent_message = await self._persist_agent_message(
                     session=session, user_message=None, run_id=run_id,
@@ -415,6 +425,7 @@ class AgentRuntimeService:
                     session.id, run_id, client_aborted,
                 )
                 agent_message = None
+                persist_failed = True
             # 仅 graph 真正走到 END 才推进 task_id（A2：client_aborted 保留 thread 供续接）。
             # 驳回循环 / 异常保持不变以保证 resume 命中。
             advance = graph_completed
@@ -437,7 +448,15 @@ class AgentRuntimeService:
                 await self._repo.commit()
             except Exception:
                 logger.exception("resolve_interaction 收尾 commit 失败：session_id=%s", session.id)
-            if not client_aborted and agent_message is not None:
+            # 落库失败：发 run.error(persist_failed) 让前端显式报错，不静默丢数据
+            if persist_failed and not client_aborted:
+                err_env = emitter.emit_run_error(
+                    code="persist_failed", message="消息落库失败，请重试", retriable=True,
+                )
+                envelope_buffer.append(err_env)
+                await self._buffer_append(session.id, run_id, err_env)
+                yield err_env
+            elif not client_aborted and agent_message is not None:
                 finish_env = emitter.emit_run_finish(
                     agent_message_id=agent_message.id, next_task_id=next_task_id,
                 )
@@ -537,6 +556,7 @@ class AgentRuntimeService:
                 graph_completed = not self._has_interrupt(envelope_buffer)
         finally:
             # 不论正常 / 异常 / 客户端中断，都把已生成的 envelopes 折叠落库
+            persist_failed = False
             try:
                 agent_message = await self._persist_agent_message(
                     session=session, user_message=None, run_id=run_id,
@@ -549,6 +569,7 @@ class AgentRuntimeService:
                     session.id, run_id, client_aborted,
                 )
                 agent_message = None
+                persist_failed = True
             # 仅 graph 真正走到 END 才推进 task_id（A2：不支持放弃，保留 thread 供再次续接）。
             # interrupt/异常/checkpoint 丢失保持不变以保证 resume 命中。
             advance = graph_completed
@@ -572,8 +593,15 @@ class AgentRuntimeService:
                 await self._repo.commit()
             except Exception:
                 logger.exception("resume_run 收尾 commit 失败：session_id=%s", session.id)
-            # 客户端已断开 → 不再 yield finish（连接已无效），仅完成落库后退出
-            if not client_aborted and agent_message is not None:
+            # 落库失败：发 run.error(persist_failed) 让前端显式报错，不静默丢数据
+            if persist_failed and not client_aborted:
+                err_env = emitter.emit_run_error(
+                    code="persist_failed", message="消息落库失败，请重试", retriable=True,
+                )
+                envelope_buffer.append(err_env)
+                await self._buffer_append(session.id, run_id, err_env)
+                yield err_env
+            elif not client_aborted and agent_message is not None:
                 finish_env = emitter.emit_run_finish(
                     agent_message_id=agent_message.id, next_task_id=next_task_id,
                 )
