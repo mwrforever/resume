@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, String, SmallInteger, DateTime, Text
+from sqlalchemy import BigInteger, DateTime, Index, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -14,6 +14,11 @@ if TYPE_CHECKING:
 
 class Resume(Base):
     __tablename__ = "resume"
+    # 真实查询：按 user_id 列出用户简历（按 create_time desc）、列表分页按 create_time
+    __table_args__ = (
+        Index("idx_user_time", "user_id", "is_deleted", "create_time"),
+        Index("idx_status_time", "is_deleted", "status", "create_time"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(BigInteger, comment="上传者ID")

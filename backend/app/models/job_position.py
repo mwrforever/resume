@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, String, SmallInteger, DateTime, Text
+from sqlalchemy import BigInteger, DateTime, Index, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -17,6 +17,17 @@ if TYPE_CHECKING:
 
 class JobPosition(Base):
     __tablename__ = "job_position"
+    # 真实查询：
+    # - 列表/全局岗位：(is_deleted, status) 过滤 + id desc
+    # - 员工自己的岗位列表（job_repository.get_by_employee）
+    # - 按部门统计岗位数（dept_repository.count_jobs_by_dept）
+    # - 按模板统计/列表（eval_template_repository.count_jobs_by_template）
+    __table_args__ = (
+        Index("idx_status_deleted", "is_deleted", "status"),
+        Index("idx_employee", "employee_id", "is_deleted"),
+        Index("idx_dept", "dept_id", "is_deleted"),
+        Index("idx_template", "template_id", "is_deleted"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     employee_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="发布人(员工ID)")

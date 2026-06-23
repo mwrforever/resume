@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, SmallInteger, DateTime, JSON
+from sqlalchemy import BigInteger, DateTime, Index, JSON, SmallInteger
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -16,6 +16,16 @@ if TYPE_CHECKING:
 
 class JobApplication(Base):
     __tablename__ = "job_application"
+    # 真实查询：
+    # - 用户投递列表（按 user_id + create_time desc）
+    # - 岗位投递列表 / 重复投递校验（user_id + job_id + is_deleted）
+    # - 员工端投递管理列表（status / job_ids 多条件 + create_time desc）
+    __table_args__ = (
+        Index("idx_user_time", "user_id", "is_deleted", "create_time"),
+        Index("idx_job_time", "job_id", "is_deleted", "create_time"),
+        Index("idx_user_job", "user_id", "job_id", "is_deleted"),
+        Index("idx_status", "is_deleted", "status"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="投递用户ID")

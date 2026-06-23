@@ -11,10 +11,12 @@ from . import Base
 
 class LlmModelConfig(Base):
     __tablename__ = "llm_model_config"
+    # 模型配置已统一为全局：业务唯一性依据 (model_name, is_deleted) — 同名模型在
+    # 未删除集合中唯一；软删除写入 unix 微秒戳，使删除后允许同名复用。
+    # 真实查询：列表按 (is_deleted, status, update_time desc)；按 model_name 反查
     __table_args__ = (
-        UniqueConstraint("biz_type", "biz_id", "model_name", "is_deleted", name="uk_biz_model_deleted"),
-        Index("idx_biz", "biz_type", "biz_id", "status", "is_deleted"),
-        Index("idx_model_name", "model_name"),
+        UniqueConstraint("model_name", "is_deleted", name="uk_model_name_deleted"),
+        Index("idx_status", "is_deleted", "status"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

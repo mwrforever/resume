@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, DECIMAL, DateTime, String, Text, Integer
+from sqlalchemy import BigInteger, DECIMAL, DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -14,6 +14,10 @@ if TYPE_CHECKING:
 
 class ResumeEvalDetail(Base):
     __tablename__ = "resume_eval_detail"
+    # 真实查询：按 match_id 列出评估明细 / 删除（evaluation_repository.list_details_by_match / delete_details_by_match）
+    __table_args__ = (
+        Index("idx_match", "match_id"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     match_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="关联匹配记录ID")
