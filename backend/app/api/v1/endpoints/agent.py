@@ -22,7 +22,6 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.deps import get_cache, get_current_user, get_db
 from app.repositories.agent_repository import AgentRepository
-from app.repositories.dept_repository import DeptRepository
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.evaluation_repository import EvalRepository
 from app.repositories.job_repository import JobRepository
@@ -67,7 +66,7 @@ def _get_llm_service(
 ) -> LlmConfigService:
     """LLM 配置服务。"""
     return LlmConfigService(
-        LlmConfigRepository(db), EmployeeRepository(db), DeptRepository(db), cache,
+        LlmConfigRepository(db), EmployeeRepository(db), cache,
     )
 
 
@@ -120,12 +119,11 @@ async def list_llm_configs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     keyword: str | None = Query(None, max_length=100),
-    biz_type: str | None = Query(None, pattern="^(employee|dept)$"),
     status: int | None = Query(None, ge=0, le=1),
     service: LlmConfigService = Depends(_get_llm_service),
     current_user: dict = Depends(get_current_user),
 ) -> ApiResponse[PageData]:
-    data = await service.list_configs(current_user, page, page_size, keyword, biz_type, status)
+    data = await service.list_configs(current_user, page, page_size, keyword, status)
     return ApiResponse(data=PageData(**data))
 
 

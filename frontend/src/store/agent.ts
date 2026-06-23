@@ -379,7 +379,8 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     // 但工作流停在未完成的 interaction。先调 /abort 标记该 interaction 为 expired 并推进
     // task_id（后端新开 LangGraph thread 隔离，不会误续接旧 checkpoint），再发新一轮。
     // 仅对真实会话（正 id）执行；虚拟会话 / 无 pending 时跳过。
-    if (sessionId >= 0 && hasPendingInteraction(get().runs[sessionId]?.messages ?? [])) {
+    const wasPendingInteraction = sessionId >= 0 && hasPendingInteraction(get().runs[sessionId]?.messages ?? []);
+    if (wasPendingInteraction) {
       try {
         await employeeAgentApi.abortSession(sessionId);
       } catch (err) {
@@ -433,6 +434,29 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
 
     const ac = new AbortController();
     abortControllers.set(realSessionId, ac);
+    // 续接路径基线（与 submitInteraction / resumeRun 同理）：interaction 暂停态发新消息
+    // 走"先 update + Command(resume=...)"续接，后端只对中断点之后的节点 emit step.update。
+    // 内存 runState.steps 若仍是上轮残留的几条 → selectProgressSource 取实时数据 → 进度
+    // 从中断前的完整 N 步回退到 2/N、之前节点变灰。提交前用持久化 session.progress.steps
+    // 重置为基线，让后续 step.update 在完整 N 步序列上"原位更新 status"。
+    if (wasPendingInteraction) {
+      const persisted = getRun(get().runs, realSessionId).session?.progress;
+      if (persisted && persisted.steps.length > 0) {
+        set((s) => ({
+          runs: {
+            ...s.runs,
+            [realSessionId]: {
+              ...getRun(s.runs, realSessionId),
+              runState: {
+                ...getRun(s.runs, realSessionId).runState,
+                steps: persisted.steps,
+                workflow_type: persisted.workflow_type,
+              },
+            },
+          },
+        }));
+      }
+    }
     set((s) => ({ runs: { ...s.runs, [realSessionId]: { ...getRun(s.runs, realSessionId), sending: true, runState: { ...getRun(s.runs, realSessionId).runState, aborted: false } } } }));
 
     // 乐观追加用户消息（负数临时 id，reload 后替换）

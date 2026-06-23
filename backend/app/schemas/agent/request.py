@@ -17,9 +17,13 @@ AgentWorkflowType = Literal["interview_questions", "resume_evaluation"]
 # ====== LLM 配置 ======
 
 class LlmConfigCreate(BaseModel):
-    """创建 LLM 模型配置。"""
-    biz_type: Literal["employee", "dept"]
-    biz_id: int
+    """创建 LLM 模型配置（全局可见）。
+
+    业务上模型配置已统一为全局：所有员工均可见，仅管理员可增删改。
+    biz_type/biz_id 字段保留以兼容历史数据，新建一律写 ('global', 0)。
+    """
+    biz_type: Literal["global"] = "global"
+    biz_id: int = 0
     config_name: str = Field(min_length=1, max_length=50)
     protocol: Literal["openai"] = "openai"
     base_url: str = Field(min_length=1, max_length=500)

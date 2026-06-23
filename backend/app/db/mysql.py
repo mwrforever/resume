@@ -78,6 +78,23 @@ async def ensure_sys_employee_schema(conn: AsyncConnection) -> None:
             logger.info("已将旧管理员邮箱置位 is_admin=1：email=%s", LEGACY_ADMIN_EMAIL)
 
 
+# agent_message 表的增量字段：task_id 用于续接判断（详见 agent_runtime_service 注释）。
+# 旧消息为 NULL，被视为已完成、不参与续接，行为与历史一致；新消息记录落库时的 thread_id。
+AGENT_MESSAGE_SCHEMA_COLUMNS = {
+    "task_id": "ALTER TABLE agent_message ADD COLUMN task_id VARCHAR(64) NULL COMMENT '落库时的 thread_id，用于续接判断' AFTER run_id",
+}
+
+
+async def ensure_agent_message_schema(conn: AsyncConnection) -> None:
+    """幂等补齐 agent_message 增量字段。"""
+    for column_name, alter_sql in AGENT_MESSAGE_SCHEMA_COLUMNS.items():
+        column_result = await conn.execute(text(f"SHOW COLUMNS FROM agent_message LIKE '{column_name}'"))
+        if column_result.first():
+            continue
+        logger.info("agent_message 表缺少字段，正在自动补齐：column=%s", column_name)
+        await conn.execute(text(alter_sql))
+
+
 class MySQLManager:
     def __init__(self) -> None:
         self._engine: Optional[AsyncEngine] = None
@@ -140,6 +157,7 @@ class MySQLManager:
             await conn.run_sync(Base.metadata.create_all)
             await ensure_llm_model_config_schema(conn)
             await ensure_sys_employee_schema(conn)
+            await ensure_agent_message_schema(conn)
 
     async def close_pool(self) -> None:
         """

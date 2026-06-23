@@ -104,6 +104,21 @@ class AgentRepository:
         )
         return result.scalars().all()
 
+    async def get_latest_agent_message(self, session_id: int) -> AgentMessage | None:
+        """获取指定会话最近一条 agent 消息。
+
+        用于续接判断：通过对比 message.task_id 与 session.current_task_id 确定
+        上一段 workflow 是否已正常结束（task_id 被 advance）。
+        没有 agent 消息（新会话）返回 None。
+        """
+        result = await self._db.execute(
+            select(AgentMessage)
+            .where(AgentMessage.session_id == session_id, AgentMessage.role == "agent")
+            .order_by(AgentMessage.sort_order.desc(), AgentMessage.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def update_message_content(self, message_id: int, content: dict) -> None:
         """更新 agent_message.content（跨消息回写 interaction 状态用）。"""
         stmt = update(AgentMessage).where(AgentMessage.id == message_id).values(content=content)

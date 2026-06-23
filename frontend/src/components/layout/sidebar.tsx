@@ -24,7 +24,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/employee/dashboard', icon: LayoutDashboard, label: '工作台' },
       { href: '/employee/agent', icon: Bot, label: 'Agent 工作台' },
-      { href: '/employee/llm-configs', icon: Settings2, label: '模型配置' },
+      { href: '/employee/llm-configs', icon: Settings2, label: '模型配置', adminOnly: true },
     ],
   },
   {

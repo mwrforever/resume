@@ -169,39 +169,51 @@ class AgentRuntimeService:
         """
         return any(env.type == "interaction.request" for env in envelopes)
 
-    async def _has_unfinished_interaction(self, session) -> bool:
-        """判断会话最近一条 agent 消息是否含未完结的 interaction（pending/expired）。
+    async def _should_continue_workflow(self, session) -> bool:
+        """判断当前会话是否仍处于未完成的 workflow（应续接同 thread）。
 
-        用于 Q2：用户在 interaction 暂停态点中断后发新消息时，识别"应续接同 thread"
-        场景。expired = abort_pending_interaction 已标记但未推进 task_id（保留 thread）；
-        pending = 兜底（中断标记未来得及写入）。两者都视为未完结，需走 update+None 续接。
+        判定依据：最近一条 agent 消息的 task_id 是否等于 session.current_task_id。
+        相等 → task_id 自该消息以来未被 advance → 上一段 workflow 未走到 END →
+        无论中断原因（interaction 暂停、客户端中断流式、graph 异常、persist 失败）
+        都视为未完成，需走"先 update 后 None"续接同 thread，保留上下文。
+        不等（或无 agent 消息）→ 上一段已 END 或新会话，走全新 astream。
         """
         try:
-            messages = await self._repo.list_messages(session.id)
-            for msg in reversed(messages):
-                if msg.role != "agent":
-                    continue
-                blocks = (msg.content or {}).get("blocks") or []
-                return any(
-                    b.get("type") == "interaction" and b.get("status") in ("pending", "expired")
-                    for b in blocks
-                )
+            latest = await self._repo.get_latest_agent_message(session.id)
+            if latest is None:
+                return False
+            # 历史数据 task_id=NULL 视为已完成（旧消息既无续接价值也无对应 checkpoint）
+            return bool(latest.task_id) and latest.task_id == session.current_task_id
         except Exception:
-            logger.exception("检测未完结 interaction 失败：session_id=%s", session.id)
-        return False
+            logger.exception("检测续接条件失败：session_id=%s", session.id)
+            return False
 
     @staticmethod
     def _build_resume_update(workflow_type: str, content: str) -> dict[str, Any]:
         """构造续接时的 state 更新（Q2"先 update"）：把新消息注入对应工作流的反馈通道。
 
         图一注入 user_intent（suggest_dimensions / build_question_plan 读取）；
-        图二注入 job_feedback（load_job_candidates 读取）。续接后 interrupt 节点
-        收到 None 视作驳回，用该反馈重新推导，复用同 thread 上下文。
+        图二注入 job_feedback（load_job_candidates 读取）。续接后中断节点被
+        Command(resume=...) 喂回驳回信号，重新走对应分支用本反馈推导。
         """
         text = (content or "").strip()
         if workflow_type == "resume_evaluation":
             return {"job_feedback": text}
         return {"user_intent": text}
+
+    @staticmethod
+    def _build_resume_command_value(content: str) -> dict[str, Any]:
+        """构造续接时喂给 interrupt() 的 resume 值（"驳回 + 反馈"统一载荷）。
+
+        三类中断节点驳回 schema 各异：
+        - 维度选择 / 岗位选择：{regenerate: True, feedback}
+        - 计划审批：{approved: False, feedback}
+        本字典三个字段同时携带可兼容任意一种中断节点的判定分支，且 feedback 在
+        节点内部读取失败时还会回落到 state.user_intent / job_feedback（已由
+        _build_resume_update 注入），保证驳回路径必触发，不会再次原地中断。
+        """
+        text = (content or "").strip()
+        return {"regenerate": True, "approved": False, "feedback": text}
 
     async def stream_message(
         self, *, session, body: AgentMessageCreate, runtime_config: LLMRuntimeConfigDTO,
@@ -254,9 +266,11 @@ class AgentRuntimeService:
         # 运行 graph
         runner = self._runner_factory(self._workflow_graphs[body.workflow_type])
         thread_id = await self._resolve_thread_id(session)
-        # Q2：若上一段 run 停在未完结的 interaction（中断后未推进 task_id），本条新消息
-        # 走"先 update 后 None"续接同 thread，保持原 workflow 上下文；否则全新 run 走 __start__。
-        resume_continuation = await self._has_unfinished_interaction(session)
+        # Q2：上一段 workflow 未走到 END（仍占用同一 task_id）时本条消息走"先 update 后 None"
+        # 续接同 thread，保留 LangGraph state；否则全新 run 走 __start__。
+        # 判据完全由 message.task_id == session.current_task_id 决定，覆盖中断暂停 / 客户端
+        # 中断流式 / graph 异常 / persist 失败等所有"未推进 task_id"的场景。
+        resume_continuation = await self._should_continue_workflow(session)
         graph_completed = False  # 仅"无异常 且 未中断（走到 END）"才视为完成
         # client_aborted：客户端中途断开（fetch.abort），asyncio 抛 CancelledError/GeneratorExit。
         # 此时 yield 已不可用（连接已断），但已生成的 envelopes 必须落库到 agent_message，
@@ -265,10 +279,13 @@ class AgentRuntimeService:
         try:
             try:
                 if resume_continuation:
-                    # 续接：注入新消息到 state，astream(None) 从 checkpoint 继续
+                    # 续接：注入新消息到 state + 用 Command(resume=驳回信号) 喂给当前中断的 interrupt()
+                    # （astream(None) 会让 interrupt 节点重新执行并立即再次中断，弹出相同表单）
                     update_values = self._build_resume_update(body.workflow_type, body.content or "")
+                    resume_value = self._build_resume_command_value(body.content or "")
                     aiter = runner.astream_resume_with_update(
-                        thread_id=thread_id, update_values=update_values, ctx=ctx,
+                        thread_id=thread_id, update_values=update_values,
+                        resume_value=resume_value, ctx=ctx,
                     )
                 else:
                     aiter = runner.astream(
@@ -844,6 +861,9 @@ class AgentRuntimeService:
         content: dict[str, Any] = {"blocks": blocks}
         if client_aborted:
             content["interrupted"] = True
+        # 记录落库时的 task_id：续接判断完全基于"该 message 的 task_id 是否仍是
+        # session.current_task_id"，避免遍历 blocks 找 pending interaction 的脆弱启发
+        message_task_id = (getattr(session, "current_task_id", "") or "") or None
         try:
             msg = await self._repo.create_message(
                 session_id=session.id,
@@ -851,6 +871,7 @@ class AgentRuntimeService:
                 role="agent",
                 workflow_type=workflow_type,
                 run_id=run_id,
+                task_id=message_task_id,
                 content=content,
                 model_name=runtime_config.model_name,
                 sort_order=await self._repo.next_message_order(session.id),
