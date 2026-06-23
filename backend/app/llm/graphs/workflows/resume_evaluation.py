@@ -50,12 +50,16 @@ async def _request_job_selection(state: ResumeEvaluationState, config) -> dict:
     ctx: WorkflowRuntimeContext = config["configurable"]["ctx"]
     payload = ctx.evaluation_service.build_job_interaction(state)
     user_values = interrupt(payload)
+    # None 容忍：中断后"发新消息续接"（Q2）时 interrupt() 返回 None → 视作驳回重新加载候选岗，
+    # 反馈取自 state.user_intent（update_state 注入的新消息），避免对 None 调 .get 崩溃
+    if not isinstance(user_values, dict):
+        user_values = {"regenerate": True}
     if user_values.get("regenerate"):
         return {
             "job_rejected": True,
             "selected_job_name": "",
             "validation_attempts": 0,
-            "job_feedback": str(user_values.get("feedback") or ""),
+            "job_feedback": str(user_values.get("feedback") or state.get("job_feedback") or ""),
         }
     # 字段名严格对齐前端 InteractionBlock JobSelection 提交的 { selected_job_name }
     return {"selected_job_name": str(user_values.get("selected_job_name") or ""), "job_rejected": False}

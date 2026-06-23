@@ -59,7 +59,7 @@ describe('错误态重试按钮', () => {
     const sendSpy = vi.fn();
     const actions = useAgentStore.getState();
     const origSend = actions.sendMessage;
-    useAgentStore.setState({ sendMessage: async (...args) => { sendSpy(...args); } } as never);
+    useAgentStore.setState({ sendMessage: async (...args: unknown[]) => { sendSpy(...args); } } as never);
 
     render(<AgentWorkspace sessionId={1} onSessionUpdate={() => {}} />);
     const retryBtn = screen.getByRole('button', { name: '重试' });

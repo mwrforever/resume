@@ -550,11 +550,11 @@ async def test_resume_run_commits_after_persisting_progress():
 
 
 @pytest.mark.asyncio
-async def test_abort_pending_interaction_commits_after_advancing_task_id():
-    """Cluster 1 回归：abort_pending_interaction 推进 task_id 后必须 commit。
+async def test_abort_pending_interaction_marks_expired_without_advancing_task_id():
+    """Q2：abort_pending_interaction 只标记 pending 为 expired 并 commit，不再推进 task_id。
 
-    现状：过期标记的 commit（行内）已落库，但其后 _advance_task_id 的 flush 无 commit，
-    DB 仍是旧 task_id → 下次发送无法正确隔离。
+    语义变更：中断后发新消息应续接同 thread（保持原 workflow 上下文），而非隔离到新 thread。
+    task_id 推进改由 stream_message 在 graph 走到 END 时执行（_advance_task_id）。
     """
     calls: list[str] = []
     svc = AgentRuntimeService.__new__(AgentRuntimeService)  # 跳过 __init__
@@ -578,6 +578,10 @@ async def test_abort_pending_interaction_commits_after_advancing_task_id():
 
     async def _track_update_msg(mid, content):
         calls.append("msg_content")
+        # 校验：pending 已被改写为 expired（保留 thread 供续接）
+        for b in content["blocks"]:
+            if b.get("type") == "interaction":
+                assert b["status"] == "expired"
 
     svc._repo.commit = _track_commit
     svc._repo.update_session = _track_update
@@ -586,12 +590,11 @@ async def test_abort_pending_interaction_commits_after_advancing_task_id():
     session = _make_session()
     await svc.abort_pending_interaction(session=session)
 
-    # task_id 推进之后必须存在 commit
-    assert "task_id" in calls, f"未观察到 task_id 推进：{calls}"
-    last_task_idx = max(i for i, c in enumerate(calls) if c == "task_id")
-    assert "commit" in calls[last_task_idx + 1:], (
-        f"task_id 推进后未 commit（DB 仍是旧 task_id）：{calls}"
-    )
+    # 标记 expired 后必须 commit
+    assert "msg_content" in calls, f"未观察到 expired 标记：{calls}"
+    assert "commit" in calls, f"标记 expired 后未 commit：{calls}"
+    # Q2 核心：不再推进 task_id（保留同 thread 供续接）
+    assert "task_id" not in calls, f"中断不应再推进 task_id：{calls}"
 
 
 @pytest.mark.asyncio

@@ -69,6 +69,37 @@ class AgentWorkflowRunner:
                 else:
                     logger.warning("custom stream 收到非 envelope 载荷，忽略：%r", payload)
 
+    async def astream_resume_with_update(
+        self, *, thread_id: str, update_values: dict[str, Any], ctx: WorkflowRuntimeContext,
+    ) -> AsyncIterator[AgentStreamEnvelope]:
+        """中断后续接同 thread（Q2"先 update，后 None"）。
+
+        场景：用户在 interaction 暂停态点中断后发新消息，期望续在同一 workflow 上下文
+        （已加载简历/已选维度等 state 不丢），而非隔离到新 thread 重跑。
+
+        做法：
+        1. 先 aupdate_state 把新消息注入对应 state 通道（图一 user_intent、图二 job_feedback）
+        2. 后 astream(None) 续接：interrupt 节点收到 None 时由各自的 None 容忍分支
+           视作"驳回并用注入的新消息作为反馈"重新推导，复用同 thread 的 checkpoint 上下文。
+
+        @param update_values: 注入到 checkpoint state 的通道更新（由调用方按工作流类型组装）
+        """
+        config = {"configurable": {"thread_id": thread_id, "ctx": ctx}}
+        # 1) 先 update：把新消息写进 state（持久化到 checkpoint，resume 后节点可读）
+        await self._graph.aupdate_state(config, update_values)
+        # 2) 后 None：从 checkpoint 续接，interrupt 返回 None 由节点容忍处理
+        async for mode, payload in self._graph.astream(
+            None, config=config, stream_mode=["tasks", "custom"],
+        ):
+            if mode == "tasks":
+                for env in self._translate_task(payload, ctx):
+                    yield env
+            elif mode == "custom":
+                if isinstance(payload, AgentStreamEnvelope):
+                    yield payload
+                else:
+                    logger.warning("custom stream 收到非 envelope 载荷，忽略：%r", payload)
+
     # ---------- 内部 ----------
 
     def _translate_task(

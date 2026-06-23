@@ -39,12 +39,23 @@ async def _request_dimension_selection(state: InterviewQuestionState, config) ->
 
     不返回 Command(goto)：interrupt resume 场景下 Command(goto) 会被静态边抢先执行
     （先跑下游节点再跳转），改用 add_conditional_edges 显式路由规避此问题。
+
+    None 容忍：中断后用户不发回执而是"发新消息续接"时（Q2），Runner 以 update_state
+    注入新意图 + astream(None) 续接，interrupt() 返回 None。此时视作"驳回并用新消息
+    作为反馈重新建议维度"，feedback 取自 state.dimension_feedback（由 update_state 写入），
+    避免对 None 调 .get 崩溃，同时让新消息驱动维度重算。
     """
     ctx: WorkflowRuntimeContext = config["configurable"]["ctx"]
     payload = ctx.interview_service.build_dimension_interaction(state)
     user_values = interrupt(payload)
-    feedback = str(user_values.get("feedback") or user_values.get("user_feedback") or "").strip()
-    if user_values.get("regenerate"):
+    # None 容忍：续接（astream None）场景 → 视作驳回，反馈取自 state（update_state 注入的新消息）
+    if not isinstance(user_values, dict):
+        user_values = {"regenerate": True}
+    feedback = str(
+        user_values.get("feedback") or user_values.get("user_feedback")
+        or state.get("dimension_feedback") or state.get("user_intent") or ""
+    ).strip()
+    if user_values.get("regenerate") or not user_values:
         # 驳回：记录标志 + feedback + 用户分类反馈（已采纳保留、已否决替换），
         # 由条件边 _route_after_dimension_selection 决定回 suggest_dimensions
         return {
@@ -77,10 +88,17 @@ async def _request_plan_approval(state: InterviewQuestionState, config) -> dict:
       由条件边回到 build_question_plan 重新规划
 
     不返回 Command(goto)，原因同 _request_dimension_selection（条件边规避 resume 路由竞态）。
+
+    None 容忍：中断后用户"发新消息续接"时（Q2），interrupt() 返回 None。此时视作
+    "驳回并用新消息作为反馈重新规划"，feedback 取自 state.question_plan._feedback
+    （由 update_state 注入的新消息），避免对 None 调 .get 崩溃。
     """
     ctx: WorkflowRuntimeContext = config["configurable"]["ctx"]
     payload = ctx.interview_service.build_plan_interaction(state)
     user_values = interrupt(payload)
+    # None 容忍：续接场景 → 视作驳回，反馈取自 state（update_state 注入的新消息）
+    if not isinstance(user_values, dict):
+        user_values = {"approved": False}
     if user_values.get("approved"):
         update: dict = {"plan_approved": True, "plan_rejected": False}
         edited = user_values.get("edited_plan")
@@ -88,11 +106,12 @@ async def _request_plan_approval(state: InterviewQuestionState, config) -> dict:
             # 用前端编辑后的计划覆盖原 plan，保证 fanout 按编辑值出题
             update["question_plan"] = edited
         return update
-    # 驳回：携带 HR 反馈，由条件边 _route_after_plan_approval 回 build_question_plan
+    # 驳回：携带 HR 反馈，由条件边 _route_after_plan_approval 回 build_question_plan。
+    # None 续接场景下反馈取自 state.user_intent（update_state 注入的新消息）
     return {
         "plan_rejected": True,
         "plan_approved": False,
-        "question_plan": {**state["question_plan"], "_feedback": user_values.get("feedback", "")},
+        "question_plan": {**state["question_plan"], "_feedback": user_values.get("feedback") or state.get("user_intent", "")},
     }
 
 

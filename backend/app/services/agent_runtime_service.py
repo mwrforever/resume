@@ -169,6 +169,40 @@ class AgentRuntimeService:
         """
         return any(env.type == "interaction.request" for env in envelopes)
 
+    async def _has_unfinished_interaction(self, session) -> bool:
+        """判断会话最近一条 agent 消息是否含未完结的 interaction（pending/expired）。
+
+        用于 Q2：用户在 interaction 暂停态点中断后发新消息时，识别"应续接同 thread"
+        场景。expired = abort_pending_interaction 已标记但未推进 task_id（保留 thread）；
+        pending = 兜底（中断标记未来得及写入）。两者都视为未完结，需走 update+None 续接。
+        """
+        try:
+            messages = await self._repo.list_messages(session.id)
+            for msg in reversed(messages):
+                if msg.role != "agent":
+                    continue
+                blocks = (msg.content or {}).get("blocks") or []
+                return any(
+                    b.get("type") == "interaction" and b.get("status") in ("pending", "expired")
+                    for b in blocks
+                )
+        except Exception:
+            logger.exception("检测未完结 interaction 失败：session_id=%s", session.id)
+        return False
+
+    @staticmethod
+    def _build_resume_update(workflow_type: str, content: str) -> dict[str, Any]:
+        """构造续接时的 state 更新（Q2"先 update"）：把新消息注入对应工作流的反馈通道。
+
+        图一注入 user_intent（suggest_dimensions / build_question_plan 读取）；
+        图二注入 job_feedback（load_job_candidates 读取）。续接后 interrupt 节点
+        收到 None 视作驳回，用该反馈重新推导，复用同 thread 上下文。
+        """
+        text = (content or "").strip()
+        if workflow_type == "resume_evaluation":
+            return {"job_feedback": text}
+        return {"user_intent": text}
+
     async def stream_message(
         self, *, session, body: AgentMessageCreate, runtime_config: LLMRuntimeConfigDTO,
     ) -> AsyncIterator[AgentStreamEnvelope]:
@@ -220,6 +254,9 @@ class AgentRuntimeService:
         # 运行 graph
         runner = self._runner_factory(self._workflow_graphs[body.workflow_type])
         thread_id = await self._resolve_thread_id(session)
+        # Q2：若上一段 run 停在未完结的 interaction（中断后未推进 task_id），本条新消息
+        # 走"先 update 后 None"续接同 thread，保持原 workflow 上下文；否则全新 run 走 __start__。
+        resume_continuation = await self._has_unfinished_interaction(session)
         graph_completed = False  # 仅"无异常 且 未中断（走到 END）"才视为完成
         # client_aborted：客户端中途断开（fetch.abort），asyncio 抛 CancelledError/GeneratorExit。
         # 此时 yield 已不可用（连接已断），但已生成的 envelopes 必须落库到 agent_message，
@@ -227,9 +264,17 @@ class AgentRuntimeService:
         client_aborted = False
         try:
             try:
-                async for env in runner.astream(
-                    thread_id=thread_id, graph_input=graph_input, ctx=ctx,
-                ):
+                if resume_continuation:
+                    # 续接：注入新消息到 state，astream(None) 从 checkpoint 继续
+                    update_values = self._build_resume_update(body.workflow_type, body.content or "")
+                    aiter = runner.astream_resume_with_update(
+                        thread_id=thread_id, update_values=update_values, ctx=ctx,
+                    )
+                else:
+                    aiter = runner.astream(
+                        thread_id=thread_id, graph_input=graph_input, ctx=ctx,
+                    )
+                async for env in aiter:
                     envelope_buffer.append(env)
                     if env.type == "step.update":
                         run_steps.append(env.data)
@@ -291,7 +336,9 @@ class AgentRuntimeService:
                 # 持久化累积进度到 session.progress（reset=True：新 task 丢弃旧 steps）
                 try:
                     await self._persist_progress(
-                        session, run_steps, body.workflow_type, reset=True,
+                        session, run_steps, body.workflow_type,
+                        # Q2 续接同 thread：进度合并累积（reset=False）；全新 run 才丢弃旧 steps
+                        reset=not resume_continuation,
                     )
                 except Exception:
                     logger.exception("stream_message 持久化 progress 失败：session_id=%s", session.id)
@@ -938,14 +985,17 @@ class AgentRuntimeService:
 
         场景：用户在 interrupt 暂停态（维度选择 / 计划审批 / 岗位选择卡）点击"中断"按钮。
         此时流式 run 已结束（run.finish 已 yield），无连接可断；本方法负责：
-        1. 把最近一条 agent 消息中所有 status=pending 的 interaction block 标记为 expired
-        2. 推进 session.current_task_id：让下一轮新问题走全新 LangGraph thread，
-           丢弃当前 thread 上等 interrupt 的 checkpoint（用户语义=放弃当前流程）。
+        把最近一条 agent 消息中所有 status=pending 的 interaction block 标记为 expired。
+
+        Q2：不再推进 task_id。用户中断后发新消息时，stream_message 检测到 expired
+        interaction 会走"先 update 后 None"续接同 thread，保持原 workflow 上下文
+        （已加载简历/已选维度等 state 不丢），而非隔离到新 thread 重跑。仅当整个
+        workflow 走到 END 时才由 _advance_task_id 推进（隔离下一轮）。
 
         失败仅日志，不抛错；调用方按 fire-and-forget 处理。
         """
         try:
-            # 1) 标记所有 pending interaction block 为 expired
+            # 标记所有 pending interaction block 为 expired（保留 thread，供续接）
             messages = await self._repo.list_messages(session.id)
             for msg in reversed(messages):
                 content = msg.content or {}
@@ -962,17 +1012,9 @@ class AgentRuntimeService:
                     await self._repo.update_message_content(msg.id, content)
                     await self._repo.commit()
                     logger.info(
-                        "用户中断 interrupt：session_id=%s message_id=%s 已标记 pending block 为 expired",
+                        "用户中断 interrupt：session_id=%s message_id=%s 已标记 pending block 为 expired（保留 thread 供续接）",
                         session.id, msg.id,
                     )
                     break  # 只处理最近一条含 pending 的消息
         except Exception:
             logger.exception("标记 pending interaction 为 expired 失败：session_id=%s", session.id)
-        # 2) 推进 task_id，下一轮新问题走全新 LangGraph thread
-        try:
-            await self._advance_task_id(session)
-            # Cluster 1：推进 task_id 后必须 commit，否则 DB 仍是旧 task_id、下次发送无法隔离
-            await self._repo.commit()
-            logger.info("用户中断 interrupt：session_id=%s 已推进 task_id", session.id)
-        except Exception:
-            logger.exception("中断后推进 task_id 失败：session_id=%s", session.id)
