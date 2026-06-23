@@ -94,6 +94,19 @@ class JobRepository:
         )
         return result.scalars().all()
 
+    async def list_available(self) -> list[JobPosition]:
+        """获取全部可选岗位（公共资源，不按 employee_id 过滤）。
+
+        简历评估场景下岗位是面向全公司共享的资源：员工选岗、校验岗位归属、
+        加载候选岗都基于"在招"维度。规则：status=1 且 is_deleted=0。
+        """
+        result = await self.db.execute(
+            select(JobPosition)
+            .where(JobPosition.status == 1, JobPosition.is_deleted == 0)
+            .order_by(JobPosition.create_time.desc())
+        )
+        return result.scalars().all()
+
     async def create(
         self,
         employee_id: int,
