@@ -79,22 +79,25 @@ async def test_eval_load_resume_no_interrupt_when_file_path_present():
 
 
 @pytest.mark.asyncio
-async def test_eval_load_resume_raises_when_interrupt_returns_no_path():
-    """interrupt 返回值缺 file_path → ValidationError 中断流程。"""
-    from app.core.exceptions import ValidationError
+async def test_eval_load_resume_reinterrupts_when_value_lacks_file_path():
+    """interrupt 返回值缺 file_path（如续接路径下喂回的驳回信号）→ 再次 interrupt
+    要求上传，不抛错（resume_upload 没有"驳回重推"语义）。"""
     loader = MagicMock()
-    loader.load_by_path = AsyncMock(return_value="")
+    loader.load_by_path = AsyncMock(return_value="简历原文")
     svc = _make_service(loader=loader)
     state = {"resume_ref": {}}
     ctx = MagicMock()
     ctx.emitter.next_block_index.return_value = 0
+    # 第一次 interrupt 返回 {regenerate, feedback}（无 file_path），第二次才给路径
     with patch(
         "app.services.resume_evaluation_service.interrupt",
-        return_value={"file_name": "r.pdf"},  # 没有 file_path
-    ):
+        side_effect=[{"regenerate": True, "feedback": "..."}, {"file_path": "/u/r.pdf"}],
+    ) as mock_int:
         with patch(
             "app.services.resume_evaluation_service.get_stream_writer",
             return_value=lambda _e: None,
         ):
-            with pytest.raises(ValidationError):
-                await svc.load_resume(state, ctx)
+            result = await svc.load_resume(state, ctx)
+    assert mock_int.call_count == 2
+    loader.load_by_path.assert_awaited_once_with(file_path="/u/r.pdf")
+    assert result["resume_text"] == "简历原文"
