@@ -120,5 +120,19 @@ async def ensure_admin(current_user: dict, employee_repo) -> None:
         raise ForbiddenError("仅员工账号可访问")
     employee = await employee_repo.get_by_id(int(current_user["sub"]))
     # is_admin 为 1 才放行；旧数据缺列时 getattr 兜底为 0（拒绝）
-    if not employee or not int(getattr(employee, "is_admin", 0) or 0):
+    if not employee or not is_employee_admin(employee):
         raise ForbiddenError("当前员工无管理权限")
+
+
+def is_employee_admin(employee) -> bool:
+    """统一读取员工管理员标记。
+
+    AuthService 的 get_by_* 在缓存命中时返回 dict、未命中返回 ORM 对象，
+    两种形态都兼容，避免缓存路径下 is_admin 误判为 False。供需要"判定而非抛错"
+    的调用方（如模型配置权限）使用，ensure_admin 内部也复用本函数。
+    """
+    if employee is None:
+        return False
+    if isinstance(employee, dict):
+        return bool(employee.get("is_admin", 0))
+    return bool(getattr(employee, "is_admin", 0) or 0)

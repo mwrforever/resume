@@ -3,7 +3,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.utils.auth import AuthService
+from app.utils.auth import AuthService, is_employee_admin
 from app.deps import get_current_user
 from app.deps import get_db
 from app.deps import get_cache
@@ -21,19 +21,6 @@ from app.schemas.vo.response.account_management_response import ApiResponse, Man
 
 router = APIRouter()
 employee_manage_router = APIRouter()
-
-
-def _employee_is_admin(employee) -> bool:
-    """统一读取员工管理员标记。
-
-    AuthService 的 get_by_* 在缓存命中时返回 dict、未命中返回 ORM 对象，
-    两种形态都兼容，避免缓存路径下 is_admin 误判为 False。
-    """
-    if employee is None:
-        return False
-    if isinstance(employee, dict):
-        return bool(employee.get("is_admin", 0))
-    return bool(getattr(employee, "is_admin", 0) or 0)
 
 
 def get_auth_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> AuthService:
@@ -114,7 +101,7 @@ async def login(
         user_type="employee",
         user_id=employee.id,
         # 管理员标记随登录下发，前端据此隐藏/展示管理类菜单
-        is_admin=_employee_is_admin(employee),
+        is_admin=is_employee_admin(employee),
     ))
 
 
@@ -152,7 +139,7 @@ async def refresh_token(
         user_type=user_type,
         user_id=user_id,
         # 刷新时同步下发最新管理员标记（管理员身份可在员工管理页动态变更）
-        is_admin=_employee_is_admin(employee),
+        is_admin=is_employee_admin(employee),
     ))
 
 

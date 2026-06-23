@@ -13,7 +13,7 @@ from app.schemas.agent.dto import LLMRuntimeConfigDTO
 from app.schemas.agent.request import LlmConfigCreate, LlmConfigUpdate
 from app.schemas.agent.response import LlmConfigItem, LlmModelOption
 from app.services.cache_service import CacheService
-from app.utils.auth import ADMIN_EMAIL
+from app.utils.auth import is_employee_admin
 from app.utils.cache_utils import LLM_MODEL_OPTIONS_KEY, LLM_MODEL_OPTIONS_TTL
 from app.utils.secret_crypto import decrypt_secret, encrypt_secret, mask_secret
 
@@ -275,14 +275,14 @@ class LlmConfigService:
             employee = await self.employee_repo.get_by_id(biz_id)
             if not employee:
                 raise ValidationError("员工不存在")
-            if biz_id != employee_id and (not current_employee or current_employee.email != ADMIN_EMAIL):
+            if biz_id != employee_id and (not current_employee or not is_employee_admin(current_employee)):
                 raise ForbiddenError("只能维护自己的模型配置")
             return
         if biz_type == "dept":
             dept = await self.dept_repo.get_by_id(biz_id)
             if not dept:
                 raise ValidationError("部门不存在")
-            if current_employee and (current_employee.email == ADMIN_EMAIL or dept.leader_id == employee_id):
+            if current_employee and (is_employee_admin(current_employee) or dept.leader_id == employee_id):
                 return
             raise ForbiddenError("当前员工无部门模型配置权限")
         raise ValidationError("不支持的业务类型")
@@ -295,7 +295,7 @@ class LlmConfigService:
     async def _can_manage_config(self, config: LlmModelConfig, current_user: dict) -> bool:
         employee_id = self._current_employee_id(current_user)
         employee = await self.employee_repo.get_by_id(employee_id)
-        if employee and employee.email == ADMIN_EMAIL:
+        if employee and is_employee_admin(employee):
             return True
         if config.biz_type == "employee":
             return config.biz_id == employee_id
