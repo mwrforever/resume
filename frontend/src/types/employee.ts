@@ -202,6 +202,8 @@ export interface IManagedEmployee {
   dept_name?: string;
   depts?: IManagedEmployeeDept[];
   status: number;
+  /** 是否管理员：1是 0否（员工管理页展示与授权） */
+  is_admin?: number;
   create_time?: string;
   update_time?: string;
 }

@@ -1,6 +1,12 @@
 import pytest
 
-from app.db.mysql import LLM_MODEL_CONFIG_SCHEMA_COLUMNS, ensure_llm_model_config_schema
+from app.db.mysql import (
+    LLM_MODEL_CONFIG_SCHEMA_COLUMNS,
+    SYS_EMPLOYEE_SCHEMA_COLUMNS,
+    LEGACY_ADMIN_EMAIL,
+    ensure_llm_model_config_schema,
+    ensure_sys_employee_schema,
+)
 
 
 class FakeResult:
@@ -46,3 +52,28 @@ async def test_ensure_llm_model_config_schema_skips_existing_columns():
     await ensure_llm_model_config_schema(conn)
 
     assert all("ADD COLUMN" not in statement for statement in conn.statements)
+
+
+@pytest.mark.asyncio
+async def test_ensure_sys_employee_schema_adds_is_admin_and_backfills_legacy_admin():
+    """缺列时应补齐 is_admin，并把旧管理员邮箱置位为 1（避免迁移后权限自举死锁）。"""
+    conn = FakeConnection({"id", "emp_no", "real_name", "email", "status", "is_deleted"})
+
+    await ensure_sys_employee_schema(conn)
+
+    sql = "\n".join(conn.statements)
+    # 补齐 is_admin 列
+    assert "ADD COLUMN is_admin" in sql
+    # 同一回事务内回填旧管理员邮箱为 1
+    assert f"email = '{LEGACY_ADMIN_EMAIL}'" in sql
+    assert "is_admin = 1" in sql
+
+
+@pytest.mark.asyncio
+async def test_ensure_sys_employee_schema_skips_when_is_admin_exists():
+    """is_admin 列已存在时不应再执行 ALTER / UPDATE（幂等）。"""
+    conn = FakeConnection(set(SYS_EMPLOYEE_SCHEMA_COLUMNS))
+
+    await ensure_sys_employee_schema(conn)
+
+    assert all("ADD COLUMN" not in s and "UPDATE sys_employee" not in s for s in conn.statements)

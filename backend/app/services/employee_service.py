@@ -46,6 +46,7 @@ class EmployeeManageService:
             real_name=body.real_name,
             phone=body.phone,
             status=body.status,
+            is_admin=getattr(body, "is_admin", 0) or 0,
         )
         if dept_ids:
             await self.employee_repo.assign_depts(employee.id, dept_ids, primary_dept_id)
@@ -55,11 +56,19 @@ class EmployeeManageService:
             await self.cache.delete(EMPLOYEE_EMP_NO_KEY.format(emp_no=body.emp_no))
         return await self.get_employee(employee.id)
 
-    async def update_employee(self, employee_id: int, body) -> ManagedEmployeeItem:
+    async def update_employee(self, employee_id: int, body, current_employee_id: int | None = None) -> ManagedEmployeeItem:
         employee = await self.employee_repo.get_by_id(employee_id)
         if not employee:
             raise NotFoundError("员工不存在")
         payload = body.model_dump(exclude_unset=True)
+        # 管理员身份保护：禁止撤销自己的 is_admin，避免误操作导致自锁（无可用管理员）
+        if (
+            "is_admin" in payload
+            and int(payload["is_admin"]) != 1
+            and current_employee_id is not None
+            and employee_id == current_employee_id
+        ):
+            raise ValidationError("不能撤销自己的管理员身份")
         email = payload.get("email")
         emp_no = payload.get("emp_no")
         await self._ensure_employee_unique(

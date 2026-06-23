@@ -9,8 +9,6 @@ from app.utils.cache_utils import (
 )
 from app.core.security import create_access_token, create_refresh_token, verify_password
 
-ADMIN_EMAIL = "18229923842@163.com"
-
 
 class AuthService:
     def __init__(self, user_repo, employee_repo, cache: CacheService | None = None):
@@ -33,6 +31,7 @@ class AuthService:
             "email": emp.email,
             "real_name": emp.real_name,
             "status": emp.status,
+            "is_admin": getattr(emp, "is_admin", 0) or 0,
         }
 
     async def get_user_by_email(self, email: str):
@@ -112,8 +111,14 @@ class AuthService:
 
 
 async def ensure_admin(current_user: dict, employee_repo) -> None:
+    """校验当前用户是否为员工管理员（is_admin=1）。
+
+    管理员身份由 sys_employee.is_admin 字段判定，替代旧版写死邮箱的方式，
+    支持在员工管理页动态授权/回收。非员工或非管理员一律拒绝。
+    """
     if current_user.get("user_type") != "employee":
         raise ForbiddenError("仅员工账号可访问")
     employee = await employee_repo.get_by_id(int(current_user["sub"]))
-    if not employee or employee.email != ADMIN_EMAIL:
+    # is_admin 为 1 才放行；旧数据缺列时 getattr 兜底为 0（拒绝）
+    if not employee or not int(getattr(employee, "is_admin", 0) or 0):
         raise ForbiddenError("当前员工无管理权限")

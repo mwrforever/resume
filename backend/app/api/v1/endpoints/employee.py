@@ -23,6 +23,19 @@ router = APIRouter()
 employee_manage_router = APIRouter()
 
 
+def _employee_is_admin(employee) -> bool:
+    """统一读取员工管理员标记。
+
+    AuthService 的 get_by_* 在缓存命中时返回 dict、未命中返回 ORM 对象，
+    两种形态都兼容，避免缓存路径下 is_admin 误判为 False。
+    """
+    if employee is None:
+        return False
+    if isinstance(employee, dict):
+        return bool(employee.get("is_admin", 0))
+    return bool(getattr(employee, "is_admin", 0) or 0)
+
+
 def get_auth_service(db: AsyncSession = Depends(get_db), cache: CacheService = Depends(get_cache)) -> AuthService:
     return AuthService(UserRepository(db), EmployeeRepository(db), cache)
 
@@ -99,7 +112,9 @@ async def login(
         access_token=access_token,
         refresh_token=refresh_token,
         user_type="employee",
-        user_id=employee.id
+        user_id=employee.id,
+        # 管理员标记随登录下发，前端据此隐藏/展示管理类菜单
+        is_admin=_employee_is_admin(employee),
     ))
 
 
@@ -135,7 +150,9 @@ async def refresh_token(
         access_token=new_access_token,
         refresh_token=new_refresh_token,
         user_type=user_type,
-        user_id=user_id
+        user_id=user_id,
+        # 刷新时同步下发最新管理员标记（管理员身份可在员工管理页动态变更）
+        is_admin=_employee_is_admin(employee),
     ))
 
 
@@ -195,7 +212,7 @@ async def update_employee(
     current_user: dict = Depends(get_current_user),
 ) -> ApiResponse[ManagedEmployeeItem]:
     await service.ensure_admin(current_user)
-    return ApiResponse(message="修改成功", data=await service.update_employee(employee_id, body))
+    return ApiResponse(message="修改成功", data=await service.update_employee(employee_id, body, int(current_user["sub"])))
 
 
 @employee_manage_router.delete("/employees/{employee_id}", response_model=ApiResponse)

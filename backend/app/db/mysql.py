@@ -49,6 +49,35 @@ async def ensure_llm_model_config_schema(conn: AsyncConnection) -> None:
         await conn.execute(text(alter_sql))
 
 
+# sys_employee 表的增量字段：is_admin 用于员工管理员分类（替代写死邮箱判定）。
+# 仅在旧库缺列时自动补齐；新增列默认 0，并把已知旧管理员邮箱置位为 1，
+# 避免迁移后无人有权限进入员工管理（权限自举死锁）。
+SYS_EMPLOYEE_SCHEMA_COLUMNS = {
+    "is_admin": "ALTER TABLE sys_employee ADD COLUMN is_admin SMALLINT NOT NULL DEFAULT 0 COMMENT '是否管理员：1是，0否' AFTER status",
+}
+
+# 迁移时一次性置位为管理员的旧账号邮箱（仅用于数据回填，ensure_admin 不再依赖此值）。
+LEGACY_ADMIN_EMAIL = "18229923842@163.com"
+
+
+async def ensure_sys_employee_schema(conn: AsyncConnection) -> None:
+    """补齐 sys_employee 增量字段，并把旧管理员邮箱回填为 is_admin=1。"""
+    for column_name, alter_sql in SYS_EMPLOYEE_SCHEMA_COLUMNS.items():
+        column_result = await conn.execute(text(f"SHOW COLUMNS FROM sys_employee LIKE '{column_name}'"))
+        if column_result.first():
+            continue
+        logger.info("sys_employee 表缺少字段，正在自动补齐：column=%s", column_name)
+        await conn.execute(text(alter_sql))
+        # 新增 is_admin 列后，把旧管理员邮箱置位为 1，保证迁移后仍有可用管理员。
+        # LEGACY_ADMIN_EMAIL 为内部写死常量（非用户输入），内联拼接无注入风险，
+        # 且与同文件其它迁移语句风格一致（均走 text(sql) 无绑定参数）。
+        if column_name == "is_admin":
+            await conn.execute(text(
+                f"UPDATE sys_employee SET is_admin = 1 WHERE email = '{LEGACY_ADMIN_EMAIL}' AND is_deleted = 0"
+            ))
+            logger.info("已将旧管理员邮箱置位 is_admin=1：email=%s", LEGACY_ADMIN_EMAIL)
+
+
 class MySQLManager:
     def __init__(self) -> None:
         self._engine: Optional[AsyncEngine] = None
@@ -110,6 +139,7 @@ class MySQLManager:
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             await ensure_llm_model_config_schema(conn)
+            await ensure_sys_employee_schema(conn)
 
     async def close_pool(self) -> None:
         """

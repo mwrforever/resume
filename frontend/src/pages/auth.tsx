@@ -128,7 +128,7 @@ export default function Auth() {
           password: formData.password,
         }));
         setTokens(res.access_token, res.refresh_token);
-        setUserInfo('employee', String(res.user_id));
+        setUserInfo('employee', String(res.user_id), !!res.is_admin);
         navigate('/employee/dashboard');
       }
     } catch {
@@ -173,7 +173,7 @@ export default function Auth() {
           real_name: formData.realName,
         }));
         setTokens(res.access_token, res.refresh_token);
-        setUserInfo('employee', String(res.user_id));
+        setUserInfo('employee', String(res.user_id), !!res.is_admin);
         navigate('/employee/dashboard');
       }
     } catch (err: any) {

@@ -22,6 +22,9 @@ class SysEmployee(Base):
     phone: Mapped[str | None] = mapped_column(String(20), comment="手机号")
     password_hash: Mapped[str | None] = mapped_column(String(500), comment="密码哈希")
     status: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, comment="在职状态：1在职，0离职")
+    # 是否管理员：1=管理员（可访问用户管理/员工管理），0=普通员工。
+    # 替代旧版写死管理员邮箱的判定方式，支持多管理员与动态授权。
+    is_admin: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0", comment="是否管理员：1是，0否")
     is_deleted: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, comment="逻辑删除")
     create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
     update_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")
