@@ -590,6 +590,40 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     }
     const ac = new AbortController();
     abortControllers.set(sessionId, ac);
+    // Q1 修复：续接前若 current_blocks 非空（上一段 run 中断后尚未落库的块），
+    // 先把它们固化为一条独立的 agent 消息追加到 messages，再清空 current_blocks。
+    // 这样每段 run 在界面上各自成卡（与刷新后落库消息一卡一致），避免多次中断/续接
+    // 的块在 pseudoStreamingMessage 里累积合并成同一张卡。reload 落库后该合成消息
+    // 会被真实消息替换（id 不同，React 卸载合成卡挂载真实卡，与既有 abort→reload 一致）。
+    const prevBlocks = get().runs[sessionId]?.runState.current_blocks ?? [];
+    if (prevBlocks.length > 0) {
+      const syntheticMessage: AgentMessage = {
+        id: -Date.now() - Math.floor(Math.random() * 1000),
+        session_id: sessionId,
+        parent_message_id: null,
+        role: 'agent',
+        workflow_type: workflowType,
+        run_id: entry?.runState.run_id ?? null,
+        content: { blocks: prevBlocks, interrupted: true },
+        model_name: null,
+        token_count: null,
+        sort_order: Number.MAX_SAFE_INTEGER,
+        create_time: null,
+      };
+      set((s) => {
+        const e = getRun(s.runs, sessionId);
+        return {
+          runs: {
+            ...s.runs,
+            [sessionId]: {
+              ...e,
+              messages: [...e.messages, syntheticMessage],
+              runState: { ...e.runState, current_blocks: [] },
+            },
+          },
+        };
+      });
+    }
     set((s) => ({ runs: { ...s.runs, [sessionId]: { ...getRun(s.runs, sessionId), sending: true, runState: { ...getRun(s.runs, sessionId).runState, aborted: false } } } }));
     // 同 submitInteraction：把 run 包装为 promise 注册到 runningRunPromises，
     // 让"中断后再发"路径能 await 等其落库 finally 执行完。
