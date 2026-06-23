@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, String, SmallInteger, DateTime
+from sqlalchemy import BigInteger, Index, String, SmallInteger, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -14,6 +14,15 @@ if TYPE_CHECKING:
 
 class SysEmployee(Base):
     __tablename__ = "sys_employee"
+    # 索引依据 employee_repository / dept_repository 的真实查询：
+    # - 登录 / 唯一性校验：按 email / emp_no / phone 单字段查询
+    # - 部门成员的真实姓名匹配（dept_repository.list_employees_by_real_name）
+    __table_args__ = (
+        Index("idx_email", "email"),
+        Index("idx_emp_no", "emp_no"),
+        Index("idx_phone", "phone"),
+        Index("idx_real_name", "real_name"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     emp_no: Mapped[str | None] = mapped_column(String(30), comment="员工工号")

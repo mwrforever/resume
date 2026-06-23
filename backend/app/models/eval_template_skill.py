@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, String, SmallInteger, DateTime
+from sqlalchemy import BigInteger, DateTime, Index, SmallInteger, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 
 class EvalTemplateSkill(Base):
     __tablename__ = "eval_template_skill"
+    # 真实查询：按 template_id 列出技能（按 skill_type, id 排序）/删除
+    __table_args__ = (
+        Index("idx_template", "template_id"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     template_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="模板ID")

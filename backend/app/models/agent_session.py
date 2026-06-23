@@ -15,7 +15,8 @@ class AgentSession(Base):
     __tablename__ = "agent_session"
     __table_args__ = (
         UniqueConstraint("session_key", name="uk_session_key"),
-        Index("idx_employee", "employee_id", "status", "last_message_time"),
+        # 真实查询：list_sessions 按 employee_id + status 过滤，按 create_time desc 排序
+        Index("idx_employee_status_time", "employee_id", "status", "create_time"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, String, SmallInteger, Integer, DateTime, Text
+from sqlalchemy import BigInteger, DateTime, Index, Integer, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 
 class EvalDimension(Base):
     __tablename__ = "eval_dimension"
+    # 真实查询：列表 (is_deleted, status) 过滤 + sort_order/id 排序，名称模糊搜索（无索引帮助）
+    __table_args__ = (
+        Index("idx_status_sort", "is_deleted", "status", "sort_order"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     dimension_name: Mapped[str] = mapped_column(String(50), nullable=False, comment="维度名称")

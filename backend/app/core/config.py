@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""
 
+    # 首次部署/空库时引导用的初始管理员账号。已存在任意管理员则跳过引导。
+    # 全部为空字符串时不创建（适合不希望由 .env 注入账号的环境）。
+    INIT_ADMIN_EMAIL: str = ""
+    INIT_ADMIN_PASSWORD: SecretStr = SecretStr("")
+    INIT_ADMIN_REAL_NAME: str = "超级管理员"
+    INIT_ADMIN_EMP_NO: str = ""
+
     @property
     def secret_key(self) -> str:
         return self.SECRET_KEY.get_secret_value()
@@ -81,6 +88,10 @@ class Settings(BaseSettings):
     @property
     def smtp_password(self) -> str:
         return self.SMTP_PASSWORD.get_secret_value()
+
+    @property
+    def init_admin_password(self) -> str:
+        return self.INIT_ADMIN_PASSWORD.get_secret_value()
 
     @property
     def database_url(self) -> str:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, DECIMAL, DateTime, String, Integer
+from sqlalchemy import BigInteger, DECIMAL, DateTime, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -16,6 +16,15 @@ if TYPE_CHECKING:
 
 class ResumeJobMatch(Base):
     __tablename__ = "resume_job_match"
+    # 真实查询：
+    # - 按 application_id 取唯一一条评估（业务一对一）
+    # - 按 job_id 列出该岗位评估结果排序（final_score desc）
+    # - 评估时间 evaluated_at desc（统计页用）
+    __table_args__ = (
+        UniqueConstraint("application_id", name="uk_application"),
+        Index("idx_job_score", "job_id", "final_score"),
+        Index("idx_evaluated_at", "evaluated_at"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     application_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="投递记录ID")

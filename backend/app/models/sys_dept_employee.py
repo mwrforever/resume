@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, SmallInteger, DateTime
+from sqlalchemy import BigInteger, DateTime, Index, SmallInteger, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -14,6 +14,12 @@ if TYPE_CHECKING:
 
 class SysDeptEmployee(Base):
     __tablename__ = "sys_dept_employee"
+    # 真实查询：按 employee_id 列出关联部门（list_employee_depts / 批量 in_）；
+    # 一个员工在同一部门不允许重复加入（业务唯一）
+    __table_args__ = (
+        UniqueConstraint("dept_id", "employee_id", name="uk_dept_employee"),
+        Index("idx_employee", "employee_id"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     dept_id: Mapped[int] = mapped_column(BigInteger, nullable=False)

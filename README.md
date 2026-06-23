@@ -184,7 +184,8 @@ npm install
 3. 登录后进入 `/employee/dashboard`
 
 ### 步骤 2：管理员配置模型（首次）
-1. 用管理员账号登录（首次部署时由 `db/mysql.py` 自动把已知邮箱回填为 admin；也可手动 `UPDATE sys_employee SET is_admin=1 WHERE email=...`）
+1. 用 `.env` 里 `INIT_ADMIN_EMAIL` / `INIT_ADMIN_PASSWORD` 配置的初始管理员账号登录
+   （首次启动时若数据库没有任何管理员，应用会自动按 `.env` 创建一个）
 2. 进入「模型配置」菜单 → 新增配置
 3. 填必填项：配置名、模型名、Base URL、API Key；高级参数默认折叠走推荐值
 4. 保存后所有员工立即可见可用
@@ -221,4 +222,4 @@ npm install
 
 ## 七、开发约定
 
-详见 [`CLAUDE.md`](./CLAUDE.md)：分层规范、命名、异常、依赖注入、缓存策略、API 契约。
+详见仓库内开发规范文档（分层规范、命名、异常、依赖注入、缓存策略、API 契约）。
