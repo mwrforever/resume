@@ -28,7 +28,7 @@ DEFAULT_RUNTIME_PARAMS = {
     "enable_memory": True,
     "temperature": 0.7,
     "top_p": 0.9,
-    "max_tokens": 2048,
+    "max_tokens": 8192,
     "presence_penalty": 0,
     "frequency_penalty": 0,
     "extra_body": None,

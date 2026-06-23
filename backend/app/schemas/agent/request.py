@@ -37,7 +37,7 @@ class LlmConfigCreate(BaseModel):
     enable_memory: bool = True
     temperature: float = Field(default=0.7, ge=0, le=2)
     top_p: float = Field(default=0.9, ge=0, le=1)
-    max_tokens: int = Field(default=2048, ge=1, le=32000)
+    max_tokens: int = Field(default=8192, ge=1, le=32000)
     presence_penalty: float = Field(default=0, ge=-2, le=2)
     frequency_penalty: float = Field(default=0, ge=-2, le=2)
     timeout_seconds: int = Field(default=120, ge=1, le=MAX_LLM_TIMEOUT_SECONDS)
