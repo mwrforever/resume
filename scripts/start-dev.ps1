@@ -121,12 +121,23 @@ Write-Host "[OK] 已派发 BACKEND 窗口（端口 $BackendPort）" -ForegroundC
 
 # 2) 启动 Celery worker
 if (-not $NoCelery) {
-    # 同时消费 eval（评估任务）和 agent（标题精化等）两个队列；
+    # 从 celery_app 读取 ALL_QUEUES（task_routes 的单一来源），保证新增任务模块时
+    # 只需在 celery_app.TASK_QUEUE_ROUTES 加一行、脚本无需修改即生效。
     # Windows 强制 threads pool（与 celery_app.py 配置一致），避免 spawn 多进程权限问题。
     # 用 `python -m celery` 而非裸 `celery`：避免依赖 Scripts/ 是否在 PATH。
-    $celeryCmd = "python -m celery -A app.workers.celery_app:celery_app worker --pool=threads --concurrency=4 -Q eval,agent -l info"
+    Push-Location $BackendDir
+    try {
+        $queues = (& python -c "from app.workers.celery_app import ALL_QUEUES; print(ALL_QUEUES)" 2>$null).Trim()
+    } finally {
+        Pop-Location
+    }
+    if (-not $queues) {
+        Write-Warning "无法解析 celery 队列列表，回退到 eval,agent"
+        $queues = "eval,agent"
+    }
+    $celeryCmd = "python -m celery -A app.workers.celery_app:celery_app worker --pool=threads --concurrency=4 -Q $queues -l info"
     Start-DevWindow -Title "CELERY" -WorkingDir $BackendDir -Command $celeryCmd
-    Write-Host "[OK] 已派发 CELERY 窗口（队列 eval,agent）" -ForegroundColor Green
+    Write-Host "[OK] 已派发 CELERY 窗口（队列 $queues）" -ForegroundColor Green
 } else {
     Write-Host "[SKIP] -NoCelery 已生效，未启动 Celery worker" -ForegroundColor Yellow
 }
