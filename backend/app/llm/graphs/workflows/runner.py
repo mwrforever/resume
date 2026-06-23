@@ -28,6 +28,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
 
 from app.llm.graphs.workflows.context import WorkflowRuntimeContext
 from app.llm.graphs.workflows.step_labels import get_step_label
