@@ -37,7 +37,8 @@ from app.services.resume_loader import ResumeLoader
 
 logger = logging.getLogger(__name__)
 
-JOB_CANDIDATES_CACHE_KEY = "agent:job_candidates:{employee_id}"
+# 候选岗位全局缓存：岗位是面向全公司共享的公共资源，不再按 employee_id 分片
+JOB_CANDIDATES_CACHE_KEY = "agent:job_candidates:global"
 JOB_CANDIDATES_TTL = 600
 
 # 占位维度名正则：如"维度1"、"维度 2"（LLM 在 visual_report 步骤可能生成的占位名）
@@ -165,22 +166,21 @@ class ResumeEvaluationService:
         return {"resume_profile": profile}
 
     async def load_job_candidates(self, state, ctx: WorkflowRuntimeContext) -> dict:
-        """加载候选岗位列表（Redis 优先）。"""
+        """加载候选岗位列表（Redis 优先）。岗位为公共资源，不按 employee_id 过滤。"""
         writer = get_stream_writer()
         idx = ctx.emitter.next_block_index()
         writer(ctx.emitter.emit_block_start(index=idx, block={
             "type": "tool_use", "tool_name": "fetch_jobs",
-            "display_name": "加载候选岗位", "input": {"employee_id": ctx.employee_id}, "status": "running",
+            "display_name": "加载候选岗位", "input": {}, "status": "running",
         }))
         try:
-            key = JOB_CANDIDATES_CACHE_KEY.format(employee_id=ctx.employee_id)
-            cached = await self._cache.get_json(key)
+            cached = await self._cache.get_json(JOB_CANDIDATES_CACHE_KEY)
             if cached:
                 candidates = cached
             else:
-                jobs = await self._job_repo.get_by_employee(ctx.employee_id)
+                jobs = await self._job_repo.list_available()
                 candidates = [{"id": j.id, "name": j.name} for j in jobs[:20]]
-                await self._cache.set_json(key, candidates, JOB_CANDIDATES_TTL)
+                await self._cache.set_json(JOB_CANDIDATES_CACHE_KEY, candidates, JOB_CANDIDATES_TTL)
         finally:
             writer(ctx.emitter.emit_block_stop(index=idx))
         return {"job_candidates": candidates}
@@ -196,14 +196,17 @@ class ResumeEvaluationService:
         }
 
     async def validate_job(self, state, ctx: WorkflowRuntimeContext) -> dict[str, Any]:
-        """严格校验岗位全名与员工归属，返回完整岗位信息（含评估所需 template_id/description）。"""
+        """严格校验岗位全名，返回完整岗位信息（含评估所需 template_id/description）。
+
+        岗位为公共资源：候选范围为全部 status=1 在招岗位，不限定员工归属。
+        """
         name = str(state.get("selected_job_name") or "").strip()
         if not name:
             raise ValidationError("岗位名称不能为空")
-        jobs = await self._job_repo.get_by_employee(ctx.employee_id)
+        jobs = await self._job_repo.list_available()
         match = next((j for j in jobs if str(j.name) == name), None)
         if match is None:
-            raise ValidationError(f"未找到岗位 '{name}' 或不属于当前员工")
+            raise ValidationError(f"未找到岗位 '{name}'")
         # 返回深度评估所需字段：template_id 决定维度/技能，description 参与 prompt
         return {
             "id": match.id,
