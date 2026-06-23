@@ -70,26 +70,31 @@ class AgentWorkflowRunner:
                     logger.warning("custom stream 收到非 envelope 载荷，忽略：%r", payload)
 
     async def astream_resume_with_update(
-        self, *, thread_id: str, update_values: dict[str, Any], ctx: WorkflowRuntimeContext,
+        self, *, thread_id: str, update_values: dict[str, Any], resume_value: Any,
+        ctx: WorkflowRuntimeContext,
     ) -> AsyncIterator[AgentStreamEnvelope]:
-        """中断后续接同 thread（Q2"先 update，后 None"）。
+        """中断后续接同 thread（Q2"先 update，后 Command(resume=...)"）。
 
         场景：用户在 interaction 暂停态点中断后发新消息，期望续在同一 workflow 上下文
         （已加载简历/已选维度等 state 不丢），而非隔离到新 thread 重跑。
 
         做法：
-        1. 先 aupdate_state 把新消息注入对应 state 通道（图一 user_intent、图二 job_feedback）
-        2. 后 astream(None) 续接：interrupt 节点收到 None 时由各自的 None 容忍分支
-           视作"驳回并用注入的新消息作为反馈"重新推导，复用同 thread 的 checkpoint 上下文。
+        1. 先 aupdate_state 把新消息注入对应 state 通道（图一 user_intent、图二 job_feedback），
+           供后续重跑的节点（如 suggest_dimensions）读取；
+        2. 再 astream(Command(resume=resume_value)) 喂给当前中断的 interrupt() 调用——
+           astream(None) 会让 interrupt 节点重新执行并立即再次中断，弹出相同表单，
+           必须用 Command(resume=...) 才能让 interrupt() 返回值并走出该节点。
+           resume_value 由调用方按工作流类型构造（图一/图二的"驳回 + 反馈"载荷）。
 
-        @param update_values: 注入到 checkpoint state 的通道更新（由调用方按工作流类型组装）
+        @param update_values: 注入到 checkpoint state 的通道更新
+        @param resume_value: 喂给 interrupt() 的返回值（一般为"驳回 + feedback"语义）
         """
         config = {"configurable": {"thread_id": thread_id, "ctx": ctx}}
-        # 1) 先 update：把新消息写进 state（持久化到 checkpoint，resume 后节点可读）
+        # 1) 先 update：把新消息写进 state（持久化到 checkpoint，节点重跑时可读）
         await self._graph.aupdate_state(config, update_values)
-        # 2) 后 None：从 checkpoint 续接，interrupt 返回 None 由节点容忍处理
+        # 2) 后 Command(resume=...)：作为 interrupt() 的返回值，让中断节点正常走出
         async for mode, payload in self._graph.astream(
-            None, config=config, stream_mode=["tasks", "custom"],
+            Command(resume=resume_value), config=config, stream_mode=["tasks", "custom"],
         ):
             if mode == "tasks":
                 for env in self._translate_task(payload, ctx):

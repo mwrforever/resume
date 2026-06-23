@@ -46,6 +46,14 @@ async def test_build_resume_update_injects_job_feedback_for_evaluation():
     assert update == {"job_feedback": "Java 后端"}
 
 
+def test_build_resume_command_value_carries_reject_flags_and_feedback():
+    """resume 值同时携带 regenerate / approved=False / feedback，
+    覆盖三类中断节点（维度选择 / 岗位选择 / 计划审批）的驳回判定，避免续接弹回原表单。
+    """
+    value = AgentRuntimeService._build_resume_command_value("更聚焦算法工程")
+    assert value == {"regenerate": True, "approved": False, "feedback": "更聚焦算法工程"}
+
+
 @pytest.mark.asyncio
 async def test_should_continue_when_task_id_matches():
     """task_id 与 session.current_task_id 相等 → 上一段未 END → 续接。

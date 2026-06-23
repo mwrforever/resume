@@ -193,13 +193,27 @@ class AgentRuntimeService:
         """构造续接时的 state 更新（Q2"先 update"）：把新消息注入对应工作流的反馈通道。
 
         图一注入 user_intent（suggest_dimensions / build_question_plan 读取）；
-        图二注入 job_feedback（load_job_candidates 读取）。续接后 interrupt 节点
-        收到 None 视作驳回，用该反馈重新推导，复用同 thread 上下文。
+        图二注入 job_feedback（load_job_candidates 读取）。续接后中断节点被
+        Command(resume=...) 喂回驳回信号，重新走对应分支用本反馈推导。
         """
         text = (content or "").strip()
         if workflow_type == "resume_evaluation":
             return {"job_feedback": text}
         return {"user_intent": text}
+
+    @staticmethod
+    def _build_resume_command_value(content: str) -> dict[str, Any]:
+        """构造续接时喂给 interrupt() 的 resume 值（"驳回 + 反馈"统一载荷）。
+
+        三类中断节点驳回 schema 各异：
+        - 维度选择 / 岗位选择：{regenerate: True, feedback}
+        - 计划审批：{approved: False, feedback}
+        本字典三个字段同时携带可兼容任意一种中断节点的判定分支，且 feedback 在
+        节点内部读取失败时还会回落到 state.user_intent / job_feedback（已由
+        _build_resume_update 注入），保证驳回路径必触发，不会再次原地中断。
+        """
+        text = (content or "").strip()
+        return {"regenerate": True, "approved": False, "feedback": text}
 
     async def stream_message(
         self, *, session, body: AgentMessageCreate, runtime_config: LLMRuntimeConfigDTO,
@@ -265,10 +279,13 @@ class AgentRuntimeService:
         try:
             try:
                 if resume_continuation:
-                    # 续接：注入新消息到 state，astream(None) 从 checkpoint 继续
+                    # 续接：注入新消息到 state + 用 Command(resume=驳回信号) 喂给当前中断的 interrupt()
+                    # （astream(None) 会让 interrupt 节点重新执行并立即再次中断，弹出相同表单）
                     update_values = self._build_resume_update(body.workflow_type, body.content or "")
+                    resume_value = self._build_resume_command_value(body.content or "")
                     aiter = runner.astream_resume_with_update(
-                        thread_id=thread_id, update_values=update_values, ctx=ctx,
+                        thread_id=thread_id, update_values=update_values,
+                        resume_value=resume_value, ctx=ctx,
                     )
                 else:
                     aiter = runner.astream(
