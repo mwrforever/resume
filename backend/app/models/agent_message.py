@@ -24,6 +24,9 @@ class AgentMessage(Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     workflow_type: Mapped[str] = mapped_column(String(32), nullable=False)
     run_id: Mapped[str | None] = mapped_column(String(64))
+    # 消息所属 task_id = 落库时的 session.current_task_id，用于续接判断：
+    # 同一 task_id 内 workﬂow 未到 END 时为续接，已 advance 时为全新 run
+    task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     model_name: Mapped[str | None] = mapped_column(String(80))
     token_count: Mapped[int | None] = mapped_column(Integer)
