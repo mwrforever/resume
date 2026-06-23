@@ -31,7 +31,7 @@ class LlmConfigItem(BaseModel):
     enable_memory: bool = True
     temperature: float = 0.7
     top_p: float = 0.9
-    max_tokens: int = 2048
+    max_tokens: int = 8192
     presence_penalty: float = 0
     frequency_penalty: float = 0
     timeout_seconds: int

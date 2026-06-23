@@ -409,9 +409,16 @@ class InterviewQuestionService:
         )
         questions = self._parse_questions(text)
         if not questions:
+            # 解析空主因：LLM 输出被 max_tokens 截断导致 JSON 不完整。继续返回 []
+            # 会让 fanout 静默丢失整个维度（block 仍标 success，HR 看不出来），
+            # 改为上抛 → fanout gather 捕获 → 该维度块标 failed，HR 可见可重试。
             logger.warning(
                 "题目生成 JSON 解析失败：dimension=%s，原始返回前 200 字：%s",
                 plan_item.get("dimension"), text[:200].replace("\n", " "),
+            )
+            raise ValueError(
+                f"维度「{plan_item.get('dimension')}」题目生成失败："
+                "模型返回无法解析（可能被 max_tokens 截断），请重试或提高模型 max_tokens"
             )
         return questions
 

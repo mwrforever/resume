@@ -34,7 +34,7 @@ class LlmModelConfig(Base):
     enable_memory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment="是否启用上下文记忆")
     temperature: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.70"), comment="生成随机性")
     top_p: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.90"), comment="核采样参数")
-    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=2048, comment="最大输出Token")
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=8192, comment="最大输出Token")
     presence_penalty: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.00"), comment="话题出现惩罚")
     frequency_penalty: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.00"), comment="频率惩罚")
     timeout_seconds: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=120, comment="请求超时时间")
