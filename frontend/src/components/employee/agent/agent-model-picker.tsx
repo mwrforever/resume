@@ -22,9 +22,10 @@ export interface AgentModelPickerProps {
   isEmptySession: boolean;
 }
 
-/** 来源标签：env / employee / dept 三类，给用户辨识模型出处 */
+/** 来源标签：env / global / employee / dept 四类，给用户辨识模型出处 */
 const SOURCE_LABEL: Record<ILlmModelOption['source'], string> = {
   env: '系统',
+  global: '全局',
   employee: '个人',
   dept: '部门',
 };

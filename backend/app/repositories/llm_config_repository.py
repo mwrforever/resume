@@ -18,47 +18,27 @@ class LlmConfigRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_by_biz_model(self, biz_type: str, biz_id: int, model_name: str) -> LlmModelConfig | None:
+    async def get_by_model_name(self, model_name: str) -> LlmModelConfig | None:
+        """按 model_name 查询未删除的配置（用于全局唯一性校验）。"""
         query = select(LlmModelConfig).where(
-            LlmModelConfig.biz_type == biz_type,
-            LlmModelConfig.biz_id == biz_id,
             LlmModelConfig.model_name == model_name,
             LlmModelConfig.is_deleted == 0,
         )
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def list_by_biz(self, biz_type: str, biz_id: int) -> list[LlmModelConfig]:
+    async def list_available(self) -> list[LlmModelConfig]:
+        """查询所有启用中的全局模型配置（供员工选择使用）。"""
         result = await self.db.execute(
             select(LlmModelConfig)
-            .where(LlmModelConfig.biz_type == biz_type, LlmModelConfig.biz_id == biz_id, LlmModelConfig.is_deleted == 0)
+            .where(LlmModelConfig.status == 1, LlmModelConfig.is_deleted == 0)
             .order_by(LlmModelConfig.update_time.desc(), LlmModelConfig.id.desc())
         )
         return result.scalars().all()
 
-    async def list_employee_available(self, employee_id: int, dept_ids: list[int]) -> list[LlmModelConfig]:
-        conditions = [(LlmModelConfig.biz_type == "employee") & (LlmModelConfig.biz_id == employee_id)]
-        if dept_ids:
-            conditions.append((LlmModelConfig.biz_type == "dept") & (LlmModelConfig.biz_id.in_(dept_ids)))
-        result = await self.db.execute(
-            select(LlmModelConfig)
-            .where(LlmModelConfig.status == 1, LlmModelConfig.is_deleted == 0, or_(*conditions))
-            .order_by(LlmModelConfig.update_time.desc(), LlmModelConfig.id.desc())
-        )
-        return result.scalars().all()
-
-    def _employee_visible_query(
-        self,
-        employee_id: int,
-        dept_ids: list[int],
-        keyword: str | None = None,
-        biz_type: str | None = None,
-        status: int | None = None,
-    ):
-        conditions = [(LlmModelConfig.biz_type == "employee") & (LlmModelConfig.biz_id == employee_id)]
-        if dept_ids:
-            conditions.append((LlmModelConfig.biz_type == "dept") & (LlmModelConfig.biz_id.in_(dept_ids)))
-        query = select(LlmModelConfig).where(LlmModelConfig.is_deleted == 0, or_(*conditions))
+    def _list_query(self, keyword: str | None = None, status: int | None = None):
+        """构造全量列表查询（模型配置已统一为全局，不再按归属过滤）。"""
+        query = select(LlmModelConfig).where(LlmModelConfig.is_deleted == 0)
         if keyword:
             like_keyword = f"%{keyword}%"
             query = query.where(
@@ -68,36 +48,22 @@ class LlmConfigRepository:
                     LlmModelConfig.base_url.like(like_keyword),
                 )
             )
-        if biz_type:
-            query = query.where(LlmModelConfig.biz_type == biz_type)
         if status is not None:
             query = query.where(LlmModelConfig.status == status)
         return query
 
-    async def count_employee_visible(
-        self,
-        employee_id: int,
-        dept_ids: list[int],
-        keyword: str | None = None,
-        biz_type: str | None = None,
-        status: int | None = None,
-    ) -> int:
-        query = self._employee_visible_query(employee_id, dept_ids, keyword, biz_type, status)
+    async def count_all(self, keyword: str | None = None, status: int | None = None) -> int:
+        """统计可见模型配置总数。"""
+        query = self._list_query(keyword, status)
         result = await self.db.execute(query.with_only_columns(func.count(LlmModelConfig.id)).order_by(None))
         return result.scalar() or 0
 
-    async def list_employee_visible(
-        self,
-        employee_id: int,
-        dept_ids: list[int],
-        page: int,
-        page_size: int,
-        keyword: str | None = None,
-        biz_type: str | None = None,
-        status: int | None = None,
+    async def list_all(
+        self, page: int, page_size: int, keyword: str | None = None, status: int | None = None,
     ) -> list[LlmModelConfig]:
+        """分页查询全部模型配置。"""
         query = (
-            self._employee_visible_query(employee_id, dept_ids, keyword, biz_type, status)
+            self._list_query(keyword, status)
             .order_by(LlmModelConfig.update_time.desc(), LlmModelConfig.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)

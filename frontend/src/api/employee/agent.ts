@@ -25,7 +25,7 @@ const llmRequestConfig = { timeout: LLM_REQUEST_TIMEOUT_MS };
 export const employeeLlmApi = {
   listOptions: () => client.get('/employee/llm-model-options'),
   listConfigs: (params?: {
-    page?: number; page_size?: number; keyword?: string; biz_type?: string; status?: number;
+    page?: number; page_size?: number; keyword?: string; status?: number;
   }) => client.get<unknown, { data: { total: number; items: ILlmConfigItem[] } }>(
     '/employee/llm-configs', { params },
   ),

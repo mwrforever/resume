@@ -1,5 +1,5 @@
-﻿import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Building2, CheckCircle2, FlaskConical, KeyRound, Pencil, PlusCircle, RefreshCw, Search, ServerCog, ShieldCheck, Trash2, UserRound, X } from 'lucide-react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertCircle, ChevronDown, FlaskConical, KeyRound, Pencil, PlusCircle, RefreshCw, Search, ServerCog, ShieldCheck, Trash2, X } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { Pagination } from '@/components/common/pagination';
 import { AdminLayout } from '@/components/layout/admin-layout';
@@ -12,14 +12,10 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { employeeLlmApi } from '@/api/employee/agent';
-import { deptApi } from '@/api/employee/depts';
-import { useAuthStore } from '@/store/auth';
 import type { ILlmConfigItem, ILlmConfigPayload } from '@/types/agent';
-import type { IDeptItem } from '@/types/employee';
 
-const createDefaultForm = (userId: string | null): ILlmConfigPayload => ({
-  biz_type: 'employee',
-  biz_id: Number(userId || 0),
+// 表单默认值：必填项空缺待用户填，运行参数走业内默认值并藏在折叠区
+const DEFAULT_FORM: ILlmConfigPayload = {
   config_name: '',
   protocol: 'openai',
   base_url: '',
@@ -39,7 +35,7 @@ const createDefaultForm = (userId: string | null): ILlmConfigPayload => ({
   max_tokens: 2048,
   presence_penalty: 0,
   frequency_penalty: 0,
-});
+};
 
 function formatDate(value?: string | null) {
   if (!value) return '未测试';
@@ -48,8 +44,6 @@ function formatDate(value?: string | null) {
 
 function formFromConfig(config: ILlmConfigItem): ILlmConfigPayload {
   return {
-    biz_type: config.biz_type,
-    biz_id: config.biz_id,
     config_name: config.config_name,
     protocol: config.protocol,
     base_url: config.base_url,
@@ -84,8 +78,6 @@ interface ConfigDialogProps {
   open: boolean;
   mode: 'create' | 'edit';
   config: ILlmConfigItem | null;
-  userId: string | null;
-  depts: IDeptItem[];
   saving: boolean;
   errorMessage: string;
   onClose: () => void;
@@ -109,8 +101,6 @@ function ConfigCard({ config, canManage, testing, onEdit, onTest, onDelete }: Co
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-slate-900">{config.config_name}</span>
             <Badge variant={config.status === 1 ? 'success' : 'secondary'}>{config.status === 1 ? '启用' : '停用'}</Badge>
-            <Badge variant="outline">{config.biz_type === 'employee' ? '个人' : '部门'} #{config.biz_id}</Badge>
-            {!canManage && <Badge variant="secondary">只读</Badge>}
             {config.last_test_status === 1 && <Badge variant="success">测试通过</Badge>}
             {config.last_test_status === 0 && <Badge variant="danger">测试失败</Badge>}
           </div>
@@ -138,22 +128,16 @@ function ConfigCard({ config, canManage, testing, onEdit, onTest, onDelete }: Co
   );
 }
 
-function ConfigDialog({ open, mode, config, userId, depts, saving, errorMessage, onClose, onSubmit }: ConfigDialogProps) {
-  const [form, setForm] = useState<ILlmConfigPayload>(() => createDefaultForm(userId));
+function ConfigDialog({ open, mode, config, saving, errorMessage, onClose, onSubmit }: ConfigDialogProps) {
+  const [form, setForm] = useState<ILlmConfigPayload>(() => ({ ...DEFAULT_FORM }));
   const [extraBodyText, setExtraBodyText] = useState('');
 
   useEffect(() => {
     if (!open) return;
-    const nextForm = mode === 'edit' && config ? formFromConfig(config) : createDefaultForm(userId);
+    const nextForm = mode === 'edit' && config ? formFromConfig(config) : { ...DEFAULT_FORM };
     setForm(nextForm);
     setExtraBodyText(nextForm.extra_body ? JSON.stringify(nextForm.extra_body, null, 2) : '');
-  }, [config, mode, open, userId]);
-
-  useEffect(() => {
-    if (form.biz_type === 'employee') {
-      setForm((prev) => ({ ...prev, biz_id: Number(userId || 0) }));
-    }
-  }, [form.biz_type, userId]);
+  }, [config, mode, open]);
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -166,7 +150,7 @@ function ConfigDialog({ open, mode, config, userId, depts, saving, errorMessage,
         <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-6 py-4">
           <div>
             <DialogTitle className="mb-0">{mode === 'create' ? '新增模型配置' : '编辑模型配置'}</DialogTitle>
-            <p className="mt-1 text-sm text-slate-500">以表单方式维护个人或部门模型路由配置。</p>
+            <p className="mt-1 text-sm text-slate-500">所有员工共享同一份全局模型配置，仅管理员可维护。</p>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭" className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <X size={18} />
@@ -174,61 +158,51 @@ function ConfigDialog({ open, mode, config, userId, depts, saving, errorMessage,
         </div>
         <form className="space-y-5 px-6 py-5" onSubmit={handleSubmit}>
           {errorMessage && <div role="alert" className="flex gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"><AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" /><span>{errorMessage}</span></div>}
+
+          {/* 必填项：默认全部展开 */}
           <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">归属范围</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">基础信息</p>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label>业务类型</Label>
-                <Select value={form.biz_type} onValueChange={(value) => setForm((prev) => ({ ...prev, biz_type: value as 'employee' | 'dept', biz_id: value === 'employee' ? Number(userId || 0) : 0 }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="employee"><UserRound size={14} aria-hidden="true" />员工</SelectItem>
-                    <SelectItem value="dept"><Building2 size={14} aria-hidden="true" />部门</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>业务主体</Label>
-                {form.biz_type === 'dept' ? <Select value={String(form.biz_id || '')} onValueChange={(value) => setForm((prev) => ({ ...prev, biz_id: Number(value) }))}><SelectTrigger><SelectValue placeholder="选择部门" /></SelectTrigger><SelectContent>{depts.map((dept) => <SelectItem key={dept.id} value={String(dept.id)}>{dept.dept_name}</SelectItem>)}</SelectContent></Select> : <Input value={form.biz_id} readOnly aria-label="员工 ID" />}
-              </div>
+              <div className="space-y-1.5"><Label>配置名称 *</Label><Input value={form.config_name} onChange={(event) => setForm((prev) => ({ ...prev, config_name: event.target.value }))} placeholder="例如：Qwen Plus" required /></div>
+              <div className="space-y-1.5"><Label>模型名 *</Label><Input value={form.model_name} onChange={(event) => setForm((prev) => ({ ...prev, model_name: event.target.value }))} placeholder="qwen-plus" required /></div>
             </div>
-          </section>
-          <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">模型连接</p>
+            <div className="space-y-1.5"><Label>Base URL *</Label><Input value={form.base_url} onChange={(event) => setForm((prev) => ({ ...prev, base_url: event.target.value }))} placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" required /></div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div className="space-y-1.5"><Label>配置名称</Label><Input value={form.config_name} onChange={(event) => setForm((prev) => ({ ...prev, config_name: event.target.value }))} placeholder="例如：个人 Qwen Plus" required /></div>
-              <div className="space-y-1.5"><Label>模型名</Label><Input value={form.model_name} onChange={(event) => setForm((prev) => ({ ...prev, model_name: event.target.value }))} placeholder="qwen-plus" required /></div>
-            </div>
-            <div className="space-y-1.5"><Label>Base URL</Label><Input value={form.base_url} onChange={(event) => setForm((prev) => ({ ...prev, base_url: event.target.value }))} placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" required /></div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div className="space-y-1.5"><Label>API Key</Label><Input type="password" value={form.api_key} onChange={(event) => setForm((prev) => ({ ...prev, api_key: event.target.value }))} placeholder={mode === 'edit' ? '留空则不更新密钥' : '保存后将加密存储'} required={mode === 'create'} /></div>
-              <div className="space-y-1.5"><Label>兜底模型</Label><Input value={form.fallback_model_name || ''} onChange={(event) => setForm((prev) => ({ ...prev, fallback_model_name: event.target.value }))} placeholder="可选" /></div>
-            </div>
-          </section>
-          <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">运行参数</p>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="space-y-1.5"><Label>API Key {mode === 'create' && '*'}</Label><Input type="password" value={form.api_key} onChange={(event) => setForm((prev) => ({ ...prev, api_key: event.target.value }))} placeholder={mode === 'edit' ? '留空则不更新密钥' : '保存后将加密存储'} required={mode === 'create'} /></div>
               <div className="space-y-1.5"><Label>状态</Label><Select value={String(form.status)} onValueChange={(value) => setForm((prev) => ({ ...prev, status: Number(value) }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1">启用</SelectItem><SelectItem value="0">停用</SelectItem></SelectContent></Select></div>
-              <div className="space-y-1.5"><Label>超时秒数</Label><Input type="number" min={1} max={120} value={form.timeout_seconds} onChange={(event) => setForm((prev) => ({ ...prev, timeout_seconds: Number(event.target.value) }))} /></div>
-              <div className="space-y-1.5"><Label>重试次数</Label><Input type="number" min={0} max={2} value={form.max_retries} onChange={(event) => setForm((prev) => ({ ...prev, max_retries: Number(event.target.value) }))} /></div>
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-              <div className="space-y-1.5"><Label>思考模式</Label><Select value={String(form.enable_thinking)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_thinking: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="false">关闭</SelectItem><SelectItem value="true">开启</SelectItem></SelectContent></Select></div>
-              <div className="space-y-1.5"><Label>工具调用</Label><Select value={String(form.enable_tools)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_tools: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="true">开启</SelectItem><SelectItem value="false">关闭</SelectItem></SelectContent></Select></div>
-              <div className="space-y-1.5"><Label>Prompt Cache</Label><Select value={String(form.enable_prompt_cache)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_prompt_cache: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="false">关闭</SelectItem><SelectItem value="true">开启</SelectItem></SelectContent></Select></div>
-              <div className="space-y-1.5"><Label>上下文记忆</Label><Select value={String(form.enable_memory)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_memory: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="true">开启</SelectItem><SelectItem value="false">关闭</SelectItem></SelectContent></Select></div>
-            </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-              <div className="space-y-1.5"><Label>Temperature</Label><Input type="number" min={0} max={2} step={0.01} value={form.temperature} onChange={(event) => setForm((prev) => ({ ...prev, temperature: Number(event.target.value) }))} /></div>
-              <div className="space-y-1.5"><Label>Top P</Label><Input type="number" min={0} max={1} step={0.01} value={form.top_p} onChange={(event) => setForm((prev) => ({ ...prev, top_p: Number(event.target.value) }))} /></div>
-              <div className="space-y-1.5"><Label>Max Tokens</Label><Input type="number" min={1} max={32000} value={form.max_tokens} onChange={(event) => setForm((prev) => ({ ...prev, max_tokens: Number(event.target.value) }))} /></div>
-              <div className="space-y-1.5"><Label>Presence</Label><Input type="number" min={-2} max={2} step={0.01} value={form.presence_penalty} onChange={(event) => setForm((prev) => ({ ...prev, presence_penalty: Number(event.target.value) }))} /></div>
-              <div className="space-y-1.5"><Label>Frequency</Label><Input type="number" min={-2} max={2} step={0.01} value={form.frequency_penalty} onChange={(event) => setForm((prev) => ({ ...prev, frequency_penalty: Number(event.target.value) }))} /></div>
-            </div>
-            <div className="space-y-1.5"><Label>扩展参数 JSON</Label><Textarea value={extraBodyText} onChange={(event) => setExtraBodyText(event.target.value)} className="min-h-[110px] font-mono text-xs" placeholder='{"enable_thinking": false}' /></div>
           </section>
-          <div className="rounded-xl border border-sky-100 bg-sky-50 p-3 text-xs leading-5 text-sky-800"><CheckCircle2 size={14} className="mr-1 inline" aria-hidden="true" />删除操作会使用软删除；修改和删除仅允许配置拥有者或管理员执行。</div>
-          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button><Button type="submit" disabled={saving || (form.biz_type === 'dept' && !form.biz_id)}>{saving ? '保存中...' : mode === 'create' ? '保存配置' : '保存修改'}</Button></div>
+
+          {/* 高级参数：默认折叠；含 fallback、超时、重试、运行参数、扩展 JSON */}
+          <details className="group rounded-xl border border-slate-200 bg-slate-50/40 open:bg-white">
+            <summary className="flex cursor-pointer select-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-slate-700">
+              <span>高级参数（可选）</span>
+              <ChevronDown size={16} className="text-slate-400 transition-transform group-open:rotate-180" aria-hidden="true" />
+            </summary>
+            <div className="space-y-3 border-t border-slate-200 px-4 py-4">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="space-y-1.5"><Label>兜底模型</Label><Input value={form.fallback_model_name || ''} onChange={(event) => setForm((prev) => ({ ...prev, fallback_model_name: event.target.value }))} placeholder="可选" /></div>
+                <div className="space-y-1.5"><Label>超时秒数</Label><Input type="number" min={1} max={120} value={form.timeout_seconds} onChange={(event) => setForm((prev) => ({ ...prev, timeout_seconds: Number(event.target.value) }))} /></div>
+                <div className="space-y-1.5"><Label>重试次数</Label><Input type="number" min={0} max={2} value={form.max_retries} onChange={(event) => setForm((prev) => ({ ...prev, max_retries: Number(event.target.value) }))} /></div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                <div className="space-y-1.5"><Label>思考模式</Label><Select value={String(form.enable_thinking)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_thinking: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="false">关闭</SelectItem><SelectItem value="true">开启</SelectItem></SelectContent></Select></div>
+                <div className="space-y-1.5"><Label>工具调用</Label><Select value={String(form.enable_tools)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_tools: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="true">开启</SelectItem><SelectItem value="false">关闭</SelectItem></SelectContent></Select></div>
+                <div className="space-y-1.5"><Label>Prompt Cache</Label><Select value={String(form.enable_prompt_cache)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_prompt_cache: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="false">关闭</SelectItem><SelectItem value="true">开启</SelectItem></SelectContent></Select></div>
+                <div className="space-y-1.5"><Label>上下文记忆</Label><Select value={String(form.enable_memory)} onValueChange={(value) => setForm((prev) => ({ ...prev, enable_memory: value === 'true' }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="true">开启</SelectItem><SelectItem value="false">关闭</SelectItem></SelectContent></Select></div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+                <div className="space-y-1.5"><Label>Temperature</Label><Input type="number" min={0} max={2} step={0.01} value={form.temperature} onChange={(event) => setForm((prev) => ({ ...prev, temperature: Number(event.target.value) }))} /></div>
+                <div className="space-y-1.5"><Label>Top P</Label><Input type="number" min={0} max={1} step={0.01} value={form.top_p} onChange={(event) => setForm((prev) => ({ ...prev, top_p: Number(event.target.value) }))} /></div>
+                <div className="space-y-1.5"><Label>Max Tokens</Label><Input type="number" min={1} max={32000} value={form.max_tokens} onChange={(event) => setForm((prev) => ({ ...prev, max_tokens: Number(event.target.value) }))} /></div>
+                <div className="space-y-1.5"><Label>Presence</Label><Input type="number" min={-2} max={2} step={0.01} value={form.presence_penalty} onChange={(event) => setForm((prev) => ({ ...prev, presence_penalty: Number(event.target.value) }))} /></div>
+                <div className="space-y-1.5"><Label>Frequency</Label><Input type="number" min={-2} max={2} step={0.01} value={form.frequency_penalty} onChange={(event) => setForm((prev) => ({ ...prev, frequency_penalty: Number(event.target.value) }))} /></div>
+              </div>
+              <div className="space-y-1.5"><Label>扩展参数 JSON</Label><Textarea value={extraBodyText} onChange={(event) => setExtraBodyText(event.target.value)} className="min-h-[110px] font-mono text-xs" placeholder='{"enable_thinking": false}' /></div>
+            </div>
+          </details>
+
+          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button><Button type="submit" disabled={saving}>{saving ? '保存中...' : mode === 'create' ? '保存配置' : '保存修改'}</Button></div>
         </form>
       </DialogContent>
     </Dialog>
@@ -236,9 +210,7 @@ function ConfigDialog({ open, mode, config, userId, depts, saving, errorMessage,
 }
 
 export default function EmployeeLlmConfigs() {
-  const userId = useAuthStore((state) => state.userId);
   const [configs, setConfigs] = useState<ILlmConfigItem[]>([]);
-  const [depts, setDepts] = useState<IDeptItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState<number | null>(null);
@@ -247,7 +219,6 @@ export default function EmployeeLlmConfigs() {
   const [deleteTarget, setDeleteTarget] = useState<ILlmConfigItem | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [keyword, setKeyword] = useState('');
-  const [scopeFilter, setScopeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -255,18 +226,11 @@ export default function EmployeeLlmConfigs() {
 
   const filteredConfigs = useMemo(() => configs, [configs]);
 
-  const loadDepts = useCallback(async () => {
-    if (depts.length > 0) return;
-    const res = await deptApi.listDepts();
-    setDepts(res.data || []);
-  }, [depts.length]);
-
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const params: { page: number; page_size: number; keyword?: string; biz_type?: string; status?: number } = { page, page_size: pageSize };
+      const params: { page: number; page_size: number; keyword?: string; status?: number } = { page, page_size: pageSize };
       if (keyword.trim()) params.keyword = keyword.trim();
-      if (scopeFilter !== 'all') params.biz_type = scopeFilter;
       if (statusFilter !== 'all') params.status = Number(statusFilter);
       const configRes = await employeeLlmApi.listConfigs(params);
       setConfigs(configRes.data?.items || []);
@@ -274,13 +238,11 @@ export default function EmployeeLlmConfigs() {
     } finally {
       setLoading(false);
     }
-  }, [keyword, page, pageSize, scopeFilter, statusFilter]);
+  }, [keyword, page, pageSize, statusFilter]);
 
   useEffect(() => { loadData(); }, [loadData]);
-  useEffect(() => { if (dialogState) loadDepts().catch(() => setErrorMessage('部门列表加载失败，请稍后重试。')); }, [dialogState, loadDepts]);
 
   const closeDialog = () => { setDialogState(null); setErrorMessage(''); };
-  const canManageConfig = (config: ILlmConfigItem) => Boolean(config.can_manage) || (config.biz_type === 'employee' && config.biz_id === Number(userId || 0));
 
   const saveConfig = async (form: ILlmConfigPayload, extraBodyText: string) => {
     if (!dialogState) return;
@@ -321,36 +283,32 @@ export default function EmployeeLlmConfigs() {
       <div className="space-y-4">
         <Card className="border-white/80 bg-white/90 backdrop-blur">
           <CardHeader className="border-b border-slate-100 bg-white/70">
-            <CardTitle className="flex items-center gap-2"><ShieldCheck size={18} className="text-primary" aria-hidden="true" />所有可用配置</CardTitle>
+            <CardTitle className="flex items-center gap-2"><ShieldCheck size={18} className="text-primary" aria-hidden="true" />全局模型配置</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_180px_160px]">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_160px]">
               <div className="relative"><Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" /><Input value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} className="pl-9" placeholder="搜索配置名称、模型名或 Base URL" /></div>
-              <Select value={scopeFilter} onValueChange={(value) => { setScopeFilter(value); setPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部归属</SelectItem><SelectItem value="employee">个人配置</SelectItem><SelectItem value="dept">部门配置</SelectItem></SelectContent></Select>
               <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="1">启用</SelectItem><SelectItem value="0">停用</SelectItem></SelectContent></Select>
             </div>
             <div className="space-y-3">
-              {filteredConfigs.map((config) => {
-                const canManage = canManageConfig(config);
-                return (
-                  <ConfigCard
-                    key={config.id}
-                    config={config}
-                    canManage={canManage}
-                    testing={testingId === config.id}
-                    onEdit={() => setDialogState({ mode: 'edit', config })}
-                    onTest={() => testConfig(config.id)}
-                    onDelete={() => setDeleteTarget(config)}
-                  />
-                );
-              })}
+              {filteredConfigs.map((config) => (
+                <ConfigCard
+                  key={config.id}
+                  config={config}
+                  canManage={Boolean(config.can_manage)}
+                  testing={testingId === config.id}
+                  onEdit={() => setDialogState({ mode: 'edit', config })}
+                  onTest={() => testConfig(config.id)}
+                  onDelete={() => setDeleteTarget(config)}
+                />
+              ))}
               {!loading && filteredConfigs.length === 0 && <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-6 text-sm text-slate-600">暂无符合条件的模型配置。</div>}
             </div>
             <Pagination page={page} pageSize={pageSize} total={total} onChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} />
           </CardContent>
         </Card>
       </div>
-      <ConfigDialog open={!!dialogState} mode={dialogState?.mode ?? 'create'} config={dialogState?.config ?? null} userId={userId} depts={depts} saving={saving} errorMessage={errorMessage} onClose={closeDialog} onSubmit={saveConfig} />
+      <ConfigDialog open={!!dialogState} mode={dialogState?.mode ?? 'create'} config={dialogState?.config ?? null} saving={saving} errorMessage={errorMessage} onClose={closeDialog} onSubmit={saveConfig} />
       <ConfirmDialog open={!!deleteTarget} title="确认删除模型配置" description={`确定要删除「${deleteTarget?.config_name}」吗？删除操作将使用软删除。`} confirmLabel="删除" onConfirm={handleDelete} onCancel={() => setDeleteTarget(null)} loading={deleting} />
     </AdminLayout>
   );

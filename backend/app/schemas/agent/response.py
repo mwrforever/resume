@@ -13,11 +13,11 @@ from pydantic import BaseModel, ConfigDict
 
 
 class LlmConfigItem(BaseModel):
-    """LLM 模型配置详情。"""
+    """LLM 模型配置详情（全局可见）。"""
 
     id: int
-    biz_type: str
-    biz_id: int
+    biz_type: str = "global"
+    biz_id: int = 0
     config_name: str
     protocol: str
     base_url: str

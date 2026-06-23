@@ -192,7 +192,8 @@ export interface EvaluationReport {
 
 export interface ILlmConfigItem {
   id: number;
-  biz_type: 'employee' | 'dept';
+  /** 历史字段：新建一律 'global'，旧数据可能是 'employee' / 'dept'，前端不再做归属展示 */
+  biz_type: string;
   biz_id: number;
   config_name: string;
   protocol: 'openai';
@@ -222,8 +223,6 @@ export interface ILlmConfigItem {
 }
 
 export interface ILlmConfigPayload {
-  biz_type: 'employee' | 'dept';
-  biz_id: number;
   config_name: string;
   protocol: 'openai';
   base_url: string;
@@ -247,7 +246,8 @@ export interface ILlmConfigPayload {
 
 export interface ILlmModelOption {
   model_name: string;
-  source: 'employee' | 'dept' | 'env';
+  /** 后端来源标识：'global' = 全局模型配置，'env' = 配置文件兜底；旧数据可能携带 'employee'/'dept' */
+  source: 'global' | 'env' | 'employee' | 'dept';
   config_id?: number | null;
   biz_type?: string | null;
   biz_id?: number | null;
