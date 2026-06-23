@@ -124,13 +124,13 @@ class ResumeEvaluationService:
         writer = get_stream_writer()
         idx = ctx.emitter.next_block_index()
         file_path = str((state.get("resume_ref") or {}).get("file_path") or "")
-        # 缺简历 → interrupt 弹上传卡（LangGraph resume 时本节点重跑，
-        # interrupt() 第二次调用直接返回用户提交值，随后走正常解析）
-        if not file_path:
+        # 缺简历 → 循环 interrupt 弹上传卡（语义：必须上传文件才能往下，不存在"驳回"）。
+        # 续接路径下（Q3）interrupt() 收到的可能是 {regenerate, feedback}，没有 file_path，
+        # 直接再次 interrupt 让用户真正上传。
+        while not file_path:
             user_values = interrupt(self.build_resume_upload_interaction())
-            file_path = str(user_values.get("file_path") or "")
-            if not file_path:
-                raise ValidationError("未收到简历文件路径，无法继续")
+            if isinstance(user_values, dict):
+                file_path = str(user_values.get("file_path") or "")
         writer(ctx.emitter.emit_block_start(index=idx, block={
             "type": "tool_use", "tool_name": "load_resume",
             "display_name": "读取简历", "input": {"file_path": file_path}, "status": "running",
