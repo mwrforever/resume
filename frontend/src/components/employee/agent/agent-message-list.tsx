@@ -151,14 +151,16 @@ export function AgentMessageList({
           >
             <AlertCircle size={16} className="mt-0.5 shrink-0" />
             <div className="flex-1">
+              {/* 面向用户的错误文案只暴露中文提醒，不展示内部 code/message（避免泄漏技术细节）。
+                  no_resumable_checkpoint 是可操作的不同语义，保留其引导文案。 */}
               <div className="font-medium">
-                {runState.error.code === 'no_resumable_checkpoint' ? '流程状态已过期' : '运行出错了'}
+                {runState.error.code === 'no_resumable_checkpoint' ? '流程状态已过期' : '任务执行出错'}
               </div>
-              <div className="text-xs text-[#B91C1C] mt-0.5">
-                {runState.error.code === 'no_resumable_checkpoint'
-                  ? '服务可能已重启，无法续接上次的流程。请重新发送消息开始新的流程。'
-                  : `[${runState.error.code}] ${runState.error.message}`}
-              </div>
+              {runState.error.code === 'no_resumable_checkpoint' && (
+                <div className="text-xs text-[#B91C1C] mt-0.5">
+                  服务可能已重启，无法续接上次的流程。请重新发送消息开始新的流程。
+                </div>
+              )}
             </div>
             {onRetry && (
               <button

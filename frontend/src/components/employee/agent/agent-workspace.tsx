@@ -68,10 +68,28 @@ function WorkspaceInner({
     void sendMessage(input);
   }, [sendMessage]);
 
-  // 重试 = 重新发送最近一条用户消息
+  // 重试 = 重新发送最近一条用户消息。
+  // 优先复用本次会话内缓存的发送入参；若为空（错误来自 resume/submit 路径、
+  // 或刷新后直接看到错误态，lastInputRef 未被 handleSend 写入），回退到历史
+  // 最后一条 user 消息重建入参，避免重试按钮静默 no-op（用户感到"不起作用"）。
   const handleRetry = useCallback(() => {
-    if (lastInputRef.current) void sendMessage(lastInputRef.current);
-  }, [sendMessage]);
+    const fallback = (() => {
+      const lastUser = [...messages].reverse().find(m => m.role === 'user');
+      if (!lastUser) return null;
+      const textBlock = lastUser.content.blocks?.find(b => b.type === 'text') as
+        | { type: 'text'; text?: string }
+        | undefined;
+      return {
+        content: textBlock?.text ?? '',
+        workflow_type: lastUser.workflow_type,
+        enable_thinking: session?.enable_thinking,
+        model_name: session?.selected_model_name ?? null,
+        context_refs: lastUser.content.context_refs,
+      } as SendInput;
+    })();
+    const input = lastInputRef.current ?? fallback;
+    if (input) void sendMessage(input);
+  }, [sendMessage, messages, session]);
 
   // ⚠️ 所有 hooks 必须在任何 early return 之前调用完毕，
   // 否则 session null→非 null 切换时 hook 调用顺序变化会触发 React 报错。
