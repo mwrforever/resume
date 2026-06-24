@@ -1,0 +1,185 @@
+# ============================================================================
+# 生产级 docker compose 编排
+#   服务清单：
+#     mysql       — 持久化 + utf8mb4 + 健康检查
+#     redis       — AOF 持久化 + 密码（可选）+ 健康检查
+#     backend     — FastAPI（uvicorn，--proxy-headers，2 workers）
+#     celery      — 共用 backend 镜像，消费 eval/agent 队列
+#     frontend    — nginx 提供静态资源 + /api 反代到 backend
+#
+#   网络：默认 bridge 网络 resume_net，服务间通过服务名互联
+#   持久化：mysql_data / redis_data / resume_storage / backend_logs
+#   启动顺序：mysql/redis healthy → backend → celery & frontend
+#
+# 配置：所有敏感项通过 .env.production 注入，本目录提供 .env.production.example 模板
+# 使用：
+#   cp deploy/.env.production.example deploy/.env.production
+#   编辑 .env.production
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env.production up -d --build
+# ============================================================================
+
+name: resume-platform
+
+services:
+  # ------------------------------ MySQL ------------------------------
+  mysql:
+    image: mysql:latest
+    container_name: resume_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+      - --max-connections=500
+      - --innodb-buffer-pool-size=512M
+    volumes:
+      - mysql_data:/var/lib/mysql
+    # 仅在本机暴露端口便于运维连接；生产强烈建议注释掉，让 MySQL 只在内网可达
+    ports:
+      - "127.0.0.1:3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [resume_net]
+
+  # ------------------------------ Redis ------------------------------
+  redis:
+    image: redis:latest
+    container_name: resume_redis
+    restart: unless-stopped
+    # ${REDIS_PASSWORD:-} 为空时也能启动（仅靠网络隔离）；线上务必设密码
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      # 同时兼容有/无密码场景
+      test: ["CMD-SHELL", "redis-cli ${REDIS_PASSWORD:+-a $$REDIS_PASSWORD} ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    networks: [resume_net]
+
+  # ------------------------------ FastAPI ------------------------------
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: resume-platform/backend:${IMAGE_TAG:-latest}
+    container_name: resume_backend
+    restart: unless-stopped
+    depends_on:
+      mysql:    { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    env_file:
+      - .env.production
+    # 容器内访问 mysql/redis 用服务名，覆盖 .env 中的 127.0.0.1
+    environment:
+      DB_HOST: mysql
+      REDIS_HOST: redis
+      LOCAL_STORAGE_PATH: /app/note
+    volumes:
+      # 简历附件 / 上传文件持久化
+      - resume_storage:/app/note
+      - backend_logs:/app/logs
+    expose:
+      - "8000"
+    healthcheck:
+      # FastAPI 默认提供 /docs，能 200 说明应用与 ASGI 都就绪
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/docs"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks: [resume_net]
+
+  # ------------------------------ Celery Worker ------------------------------
+  celery:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: resume-platform/backend:${IMAGE_TAG:-latest}
+    container_name: resume_celery
+    restart: unless-stopped
+    depends_on:
+      mysql:    { condition: service_healthy }
+      redis:    { condition: service_healthy }
+      backend:  { condition: service_started }
+    env_file:
+      - .env.production
+    environment:
+      DB_HOST: mysql
+      REDIS_HOST: redis
+      LOCAL_STORAGE_PATH: /app/note
+    volumes:
+      # 与 backend 共享附件，eval_task 才能读到上传的简历
+      - resume_storage:/app/note
+      - backend_logs:/app/logs
+    # 队列从 celery_app.ALL_QUEUES 动态读取，新增 task 模块无需改这里
+    command:
+      - sh
+      - -c
+      - >
+        QUEUES=$$(python -c "from app.workers.celery_app import ALL_QUEUES; print(ALL_QUEUES)")
+        && echo "[celery] consuming queues: $$QUEUES"
+        && exec celery -A app.workers.celery_app:celery_app worker
+        --loglevel=INFO
+        --concurrency=4
+        --pool=threads
+        -Q $$QUEUES
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app:celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks: [resume_net]
+
+  # ------------------------------ Frontend / Nginx ------------------------------
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    image: resume-platform/frontend:${IMAGE_TAG:-latest}
+    container_name: resume_frontend
+    restart: unless-stopped
+    depends_on:
+      backend: { condition: service_healthy }
+    ports:
+      - "${WEB_PORT:-80}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [resume_net]
+
+# ============================================================================
+volumes:
+  mysql_data:
+  redis_data:
+  resume_storage:    # 简历原文件 & note/
+  backend_logs:
+
+networks:
+  resume_net:
+    driver: bridge
