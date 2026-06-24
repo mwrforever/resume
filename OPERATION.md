@@ -33,10 +33,10 @@
 **关键约束**
 
 - 基础镜像统一用官方 `latest` 标签（mysql/redis/nginx），跟随上游滚动。**生产固化版本**时把 `docker-compose.yml` 中三处 `:latest` 改成具体 tag（如 `mysql:8.4`、`redis:7.4`、`nginx:1.27`），并写入运维变更记录。
-- LangGraph checkpointer 目前是 **InMemorySaver**（见 `backend/app/llm/graphs/workflows/_checkpointer.py`），中断态保存在 backend 进程内存中。
-  - 因此 backend 容器 **只能跑 1 个 uvicorn worker**，且不能水平扩多副本。
-  - 重启 backend 容器会丢失"未完成 Agent 会话"的 checkpoint，前端再发消息会自动新建上下文。
-  - 需要扩容/重启不丢态时，先把 checkpointer 换成 Redis/Postgres 版本，再放开 worker 数。
+- LangGraph checkpointer 使用 **AsyncSqliteSaver** 落盘到 `langgraph_data` 卷（容器内 `/app/data/langgraph_checkpoints.sqlite`）。容器重启 / 升级后 Agent 中断态可继续 resume。
+  - backend 容器仍只跑 **1 个 uvicorn worker**：SQLite 多进程并发写会上锁。
+  - 不能水平扩多副本：单文件 SQLite 不支持多容器并发写。
+  - 需要多实例时换 PostgresSaver / RedisSaver，并放开 worker 数。
 - Celery worker 队列从 `app.workers.celery_app.ALL_QUEUES` 动态读取，新增任务模块时改 `TASK_QUEUE_ROUTES` 即可，**不用动 compose**。
 
 ---
@@ -235,7 +235,18 @@ docker run --rm -v resume-platform_resume_storage:/data -v /opt/backup/files:/ba
 
 > 卷名前缀是 compose 项目名（`name: resume-platform`），可通过 `docker volume ls` 确认实际名字。
 
-### 6.3 恢复
+### 6.3 LangGraph checkpoint 备份（`langgraph_data` 卷）
+
+Agent 中断态保存在 sqlite 文件里。需要做点对点备份时（如升级回滚前）：
+
+```bash
+docker run --rm -v resume-platform_langgraph_data:/data -v /opt/backup/langgraph:/backup alpine \
+  cp /data/langgraph_checkpoints.sqlite /backup/checkpoints-$(date +%F-%H%M).sqlite
+```
+
+> 该文件可丢失（最坏情况：用户的未完成 Agent 会话需要重发一次消息），不强制纳入每日备份。
+
+### 6.4 恢复
 
 ```bash
 # MySQL
@@ -264,7 +275,7 @@ docker compose --env-file .env.production up -d --build backend celery frontend
 
 ### 7.2 数据回滚
 
-先停应用 → 恢复 6.3 的最近备份 → 再启应用。
+先停应用 → 恢复 6.4 的最近备份 → 再启应用。
 
 ---
 
@@ -283,7 +294,7 @@ docker compose --env-file .env.production up -d --build backend celery frontend
 | 现象 | 排查点 |
 |---|---|
 | 前端 502 / 接口超时 | `docker compose ps`：backend 是否 healthy；`logs backend` 看异常 |
-| Agent 中断后续接报 `received no input` | backend 容器重启过 → 内存 checkpoint 丢失，重新发新消息会自动新建上下文（已知限制） |
+| Agent 中断后续接报 `received no input` | 极少见，通常 `langgraph_data` 卷损坏 / 被人为清空。重新发新消息会自动新建上下文 |
 | Celery 任务 PENDING 不动 | `logs celery` 看是否消费到队列；进 redis-cli `LLEN eval` / `LLEN agent` 看积压 |
 | 上传简历 413 | nginx `client_max_body_size` 调大（已默认 50m，再大改 `frontend/nginx/default.conf`） |
 | 启动报 `Field required` | `.env.production` 缺字段，对照 `.env.production.example` 补全 |
