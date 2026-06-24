@@ -4,7 +4,7 @@ LangGraph Checkpointer 工厂。
 协调器 + 子 Agent 使用 `langgraph.types.interrupt()` 实现表单/动作中断，
 LangGraph 必须配置 checkpointer 才能保存中断点状态以支持后续 `Command(resume=...)`。
 
-生产模式：使用 `AsyncSqliteSaver` 落盘到 SETTINGS.LANGGRAPH_SQLITE_PATH，
+使用 `AsyncSqliteSaver` 落盘到 SETTINGS.LANGGRAPH_SQLITE_PATH，
 进程重启 / 容器升级后中断态仍可 resume。
 
 约束：
@@ -12,7 +12,6 @@ LangGraph 必须配置 checkpointer 才能保存中断点状态以支持后续 `
   `async with` 方式持有，结束时自动关闭底层 aiosqlite 连接。
 - SQLite 并发写有锁，本项目 backend 容器只允许单 uvicorn worker；
   需要水平扩展时换 PostgresSaver/RedisSaver。
-- LANGGRAPH_SQLITE_PATH 为空字符串时降级到 InMemorySaver（仅本地调试方便）。
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from app.core.config import get_settings
@@ -40,14 +38,7 @@ async def open_checkpointer() -> AsyncIterator[BaseCheckpointSaver]:
             graph = build_xxx_graph(checkpointer)
             ...
     """
-    sqlite_path = (get_settings().LANGGRAPH_SQLITE_PATH or "").strip()
-
-    if not sqlite_path:
-        # 降级：开发/测试可选。生产应始终配置路径。
-        logger.warning("LANGGRAPH_SQLITE_PATH 未配置，降级为 InMemorySaver（重启会丢中断态）")
-        yield InMemorySaver()
-        return
-
+    sqlite_path = get_settings().LANGGRAPH_SQLITE_PATH
     # 确保父目录存在（首次部署 / 卷刚挂上时目录是空的）
     Path(sqlite_path).parent.mkdir(parents=True, exist_ok=True)
 

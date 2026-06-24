@@ -53,7 +53,10 @@
       "Bash(../.venv/Scripts/python.exe -m pytest tests/services/test_agent_resume_service.py -q)",
       "Bash(../.venv/Scripts/python.exe -m pytest tests/services/test_agent_stream_events.py tests/services/test_agent_stream_emitter.py tests/services/test_agent_resume_service.py -q)",
       "Skill(loop)",
-      "Bash(start *)"
+      "Bash(start *)",
+      "Bash(/c/Users/18229/.claude/plugins/cache/superpowers-dev/superpowers/5.1.0/skills/brainstorming/scripts/start-server.sh *)",
+      "Read(//c/Users/18229/.claude/plugins/cache/superpowers-dev/superpowers/5.1.0/skills/**)",
+      "Bash(docker compose *)"
     ]
   },
   "enabledPlugins": {
@@ -62,6 +65,7 @@
     "personskills@personskills": true,
     "example-skills@anthropic-agent-skills": true,
     "ui-ux-pro-max@ui-ux-pro-max-skill": true,
-    "taste-skill@taste-skill": true
+    "taste-skill@taste-skill": true,
+    "ponytail@ponytail": true
   }
 }
