@@ -96,9 +96,12 @@ services:
       DB_HOST: mysql
       REDIS_HOST: redis
       LOCAL_STORAGE_PATH: /app/note
+      LANGGRAPH_SQLITE_PATH: /app/data/langgraph_checkpoints.sqlite
     volumes:
       # 简历附件 / 上传文件持久化
       - resume_storage:/app/note
+      # LangGraph 中断态 checkpointer 持久化（容器重启不丢 Agent 会话）
+      - langgraph_data:/app/data
       - backend_logs:/app/logs
     expose:
       - "8000"
@@ -178,6 +181,7 @@ volumes:
   mysql_data:
   redis_data:
   resume_storage:    # 简历原文件 & note/
+  langgraph_data:    # LangGraph SqliteSaver checkpoints
   backend_logs:
 
 networks:

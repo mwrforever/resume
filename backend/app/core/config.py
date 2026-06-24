@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     STORAGE_TYPE: str = "LOCAL"
     LOCAL_STORAGE_PATH: str = "./note"
 
+    # LangGraph Agent 工作流 checkpointer 落盘路径。
+    # 默认放在项目根目录下的 data/，docker 部署时由 compose 挂卷到独立持久化卷。
+    # 留空则降级为 InMemorySaver（仅进程内有效，重启丢中断态）。
+    LANGGRAPH_SQLITE_PATH: str = str(BASE_DIR / "data" / "langgraph_checkpoints.sqlite")
+
     SMTP_HOST: str
     SMTP_PORT: int = 587
     SMTP_USER: str

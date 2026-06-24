@@ -58,8 +58,8 @@ WORKDIR /app
 COPY --chown=app:app app ./app
 COPY --chown=app:app pyproject.toml ./
 
-# 简历附件落盘目录（compose 会挂卷）
-RUN mkdir -p /app/note && chown -R app:app /app/note
+# 简历附件落盘目录 + LangGraph checkpoint 落盘目录（compose 会挂卷）
+RUN mkdir -p /app/note /app/data && chown -R app:app /app/note /app/data
 
 USER app
 
