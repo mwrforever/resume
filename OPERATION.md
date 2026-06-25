@@ -8,16 +8,10 @@
 
 ```
               ┌──────────────────────────────────┐
-   80 / 443   │            Caddy                 │  ← 容器：caddy
- (来访入口)    │  - TLS 终结（LE 自动签发/续期）   │
-              │  - HTTP→HTTPS 跳转 + HSTS         │
-              │  - 反代到 frontend:80             │
-              └────────────────┬─────────────────┘
-                               │ docker 内网
-              ┌────────────────▼─────────────────┐
-              │            Nginx                 │  ← 容器：frontend
-              │  - 静态资源（dist）               │
-              │  - /api → backend:8000            │
+   80 / 443   │            Nginx                 │  ← 容器：frontend
+ (来访入口)    │  - TLS 终结（挂宿主机证书）       │
+              │  - 80 → 301 跳 443（ACME 挑战放行）│
+              │  - 静态资源 dist + /api 反代       │
               └────────────────┬─────────────────┘
                                │
                     ┌──────────┴──────────┐
@@ -34,12 +28,15 @@
            │   容器: mysql     │    │  容器: redis   │
            │ Volume: mysql_data│    │ Volume: redis_data │
            └──────────────────┘    └────────────────┘
+
+  证书：宿主机 deploy/letsencrypt/  ← certbot 一次性签发 + crontab 续期
+  挑战：宿主机 deploy/certbot-webroot/  ← nginx 80 端口透出 /.well-known/acme-challenge/
 ```
 
 **关键约束**
 
-- 基础镜像统一用官方 `latest` 标签（mysql/redis/nginx/caddy），跟随上游滚动。**生产固化版本**时把 `docker-compose.yml` 中四处 `:latest` 改成具体 tag（如 `mysql:8.4`、`redis:7.4`、`nginx:1.27`、`caddy:2.8`），并写入运维变更记录。
-- **TLS 终结由 Caddy 完成**：Let's Encrypt 自动申请 + 自动续期（默认证书剩 30 天时续）。`caddy_data` 卷里存账号私钥和证书，**千万不要清空**，否则会反复触发 LE 速率限制。
+- 基础镜像统一用官方 `latest` 标签（mysql/redis/nginx），跟随上游滚动。**生产固化版本**时把 `docker-compose.yml` 中三处 `:latest` 改成具体 tag（如 `mysql:8.4`、`redis:7.4`、`nginx:1.27`），并写入运维变更记录。
+- **TLS 终结由 nginx 完成**：证书在宿主机用 `certbot --standalone` 一次性签发到 `deploy/letsencrypt/`，nginx 容器只读挂载。续期由宿主机 cron 跑 `deploy/scripts/renew-cert.sh`（webroot 模式，无 downtime）。
 - LangGraph checkpointer 使用 **AsyncSqliteSaver** 落盘到 `langgraph_data` 卷（容器内 `/app/data/langgraph_checkpoints.sqlite`）。容器重启 / 升级后 Agent 中断态可继续 resume。
   - backend 容器仍只跑 **1 个 uvicorn worker**：SQLite 多进程并发写会上锁。
   - 不能水平扩多副本：单文件 SQLite 不支持多容器并发写。
@@ -52,7 +49,7 @@
 
 1. **系统**：Linux x86_64（Ubuntu 22.04 / CentOS 8+ 已验证）；至少 4C8G、磁盘 ≥ 60G。
 2. **Docker**：`docker >= 24.0`、`docker compose plugin >= 2.20`（`docker compose version` 能跑即可）。
-3. **域名**：必填。把域名 A 记录指向服务器公网 IP，**等 DNS 全球生效**（`dig +short <域名>` 能返回该 IP）后再启动，否则 Caddy 申请证书会失败。
+3. **域名**：必填。把域名 A 记录指向服务器公网 IP，**等 DNS 全球生效**（`dig +short <域名>` 能返回该 IP）后再启动，否则 certbot 申请证书会失败。
 4. **端口**：服务器安全组 / 防火墙放通 **80（ACME 挑战必走）** 和 **443**。
 5. **代码**：把仓库 clone 到 `/opt/resume`（路径可改，下文以此为例）。
 
@@ -87,47 +84,65 @@ vi .env.production       # 把所有 *** CHANGE ME *** 填上
 | `OPENAI_API_KEY` / `OPENAI_API_BASE` / `OPENAI_MODEL` | LLM 供应商凭证；DashScope/DeepSeek 走 OpenAI 兼容协议 |
 | `SMTP_*` / `EMAIL_FROM` | 邮件验证码渠道，必填，不然注册/找回密码用不了 |
 | `INIT_ADMIN_*` | 首次启动若数据库无管理员则自动创建；登录后请立即修改 |
-| `WEB_PORT` | 对外端口，默认 80；如需 443 请挂 TLS 反代或在 nginx 加证书 |
+| `WEB_DOMAIN` | 必填，对外访问域名（如 `resume.example.com`）。nginx 用它做 server_name + 证书路径 |
+| `ACME_EMAIL` | 必填，签发 Let's Encrypt 证书时绑定的邮箱，证书过期前会收到 LE 提醒 |
 
-### 3.3 构建并启动
+### 3.3 首次签发证书
+
+nginx 必须挂载有效证书才能起来，所以**先签证再起服务**。
 
 ```bash
 cd /opt/resume/deploy
+
+# 前置自检
+dig +short "$(grep ^WEB_DOMAIN .env.production | cut -d= -f2-)"
+# 期望返回本机公网 IP；若空或不对，先配 DNS
+
+# 服务器 80 端口必须空闲；若已有 nginx/apache 先停掉
+sudo lsof -i :80 || echo "80 端口空闲"
+
+# 签证（不确定可先 STAGING=1 试一遍）
+bash scripts/init-cert.sh
+# 期望最后输出：证书已签发：./letsencrypt/live/<域名>/
+```
+
+证书文件落在宿主机 `./letsencrypt/live/<域名>/`，nginx 容器以**只读**方式挂载。
+
+### 3.4 构建并启动
+
+```bash
 docker compose --env-file .env.production up -d --build
 ```
 
 第一次构建大约 5~10 分钟（取决于网络）。
 
-### 3.4 验证
+### 3.5 验证
 
 ```bash
 # 1. 容器全部 healthy
 docker compose --env-file .env.production ps
+# 期望：mysql/redis/backend/celery/frontend 全 healthy
 
-# 期望状态：
-#   resume_mysql    healthy
-#   resume_redis    healthy
-#   resume_backend  healthy
-#   resume_celery   healthy（首次可能 starting，60s 后变 healthy）
-#   resume_frontend healthy
-#   resume_caddy    healthy（首次签证可能 starting，30~60s 后变 healthy）
-
-# 2. 证书签发（首次启动后看一次 caddy 日志，确认证书已签出）
-docker compose --env-file .env.production logs caddy | grep -iE "certificate|obtain"
-# 期望看到类似：certificate obtained successfully
-
-# 3. HTTPS 接口能通
+# 2. HTTPS 接口能通
 curl -fsS https://<WEB_DOMAIN>/api/v1/docs >/dev/null && echo "backend ok"
 curl -fsS https://<WEB_DOMAIN>/healthz && echo
 
-# 4. HTTP → HTTPS 自动跳转
+# 3. HTTP → HTTPS 自动跳转
 curl -sI http://<WEB_DOMAIN>/ | grep -iE "^(HTTP|location)"
 # 期望：301 + Location: https://...
 
-# 5. 浏览器访问 https://<WEB_DOMAIN>/  用 INIT_ADMIN_EMAIL/PASSWORD 登录
+# 4. 浏览器访问 https://<WEB_DOMAIN>/  用 INIT_ADMIN_EMAIL/PASSWORD 登录
 ```
 
-### 3.5 上线后立刻做的事
+### 3.6 配置证书自动续期
+
+```bash
+sudo crontab -e
+# 加一行：每天 03:30 跑续期（certbot 内部判断不到 30 天才会真续）
+30 3 * * * cd /opt/resume/deploy && bash scripts/renew-cert.sh >> /var/log/resume-renew.log 2>&1
+```
+
+### 3.7 上线后立刻做的事
 
 1. 用初始管理员登录 → 改密码 / 建正式管理员 / 禁用 INIT_ADMIN 账号。
 2. 在「模型配置」菜单添加至少一个可用 LLM 配置，保存后所有员工可见。
@@ -137,58 +152,59 @@ curl -sI http://<WEB_DOMAIN>/ | grep -iE "^(HTTP|location)"
 
 ## 四、TLS / HTTPS
 
-本方案用 **Caddy** 做 TLS 终结，零运维：自动从 Let's Encrypt 申请证书，每 30 天剩余有效期自动续期，HTTP→HTTPS 跳转 + HSTS 默认开启。
+本方案用 **nginx 直接终结 TLS** + **certbot 签发 Let's Encrypt 证书**：
 
-### 4.1 工作机制
+| 角色 | 怎么做的 |
+|---|---|
+| 首次签发 | `deploy/scripts/init-cert.sh`：临时停 frontend，跑 `certbot --standalone` 占 80 签证 |
+| 证书存放 | 宿主机 `deploy/letsencrypt/` → 容器内 `/etc/letsencrypt:ro` |
+| 自动续期 | 宿主机 cron 跑 `deploy/scripts/renew-cert.sh`，webroot 模式经 nginx 80 端口完成挑战，**无 downtime** |
+| HTTP→HTTPS | nginx 80 server：`/.well-known/acme-challenge/` 放行，其它一律 301 |
+| 安全配置 | TLS1.2/1.3、Mozilla intermediate cipher、HSTS 1 年、session_tickets off |
 
-1. 启动时 Caddy 根据 `WEB_DOMAIN` 向 Let's Encrypt 发起 ACME HTTP-01 挑战（占用 80 端口）
-2. LE 回访 `http://<WEB_DOMAIN>/.well-known/acme-challenge/...` 验证域名归属
-3. 通过后签发证书并存到 `caddy_data` 卷
-4. 之后所有 443 流量由 Caddy 解密，反代到内网 `frontend:80`
-5. 证书到期前 30 天自动续期，无需任何操作
-
-### 4.2 启用条件 checklist
+### 4.1 启用条件 checklist
 
 - [ ] `.env.production` 中 `WEB_DOMAIN` 填了真实域名（不是 IP！LE 不签发 IP 证书）
 - [ ] `ACME_EMAIL` 填了能收信的邮箱
-- [ ] 域名 DNS A 记录已指向服务器公网 IP，且 `dig +short <WEB_DOMAIN>` 能返回
+- [ ] 域名 DNS A 记录已指向服务器公网 IP，`dig +short <WEB_DOMAIN>` 能返回
 - [ ] 服务器 80 和 443 端口对公网开放（云厂商安全组 + 系统防火墙）
 - [ ] 服务器时间正确（NTP 同步）—— 时间漂移会导致证书校验失败
+- [ ] 签证瞬间 80 端口空闲（脚本会临时停 frontend，但宿主机上别的服务占用要先腾出）
 
-### 4.3 证书相关运维
+### 4.2 常用命令
 
 ```bash
-# 看证书状态 & 续期日志
-docker compose --env-file .env.production logs --tail=200 caddy | grep -iE "cert|renew"
+# 查看证书有效期
+docker run --rm -v "$(pwd)/letsencrypt:/etc/letsencrypt" \
+  certbot/certbot:latest certificates
 
-# 进 caddy 容器查看证书文件
-docker compose --env-file .env.production exec caddy \
-  ls -la /data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/
+# 手动触发一次续期（一般交给 cron 即可）
+bash scripts/renew-cert.sh
 
-# 强制重载 Caddyfile（改完配置不停容器）
-docker compose --env-file .env.production exec caddy caddy reload --config /etc/caddy/Caddyfile
+# 改完 nginx 配置不停容器
+docker compose --env-file .env.production exec frontend nginx -s reload
 
-# 手动触发续期（一般不用，Caddy 会自动做）
-docker compose --env-file .env.production exec caddy \
-  caddy reload --force --config /etc/caddy/Caddyfile
+# nginx 配置语法检查
+docker compose --env-file .env.production exec frontend nginx -t
 ```
 
-### 4.4 故障排查
+### 4.3 故障排查
 
 | 现象 | 排查 |
 |---|---|
-| Caddy 启动卡 `obtaining certificate` | 80 端口没放通 / DNS 没生效 / WEB_DOMAIN 指向不是本机 |
-| `too many failed authorizations` | 触发 LE 速率限制（每周 50 次失败上限）。修域名 / 防火墙后，等 1 小时再试，或临时切到 staging（见 Caddyfile 注释里的 `acme_ca`）|
-| 证书有效但浏览器 ERR_CERT | `caddy_data` 卷被清过了，重启会触发 LE 速率限制；恢复备份或等限制窗口 |
-| HSTS 锁死想回 HTTP 调试 | 浏览器 `chrome://net-internals/#hsts` 删条目；生产环境 HSTS 一旦下发不可撤回，重新换域名 |
+| `init-cert.sh` 卡在 challenge 失败 | 80 端口没放通 / DNS 没生效 / WEB_DOMAIN 不指向本机 |
+| frontend 启动报 `cannot load certificate` | 证书没签出来或 `WEB_DOMAIN` 与证书目录名不匹配；先跑 `init-cert.sh` |
+| `too many failed authorizations` | LE 速率限制（每周 50 次失败）。先用 `STAGING=1 bash init-cert.sh` 调通再正式签 |
+| 续期失败 | `cat /var/log/resume-renew.log`；常见原因：80 被别的服务抢、`./certbot-webroot/` 被删 |
+| HSTS 锁死想回 HTTP 调试 | 浏览器 `chrome://net-internals/#hsts` 删条目；生产 HSTS 一旦下发不可撤回，本地调试用 `http://localhost` |
 
-### 4.5 替换方案
+### 4.4 替换方案
 
-如果你前置已有 SLB / Cloudflare 做 TLS：
+前置已有 SLB / Cloudflare 做 TLS（云端终结）时：
 
-1. 注释掉 `docker-compose.yml` 中的整个 `caddy` 服务
-2. 把 `frontend` 服务的 `expose: ["80"]` 改回 `ports: ["80:80"]`
-3. 在 SLB / CDN 上指向服务器 80
+1. `docker-compose.yml` 的 `frontend.ports` 把 `443:443` 删掉，只留 `80:80`
+2. `frontend/nginx/default.conf.template` 删 443 server 块，把 80 server 改成直接服务（不再 301）
+3. 删 `letsencrypt` / `certbot-webroot` 卷挂载与 `init-cert.sh`
 
 ---
 
@@ -362,7 +378,8 @@ docker compose --env-file .env.production up -d --build backend celery frontend
 - [ ] `docker-compose.yml` 中 mysql / redis 的 `ports` 行已注释或限定 `127.0.0.1`
 - [ ] 服务器安全组只放 80/443，不放 3306/6379/8000
 - [ ] `WEB_DOMAIN` / `ACME_EMAIL` 已填，且 DNS 已解析、80/443 可达
-- [ ] 首次启动后已确认证书签发成功（看 caddy 日志）
-- [ ] `caddy_data` 卷已纳入备份策略（避免删卷触发 LE 速率限制）
+- [ ] 已跑过 `init-cert.sh` 并确认 `deploy/letsencrypt/live/<域名>/fullchain.pem` 存在
+- [ ] `deploy/letsencrypt/` 已纳入备份策略（误删后 30 天内重签会触发 LE 限频）
+- [ ] crontab 已加 `renew-cert.sh` 每日续期
 - [ ] 已加 mysql 定时备份 crontab
 - [ ] `.env.production` 不在 git 里（默认已被 `.gitignore` 忽略）
