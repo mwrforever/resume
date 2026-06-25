@@ -40,7 +40,7 @@ export interface EvaluationDetail {
   resume_id: number;
   job_id: number;
   final_score: number;
-  final_label: '优秀' | '良好' | '一般' | '未达标';
+  final_label: '优秀' | '良好' | '一般' | '待改进';
   advantage_comment: string;
   disadvantage_comment: string;
   dimensions: DimensionScore[];

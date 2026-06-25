@@ -11,7 +11,7 @@ import { Award, CheckCircle2, Sparkles, Target, TrendingUp, XCircle } from 'luci
 interface Evaluation {
   match_id: number;
   final_score: number;
-  final_label: '优秀' | '良好' | '一般' | '未达标';
+  final_label: '优秀' | '良好' | '一般' | '待改进';
   advantage_comment: string;
   disadvantage_comment: string;
   dimensions: { dimension_name: string; score: number; advantage: string; disadvantage: string }[];
@@ -50,7 +50,7 @@ const labelStyles = {
     text: 'text-amber-700',
     bg: 'bg-amber-50',
   },
-  '未达标': {
+  '待改进': {
     gradient: 'from-rose-500 to-red-500',
     ring: 'ring-rose-100',
     text: 'text-rose-700',
@@ -193,8 +193,8 @@ export default function EmployeeEvalDetail() {
     );
   }
 
-  // final_label 由 LLM 输出，未必命中预设四档（如"待改进"/"合格"），兜底到"未达标"色阶避免空白
-  const labelStyle = labelStyles[evaluation.final_label] ?? labelStyles['未达标'];
+  // final_label 由 LLM 输出，越界时兜底到"待改进"色阶避免空白
+  const labelStyle = labelStyles[evaluation.final_label] ?? labelStyles['待改进'];
   const dimensionChartData = evaluation.dimensions.map((dimension) => ({
     name: dimension.dimension_name,
     score: dimension.score,

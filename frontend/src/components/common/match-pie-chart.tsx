@@ -17,7 +17,7 @@ export function MatchPieChart({ data }: MatchPieChartProps) {
     { name: '优秀', count: data.excellent.count, percentage: data.excellent.percentage, color: COLORS.excellent },
     { name: '良好', count: data.good.count, percentage: data.good.percentage, color: COLORS.good },
     { name: '一般', count: data.average.count, percentage: data.average.percentage, color: COLORS.average },
-    { name: '未达标', count: data.fail.count, percentage: data.fail.percentage, color: COLORS.fail },
+    { name: '待改进', count: data.fail.count, percentage: data.fail.percentage, color: COLORS.fail },
   ];
   const passedCount = data.excellent.count + data.good.count;
   const passedPercentage = data.total > 0 ? Math.round((passedCount / data.total) * 100) : 0;

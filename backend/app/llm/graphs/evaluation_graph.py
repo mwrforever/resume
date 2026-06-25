@@ -367,14 +367,18 @@ def _dimension_reduce_node(state: EvaluationState) -> dict[str, Any]:
 
 
 def _label_for_score(score: float) -> str:
-    """根据分数兜底生成标签。"""
-    if score >= 90:
+    """根据分数兜底生成标签。
+
+    分档与 visual_report.yaml / comprehensive.yaml 中给 LLM 的枚举对齐：
+    ≥85 优秀；70-84 良好；55-69 一般；<55 待改进。
+    """
+    if score >= 85:
         return "优秀"
     if score >= 70:
         return "良好"
-    if score >= 50:
+    if score >= 55:
         return "一般"
-    return "未达标"
+    return "待改进"
 
 
 async def _comprehensive_node(state: EvaluationState) -> dict[str, Any]:

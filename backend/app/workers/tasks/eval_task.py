@@ -29,13 +29,14 @@ logger = logging.getLogger(__name__)
 
 
 def _get_label(score: float) -> str:
-    if score >= 90:
+    # 分档与 evaluation_graph._label_for_score / prompt 模板枚举保持一致
+    if score >= 85:
         return "优秀"
     if score >= 70:
         return "良好"
-    if score >= 50:
+    if score >= 55:
         return "一般"
-    return "未达标"
+    return "待改进"
 
 
 def _get_resume(session: Session, resume_id: int) -> dict[str, Any] | None:

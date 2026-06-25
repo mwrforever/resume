@@ -142,7 +142,7 @@ class EvalRepository:
                 func.sum(case((ResumeJobMatch.final_label == "优秀", 1), else_=0)).label("excellent"),
                 func.sum(case((ResumeJobMatch.final_label == "良好", 1), else_=0)).label("good"),
                 func.sum(case((ResumeJobMatch.final_label == "一般", 1), else_=0)).label("average"),
-                func.sum(case((ResumeJobMatch.final_label == "未达标", 1), else_=0)).label("fail"),
+                func.sum(case((ResumeJobMatch.final_label == "待改进", 1), else_=0)).label("fail"),
             ).where(ResumeJobMatch.job_id == job_id)
         )
         row = result.one()

@@ -31,7 +31,7 @@ class ResumeJobMatch(Base):
     resume_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="简历ID")
     job_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="岗位ID")
     final_score: Mapped[Decimal] = mapped_column(DECIMAL(5, 2), nullable=False, default=Decimal("0.00"), server_default="0.00", comment="最终得分")
-    final_label: Mapped[str] = mapped_column(String(20), nullable=False, default='未达标', server_default='未达标', comment="最终标签")
+    final_label: Mapped[str] = mapped_column(String(20), nullable=False, default='待改进', server_default='待改进', comment="最终标签")
     advantage_comment: Mapped[str | None] = mapped_column(String(500), comment="整体优点")
     disadvantage_comment: Mapped[str | None] = mapped_column(String(500), comment="整体缺点")
     is_direct_preferred: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0", comment="是否直接优选")
