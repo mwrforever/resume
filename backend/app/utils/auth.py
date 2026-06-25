@@ -104,7 +104,8 @@ class AuthService:
             await self.cache.set_json(EMPLOYEE_KEY.format(employee_id=employee_id), employee_dict, EMPLOYEE_TTL)
         return employee_dict
 
-    async def authenticate_user(self, identifier: str, password: str):
+    async def authenticate_user(self, identifier: str, password: str) -> dict | None:
+        # 与 get_user_by_* 保持同一形态：统一返回 dict，endpoint 端按下标访问不再炸
         user = await self.user_repo.get_by_identifier(identifier)
         if not user:
             return None
@@ -112,9 +113,10 @@ class AuthService:
             return None
         if user.status != 1:
             raise UnauthorizedError("账号已被禁用")
-        return user
+        return self._user_to_dict(user)
 
-    async def authenticate_employee(self, identifier: str, password: str):
+    async def authenticate_employee(self, identifier: str, password: str) -> dict | None:
+        # 与 get_employee_by_* 保持同一形态：统一返回 dict，避免 ORM 下标访问报错
         employee = await self.employee_repo.get_by_identifier(identifier)
         if not employee:
             return None
@@ -122,7 +124,7 @@ class AuthService:
             return None
         if employee.status != 1:
             raise UnauthorizedError("账号已被禁用")
-        return employee
+        return self._employee_to_dict(employee)
 
     def create_tokens(self, user_id: int, user_type: str):
         access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": user_type})
