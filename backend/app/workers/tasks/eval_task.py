@@ -80,8 +80,10 @@ def _get_or_create_match_id(session: Session, application_id: int, resume_id: in
         return match_id
     session.execute(
         text(
-            "INSERT INTO resume_job_match (application_id, resume_id, job_id) "
-            "VALUES (:application_id, :resume_id, :job_id)"
+            # 显式占位 final_score / final_label：旧库列无 DB 级 DEFAULT，
+            # 不写就触发 MySQL 1364；评估完成后由后续 UPDATE 覆盖为真实值。
+            "INSERT INTO resume_job_match (application_id, resume_id, job_id, final_score, final_label) "
+            "VALUES (:application_id, :resume_id, :job_id, 0, '未达标')"
         ),
         {"application_id": application_id, "resume_id": resume_id, "job_id": job_id},
     )
