@@ -65,7 +65,32 @@ export default function EmployeeEvaluations() {
     );
   };
 
-  const [submitted, setSubmitted] = useState(false);
+  // 与投递管理保持一致：按钮即状态（评估中 / 已提交 / 重新评估 / AI评估），不再用顶部 toast
+  const [submittedIds, setSubmittedIds] = useState<Set<number>>(new Set());
+
+  const reloadJobData = async (jobId: number) => {
+    const [distRes, listRes] = await Promise.all([
+      employeeAnalyticsApi.getMatchDistribution(jobId),
+      employeeAnalyticsApi.getJobResumeList(jobId),
+    ]);
+    setDistribution(distRes.data);
+    setResumes(listRes.data.items || []);
+  };
+
+  const markSubmitted = (ids: number[]) => {
+    setSubmittedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
+    setTimeout(() => {
+      setSubmittedIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+    }, 4000);
+  };
 
   const handleBatchEvaluate = async () => {
     if (!selectedJobId || selectedApplicationIds.length === 0) return;
@@ -74,15 +99,9 @@ export default function EmployeeEvaluations() {
       await employeeEvaluationsApi.batchEvaluate({
         application_ids: selectedApplicationIds,
       });
-      setSubmitted(true);
+      markSubmitted(selectedApplicationIds);
       setSelectedApplicationIds([]);
-      setTimeout(() => setSubmitted(false), 4000);
-      const [distRes, listRes] = await Promise.all([
-        employeeAnalyticsApi.getMatchDistribution(selectedJobId),
-        employeeAnalyticsApi.getJobResumeList(selectedJobId),
-      ]);
-      setDistribution(distRes.data);
-      setResumes(listRes.data.items || []);
+      await reloadJobData(selectedJobId);
     } catch (error) {
       console.error('Failed to submit:', error);
     } finally {
@@ -97,14 +116,8 @@ export default function EmployeeEvaluations() {
       await employeeEvaluationsApi.batchEvaluate({
         application_ids: [applicationId],
       });
-      setSubmitted(true);
-      setTimeout(() => setSubmitted(false), 4000);
-      const [distRes, listRes] = await Promise.all([
-        employeeAnalyticsApi.getMatchDistribution(selectedJobId),
-        employeeAnalyticsApi.getJobResumeList(selectedJobId),
-      ]);
-      setDistribution(distRes.data);
-      setResumes(listRes.data.items || []);
+      markSubmitted([applicationId]);
+      await reloadJobData(selectedJobId);
     } catch (error) {
       console.error('Failed to submit:', error);
     } finally {
@@ -142,12 +155,6 @@ export default function EmployeeEvaluations() {
 
   return (
     <AdminLayout breadcrumbs={[{ label: '评估管理' }]} title="评估管理">
-      {submitted && (
-        <div className="mb-4 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700" aria-live="polite">
-          评估任务已提交，请稍后查看结果
-        </div>
-      )}
-
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* 左侧：岗位选择 + 饼图 */}
         <div className="lg:col-span-1 space-y-4">
@@ -316,6 +323,7 @@ export default function EmployeeEvaluations() {
                   resumes.map((resume) => {
                     const checked = selectedApplicationIds.includes(resume.application_id);
                     const isEvaluating = evaluatingApplicationIds.has(resume.application_id);
+                    const isSubmitted = submittedIds.has(resume.application_id);
                     return (
                       <tr key={resume.application_id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors">
                         <td className="px-4 py-3">
@@ -364,17 +372,21 @@ export default function EmployeeEvaluations() {
                                 查看详情
                               </Link>
                             )}
-                            <button
-                              onClick={() => handleEvaluateOne(resume.application_id)}
-                              disabled={isEvaluating || submitting}
-                              className="text-xs text-[#2563EB] hover:underline disabled:opacity-50 focus-visible:outline-none focus-visible:underline"
-                            >
-                              {isEvaluating
-                                ? '提交中…'
-                                : resume.match_id
-                                ? '重新评估'
-                                : 'AI评估'}
-                            </button>
+                            {isSubmitted ? (
+                              <span className="text-xs text-green-600 px-2">已提交</span>
+                            ) : (
+                              <button
+                                onClick={() => handleEvaluateOne(resume.application_id)}
+                                disabled={isEvaluating || submitting}
+                                className="inline-flex items-center gap-1 text-xs text-[#2563EB] hover:underline disabled:opacity-50 px-2 py-1 rounded hover:bg-blue-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+                              >
+                                {isEvaluating
+                                  ? <><Loader2 size={13} className="animate-spin" aria-hidden="true" />评估中</>
+                                  : resume.match_id
+                                  ? '重新评估'
+                                  : 'AI评估'}
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
