@@ -13,6 +13,10 @@ env/
 .env.*
 !*.example
 !*.env.example
+
+# 部署期产物：证书与 ACME 挑战目录（运行时生成，含私钥，禁止入库）
+deploy/letsencrypt/
+deploy/certbot-webroot/
 backend/note/
 .eggs/
 *.egg-info/

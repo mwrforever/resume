@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1.7
 # ============================================================================
-# 前端镜像：Vite 构建产物 + nginx:alpine 提供静态托管 & 后端反代
-# 单容器同时承担「web 静态资源」「/api 反代」「/preview /files 反代」三种职责。
+# 前端镜像：Vite 构建产物 + nginx:latest 提供静态托管 + TLS 反代
+# 单容器同时承担「web 静态资源」「/api 反代」「HTTPS 终结」三种职责。
+# 站点配置作为 envsubst 模板传入，启动时由 nginx-entrypoint 注入 ${WEB_DOMAIN}。
+# 证书 & ACME 挑战目录由 docker-compose 挂卷注入。
 # ============================================================================
 
 FROM node:20-alpine AS builder
@@ -26,13 +28,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends tzdata wget && 
     echo $TZ > /etc/timezone && \
     rm -rf /var/lib/apt/lists/*
 
-# 覆盖默认站点
+# 移除官方默认站点，配置由模板生成
 RUN rm -f /etc/nginx/conf.d/default.conf
-COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+# 模板放到 /etc/nginx/templates/，nginx:latest 自带的入口脚本会用 envsubst 把
+# 其中 ${WEB_DOMAIN} 等环境变量替换后输出到 /etc/nginx/conf.d/*.conf
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 
 # 拷构建产物
 COPY --from=builder /build/dist /usr/share/nginx/html
 
-EXPOSE 80
-
-# nginx:alpine 自带 entrypoint，会处理 envsubst 模板与启动
+EXPOSE 80 443
