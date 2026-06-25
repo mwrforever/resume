@@ -101,8 +101,9 @@ class OpenAICompatibleGateway:
     def _chat_kwargs(self, runtime_config: LLMRuntimeConfigDTO) -> dict[str, Any]:
         """构造 ChatOpenAI kwargs（仅非流式 complete_once 使用）。
 
-        仅在 enable_thinking 时注入 extra_body：provider 思考开关 + stream_options
-        + thinking_budget（仅 qwen/other，DeepSeek 不支持该字段）。
+        enable_thinking=True：注入 provider 思考开关 + stream_options + thinking_budget。
+        enable_thinking=False：对 qwen/other 显式下发 enable_thinking=False，
+        避免 DashScope 服务端按模型默认走思考模式导致正文为空。
         """
         extra_body: dict[str, Any] = {}
         if runtime_config.enable_thinking:
@@ -110,6 +111,10 @@ class OpenAICompatibleGateway:
             if runtime_config.thinking_budget_tokens and runtime_config.provider in ("qwen", "other"):
                 # Qwen 官方字段名为 thinking_budget（非 thinking_budget_tokens）
                 extra_body["thinking_budget"] = runtime_config.thinking_budget_tokens
+        elif runtime_config.provider in ("qwen", "other"):
+            # 维度建议 / 模板生成 / 简历评估等业务路径默认不开思考；显式关闭以兼容
+            # DashScope OpenAI 兼容模式（Qwen3 系列服务端默认开启思考会让 content 走 reasoning_content）。
+            extra_body["enable_thinking"] = False
 
         kwargs: dict[str, Any] = {
             "model": runtime_config.model_name,
@@ -147,6 +152,9 @@ class OpenAICompatibleGateway:
             extra_body.pop("stream_options", None)
             if runtime_config.thinking_budget_tokens and runtime_config.provider in ("qwen", "other"):
                 extra_body["thinking_budget"] = runtime_config.thinking_budget_tokens
+        elif runtime_config.provider in ("qwen", "other"):
+            # 与 _chat_kwargs 对称：显式 enable_thinking=False，避免 DashScope 走默认思考行为
+            extra_body["enable_thinking"] = False
         if extra_body:
             params["extra_body"] = extra_body
         return params

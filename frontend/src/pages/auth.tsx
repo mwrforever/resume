@@ -131,8 +131,9 @@ export default function Auth() {
         setUserInfo('employee', String(res.user_id), !!res.is_admin);
         navigate('/employee/dashboard');
       }
-    } catch {
-      setError('登录失败，请检查账号信息');
+    } catch (err: any) {
+      // 后端可能用 BizError(message) 或 HTTPException(detail)，两种都兜底
+      setError(err?.response?.data?.message || err?.response?.data?.detail || '登录失败，请检查账号信息');
     } finally {
       setLoading(false);
     }
