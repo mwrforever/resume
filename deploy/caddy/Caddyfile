@@ -1,0 +1,54 @@
+# =============================================================================
+# Caddy 反代配置：TLS 终结 + HTTP→HTTPS 跳转 + 反代到 frontend nginx
+# - {$WEB_DOMAIN}：从 docker-compose 环境变量注入，启动时由 Caddy 替换
+# - {$ACME_EMAIL}：用于 Let's Encrypt 账号绑定与过期提醒
+# - 证书 & 账号私钥都落在 /data（caddy_data 卷），千万别清
+# - 反代用 docker 内网域名 frontend:80，不出公网
+# =============================================================================
+
+# 全局选项
+{
+	email {$ACME_EMAIL}
+	# 默认就是 LE 生产环境，无需显式声明 acme_ca
+	# 若需调试可改为 acme_ca https://acme-staging-v02.api.letsencrypt.org/directory（避开 LE 速率限制）
+}
+
+{$WEB_DOMAIN} {
+	# 反代到内网 frontend 容器
+	reverse_proxy frontend:80 {
+		# SSE / 长轮询友好：关 buffer
+		flush_interval -1
+
+		# 传递真实客户端信息给后端
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up Host {host}
+	}
+
+	# 启用压缩
+	encode zstd gzip
+
+	# 安全 header
+	header {
+		# 一年期 HSTS，含子域名，可被 preload 列表收录
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# 移除 Caddy 默认指纹
+		-Server
+	}
+
+	# 上传简历需要的 body 上限
+	request_body {
+		max_size 50MB
+	}
+
+	# 访问日志（落到 stdout，docker compose logs 可见）
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+}

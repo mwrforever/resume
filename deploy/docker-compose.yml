@@ -5,16 +5,18 @@
 #     redis       — AOF 持久化 + 密码（可选）+ 健康检查
 #     backend     — FastAPI（uvicorn，--proxy-headers，2 workers）
 #     celery      — 共用 backend 镜像，消费 eval/agent 队列
-#     frontend    — nginx 提供静态资源 + /api 反代到 backend
+#     frontend    — nginx 提供静态资源 + /api 反代到 backend（仅内网，不直暴）
+#     caddy       — TLS 终结 + Let's Encrypt 自动签发/续期，80/443 唯一对外入口
 #
 #   网络：默认 bridge 网络 resume_net，服务间通过服务名互联
-#   持久化：mysql_data / redis_data / resume_storage / backend_logs
-#   启动顺序：mysql/redis healthy → backend → celery & frontend
+#   持久化：mysql_data / redis_data / resume_storage / langgraph_data / backend_logs
+#           caddy_data（证书）/ caddy_config
+#   启动顺序：mysql/redis healthy → backend → celery & frontend → caddy
 #
 # 配置：所有敏感项通过 .env.production 注入，本目录提供 .env.production.example 模板
 # 使用：
 #   cp deploy/.env.production.example deploy/.env.production
-#   编辑 .env.production
+#   编辑 .env.production（WEB_DOMAIN / ACME_EMAIL 必填）
 #   docker compose -f deploy/docker-compose.yml --env-file deploy/.env.production up -d --build
 # ============================================================================
 
@@ -166,14 +168,46 @@ services:
     restart: unless-stopped
     depends_on:
       backend: { condition: service_healthy }
-    ports:
-      - "${WEB_PORT:-80}:80"
+    # 不再直暴端口，由前置 caddy 通过 docker 内网反代
+    expose:
+      - "80"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks: [resume_net]
+
+  # ------------------------------ Caddy（TLS 终结） ------------------------------
+  # 监听 80/443，自动从 Let's Encrypt 申请并续期证书，反代到 frontend:80
+  # 启用前置条件：
+  #   1. WEB_DOMAIN 解析到本机公网 IP
+  #   2. 服务器 80/443 端口对外开放（ACME HTTP-01 挑战走 80）
+  #   3. ACME_EMAIL 填了能收信的邮箱（证书过期前 LE 会发提醒）
+  caddy:
+    image: caddy:latest
+    container_name: resume_caddy
+    restart: unless-stopped
+    depends_on:
+      frontend: { condition: service_healthy }
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3 (QUIC)
+    environment:
+      WEB_DOMAIN: ${WEB_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data         # 证书 & ACME 账号（务必持久化，否则会反复签发触发 LE 限频）
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks: [resume_net]
 
 # ============================================================================
@@ -183,6 +217,8 @@ volumes:
   resume_storage:    # 简历原文件 & note/
   langgraph_data:    # LangGraph SqliteSaver checkpoints
   backend_logs:
+  caddy_data:        # ACME 证书 & 账号私钥（千万别删）
+  caddy_config:
 
 networks:
   resume_net:
