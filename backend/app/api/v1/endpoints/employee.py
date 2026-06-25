@@ -94,12 +94,12 @@ async def login(
     else:
         raise HTTPException(status_code=400, detail="无效的登录类型")
 
-    access_token, refresh_token = service.create_tokens(employee.id, "employee")
+    access_token, refresh_token = service.create_tokens(employee["id"], "employee")
     return ApiResponse(data=TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         user_type="employee",
-        user_id=employee.id,
+        user_id=employee["id"],
         # 管理员标记随登录下发，前端据此隐藏/展示管理类菜单
         is_admin=is_employee_admin(employee),
     ))
@@ -127,7 +127,7 @@ async def refresh_token(
     user_type = payload.get("user_type", "employee")
 
     employee = await service.get_employee_by_id(user_id)
-    if not employee or employee.status != 1:
+    if not employee or employee["status"] != 1:
         raise HTTPException(status_code=401, detail="员工已禁用")
 
     new_access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": user_type})
