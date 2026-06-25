@@ -1,6 +1,5 @@
-import asyncio
-
 from app.core.exceptions import NotFoundError, ValidationError
+from app.llm.gateway import LLMGatewayError
 from app.repositories.eval_template_repository import EvalTemplateRepository
 from app.schemas.vo.request.eval_template_request import EvalDimensionAiSuggestRequest, JobTemplateAiSuggestRequest, TemplateSkillAiSuggestRequest
 from app.llm.chains.chains import EvalDimensionAiSuggestChain, JobTemplateAiSuggestChain, TemplateSkillAiSuggestChain
@@ -61,11 +60,14 @@ class EvalTemplateService:
         return result
 
     async def suggest_dimension(self, body: EvalDimensionAiSuggestRequest) -> dict[str, str]:
-        result = await asyncio.to_thread(
-            EvalDimensionAiSuggestChain().suggest,
-            body.job_name,
-            body.job_description or "",
-        )
+        try:
+            result = await EvalDimensionAiSuggestChain().suggest(
+                body.job_name,
+                body.job_description or "",
+            )
+        except LLMGatewayError:
+            # 网关层异常已在 chain 内打日志，这里转成统一业务异常返给前端
+            raise ValidationError("AI 服务暂时不可用，请稍后重试")
         if not result.get("dimension_name"):
             raise ValidationError("AI 未返回维度建议，请补充岗位信息后重试")
         return result
@@ -74,7 +76,10 @@ class EvalTemplateService:
         dimensions = [item.model_dump() for item in body.dimensions if item.dimension_name.strip()]
         if not dimensions:
             raise ValidationError("请先选择评估维度")
-        result = await asyncio.to_thread(TemplateSkillAiSuggestChain().suggest, dimensions)
+        try:
+            result = await TemplateSkillAiSuggestChain().suggest(dimensions)
+        except LLMGatewayError:
+            raise ValidationError("AI 服务暂时不可用，请稍后重试")
         skills = []
         for item in result.get("skills", []):
             skill_name = str(item.get("skill_name") or "").strip()
@@ -94,11 +99,13 @@ class EvalTemplateService:
     async def suggest_job_template(self, body: JobTemplateAiSuggestRequest) -> dict:
         if not body.job_name.strip():
             raise ValidationError("请先填写岗位名称")
-        result = await asyncio.to_thread(
-            JobTemplateAiSuggestChain().suggest,
-            body.job_name,
-            body.job_description or "",
-        )
+        try:
+            result = await JobTemplateAiSuggestChain().suggest(
+                body.job_name,
+                body.job_description or "",
+            )
+        except LLMGatewayError:
+            raise ValidationError("AI 服务暂时不可用，请稍后重试")
         dimensions = []
         for item in result.get("dimensions", []):
             dimension_name = str(item.get("dimension_name") or "").strip()
