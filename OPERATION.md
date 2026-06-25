@@ -52,6 +52,19 @@
 3. **域名**：必填。把域名 A 记录指向服务器公网 IP，**等 DNS 全球生效**（`dig +short <域名>` 能返回该 IP）后再启动，否则 certbot 申请证书会失败。
 4. **端口**：服务器安全组 / 防火墙放通 **80（ACME 挑战必走）** 和 **443**。
 5. **代码**：把仓库 clone 到 `/opt/resume`（路径可改，下文以此为例）。
+6. **镜像加速**（腾讯云强烈建议）：
+   ```bash
+   sudo mkdir -p /etc/docker
+   sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
+   {
+     "registry-mirrors": ["https://mirror.ccs.tencentyun.com"]
+   }
+   EOF
+   sudo systemctl restart docker
+   ```
+   - `mirror.ccs.tencentyun.com` 是腾讯云 CVM 内网镜像，**免费、走内网、不计公网流量**。
+   - Dockerfile 已内置 apt/pip/npm/apk 国内源（默认 `CN_MIRROR=1`）。
+   - 境外服务器构建时：`docker compose --env-file .env.production build --build-arg CN_MIRROR=0`
 
 ---
 
