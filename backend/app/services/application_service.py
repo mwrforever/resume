@@ -110,14 +110,18 @@ class ApplicationService:
         return await self.app_repo.update_status(app_id, status)
 
     async def withdraw_application(self, app_id: int, user_id: int) -> bool:
-        """撤回投递（仅限待评估或待处理状态的投递）"""
+        """撤回投递（仅限"待评估"状态）。
+
+        前端按钮也仅在 status==0 时显示；撤回后软删，岗位详情 applied 字段会回到
+        False，允许用户重新投递。
+        """
         app = await self.app_repo.get_by_id(app_id)
         if not app or app.is_deleted == 1:
             raise NotFoundError("投递记录不存在")
         if app.user_id != user_id:
             raise NotFoundError("投递记录不存在")
-        if app.status not in (0, 1):
-            raise ValidationError("只能撤回待评估或待处理状态的投递")
+        if app.status != 0:
+            raise ValidationError("只能撤回待评估状态的投递")
         return await self.app_repo.soft_delete(app_id)
 
     def get_status_name(self, status: int) -> str:

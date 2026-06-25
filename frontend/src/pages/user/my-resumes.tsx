@@ -3,6 +3,7 @@ import { CalendarDays, Eye, FileText, Mail, Trash2, Upload, UserRound } from 'lu
 import { userAuthApi } from '@/api/user/auth';
 import { userResumesApi } from '@/api/user/resumes';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { useAuthStore } from '@/store/auth';
 import { EmptyState, PageSkeleton, SectionCard, StatusPill } from '@/components/user/user-ui';
 import { UserShell } from '@/components/user/user-shell';
@@ -36,6 +37,9 @@ export default function UserProfile() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [previewResume, setPreviewResume] = useState<{ id: number; fileName: string } | null>(null);
+  // 删除简历二次确认弹窗：保留待删除的简历对象
+  const [deleteTarget, setDeleteTarget] = useState<Resume | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadData = async () => {
     try {
@@ -79,13 +83,17 @@ export default function UserProfile() {
     uploadInputRef.current?.click();
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('确定要删除这份简历吗？')) return;
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await userResumesApi.delete(id);
+      await userResumesApi.delete(deleteTarget.id);
+      setDeleteTarget(null);
       await loadData();
     } catch (error) {
       console.error('Delete failed:', error);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -223,7 +231,7 @@ export default function UserProfile() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleDelete(resume.id)}
+                    onClick={() => setDeleteTarget(resume)}
                     className="gap-2 text-muted-foreground hover:text-destructive"
                   >
                     <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -235,6 +243,16 @@ export default function UserProfile() {
           </div>
         )}
       </SectionCard>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="删除简历"
+        description={deleteTarget ? `确定删除简历「${deleteTarget.file_name}」吗？此操作不可恢复。` : ''}
+        confirmLabel="确认删除"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => !deleting && setDeleteTarget(null)}
+        loading={deleting}
+      />
     </UserShell>
   );
 }

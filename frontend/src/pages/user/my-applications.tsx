@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Briefcase, CalendarDays, RotateCcw } from 'lucide-react';
 import { userApplicationsApi } from '@/api/user/applications';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EmptyState, PageSkeleton, SectionCard, StatusPill } from '@/components/user/user-ui';
 import { UserShell } from '@/components/user/user-shell';
 
@@ -20,6 +21,9 @@ export default function UserMyApplications() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [page] = useState(1);
+  // 撤回二次确认弹窗：保留待撤回的投递对象，避免 window.confirm 风格
+  const [withdrawTarget, setWithdrawTarget] = useState<Application | null>(null);
+  const [withdrawing, setWithdrawing] = useState(false);
 
   const loadApplications = async (pageNum: number = 1) => {
     setLoading(true);
@@ -37,13 +41,17 @@ export default function UserMyApplications() {
     loadApplications(page);
   }, [page]);
 
-  const handleWithdraw = async (id: number) => {
-    if (!confirm('确定要撤回这份投递吗？')) return;
+  const handleConfirmWithdraw = async () => {
+    if (!withdrawTarget) return;
+    setWithdrawing(true);
     try {
-      await userApplicationsApi.withdraw(id);
+      await userApplicationsApi.withdraw(withdrawTarget.id);
+      setWithdrawTarget(null);
       await loadApplications(page);
     } catch (error) {
       console.error('Failed to withdraw:', error);
+    } finally {
+      setWithdrawing(false);
     }
   };
 
@@ -106,11 +114,12 @@ export default function UserMyApplications() {
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  {(app.status === 0 || app.status === 1) && (
+                  {/* 仅"待评估"投递允许撤回；其他状态隐藏按钮（与后端 status==0 校验对齐） */}
+                  {app.status === 0 && (
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handleWithdraw(app.id)}
+                      onClick={() => setWithdrawTarget(app)}
                       className="gap-2 text-muted-foreground hover:text-destructive"
                     >
                       <RotateCcw className="h-4 w-4" aria-hidden="true" />
@@ -123,6 +132,16 @@ export default function UserMyApplications() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={withdrawTarget !== null}
+        title="撤回投递"
+        description={withdrawTarget ? `确定撤回岗位「${withdrawTarget.job_name || `ID ${withdrawTarget.job_id}`}」的投递吗？撤回后可以重新投递。` : ''}
+        confirmLabel="确认撤回"
+        onConfirm={handleConfirmWithdraw}
+        onCancel={() => !withdrawing && setWithdrawTarget(null)}
+        loading={withdrawing}
+      />
     </UserShell>
   );
 }
