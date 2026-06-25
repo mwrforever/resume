@@ -49,38 +49,6 @@ async def _ensure_initial_admin(conn: AsyncConnection) -> None:
     logger.info("已根据 .env 创建初始管理员：email=%s", settings.INIT_ADMIN_EMAIL)
 
 
-# resume_job_match 旧库列默认值兜底：早期建表时 ORM 仅有 Python default、
-# 没有 server_default，DB 层面无 DEFAULT。celery 评估任务走的是裸 SQL INSERT
-# (绕过 ORM Python default)，缺一列就 1364；按项目既有"幂等 ALTER"风格补默认值。
-_RESUME_JOB_MATCH_COLUMN_DEFAULTS: dict[str, str] = {
-    "final_score": "ALTER TABLE resume_job_match MODIFY COLUMN final_score DECIMAL(5,2) NOT NULL DEFAULT 0.00 COMMENT '最终得分'",
-    "final_label": "ALTER TABLE resume_job_match MODIFY COLUMN final_label VARCHAR(20) NOT NULL DEFAULT '未达标' COMMENT '最终标签'",
-    "is_direct_preferred": "ALTER TABLE resume_job_match MODIFY COLUMN is_direct_preferred INT NOT NULL DEFAULT 0 COMMENT '是否直接优选'",
-}
-
-
-async def _ensure_resume_job_match_defaults(conn: AsyncConnection) -> None:
-    """旧库 resume_job_match 的 NOT NULL 列若无 DEFAULT 则补上。
-
-    create_all 不会改既有表，新加的 server_default 只对新建库生效；既有部署需要
-    这条 ALTER 兜底，否则裸 SQL INSERT 触发 MySQL 1364。SHOW COLUMNS 探测 Default
-    字段，仅当为 NULL 时才下发 MODIFY，幂等。
-    """
-    table_check = await conn.execute(text("SHOW TABLES LIKE 'resume_job_match'"))
-    if table_check.first() is None:
-        return
-    for column, alter_sql in _RESUME_JOB_MATCH_COLUMN_DEFAULTS.items():
-        row = await conn.execute(text(f"SHOW COLUMNS FROM resume_job_match LIKE '{column}'"))
-        info = row.mappings().first()
-        if info is None:
-            continue
-        # MySQL SHOW COLUMNS 的 Default 字段：无默认值时为 NULL（不区分大小写键名）
-        current_default = info.get("Default") if "Default" in info else info.get("default")
-        if current_default is None:
-            await conn.execute(text(alter_sql))
-            logger.info("补齐 resume_job_match 列默认值：%s", column)
-
-
 class MySQLManager:
     def __init__(self) -> None:
         self._engine: Optional[AsyncEngine] = None
@@ -143,7 +111,6 @@ class MySQLManager:
         async with self._engine.begin() as conn:
             # 由 ORM metadata 一次性建出所有表与索引；空库则同步引导初始管理员
             await conn.run_sync(Base.metadata.create_all)
-            await _ensure_resume_job_match_defaults(conn)
             await _ensure_initial_admin(conn)
 
     async def close_pool(self) -> None:

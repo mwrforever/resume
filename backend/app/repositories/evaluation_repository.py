@@ -1,5 +1,4 @@
 from datetime import datetime
-from decimal import Decimal
 from sqlalchemy import case, delete, func, select, update, union_all, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.eval_dimension import EvalDimension
@@ -19,16 +18,7 @@ class EvalRepository:
         self.db = db
 
     async def create_match(self, application_id: int, resume_id: int, job_id: int) -> ResumeJobMatch:
-        # 显式占位 final_score / final_label：旧库列无 DB 级 DEFAULT，仅靠 ORM Python 端 default
-        # 在 INSERT 时不会进入列清单，导致 MySQL 报 1364 'doesn't have a default value'。
-        # 评估完成后由 update_match_result 写入真实值。
-        match = ResumeJobMatch(
-            application_id=application_id,
-            resume_id=resume_id,
-            job_id=job_id,
-            final_score=Decimal("0.00"),
-            final_label="未达标",
-        )
+        match = ResumeJobMatch(application_id=application_id, resume_id=resume_id, job_id=job_id)
         self.db.add(match)
         await self.db.flush()
         await self.db.refresh(match)
