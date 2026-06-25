@@ -54,6 +54,6 @@ template: |-
 
   ## 字段约束
   - final_score：0-100 整数，必须与各维度得分趋势一致
-  - final_label：从"优秀/良好/合格/待改进/不合格"中选择一个
+  - final_label：从"优秀/良好/一般/未达标"中选择一个
   - advantage_comment：200 字以内，必须引用具体维度或技能证据
   - disadvantage_comment：200 字以内，必须引用具体维度或技能证据
