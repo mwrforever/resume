@@ -387,6 +387,8 @@ export default function DeptManagement() {
   const [leaderTarget, setLeaderTarget] = useState<IDeptItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<IDeptItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // 删除接口错误：在 ConfirmDialog 内联显示，避免 window.alert
+  const [deleteError, setDeleteError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const lastRefreshAtRef = useRef(0);
   const debouncedSearch = useDebounce(search, 350);
@@ -453,13 +455,14 @@ export default function DeptManagement() {
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
+    setDeleteError('');
     try {
       await deptApi.deleteDept(deleteTarget.id);
       setDeleteTarget(null);
       await reloadCurrentView();
     } catch (err) {
       console.error('Failed to delete dept', err);
-      alert('删除失败，请重试');
+      setDeleteError(getErrorMessage(err, '删除失败，请重试'));
     } finally {
       setDeleting(false);
     }
@@ -623,10 +626,14 @@ export default function DeptManagement() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="确认删除部门"
-        description={`确定要删除「${deleteTarget?.dept_name}」吗？`}
+        description={
+          deleteError
+            ? `${deleteError}（点击确认重试）`
+            : `确定要删除「${deleteTarget?.dept_name}」吗？`
+        }
         confirmLabel="删除"
         onConfirm={handleDelete}
-        onCancel={() => setDeleteTarget(null)}
+        onCancel={() => { setDeleteTarget(null); setDeleteError(''); }}
         loading={deleting}
       />
     </AdminLayout>
