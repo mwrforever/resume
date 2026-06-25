@@ -193,7 +193,8 @@ export default function EmployeeEvalDetail() {
     );
   }
 
-  const labelStyle = labelStyles[evaluation.final_label];
+  // final_label 由 LLM 输出，未必命中预设四档（如"待改进"/"合格"），兜底到"未达标"色阶避免空白
+  const labelStyle = labelStyles[evaluation.final_label] ?? labelStyles['未达标'];
   const dimensionChartData = evaluation.dimensions.map((dimension) => ({
     name: dimension.dimension_name,
     score: dimension.score,

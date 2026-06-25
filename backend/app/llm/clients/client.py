@@ -33,7 +33,11 @@ def _run_async_completion(coro: Coroutine[object, object, T]) -> T:
 def _build_runtime_config(
     model: str | None = None, max_retries: int = 3, timeout: int = 60,
 ) -> LLMRuntimeConfigDTO:
-    """从全局 settings 构造 LLMRuntimeConfigDTO（兼容新 DTO schema）。"""
+    """从全局 settings 构造 LLMRuntimeConfigDTO（兼容新 DTO schema）。
+
+    适用于无业务运行配置的内部场景（标题生成 / 评估 / 模板维度建议）。
+    max_tokens 给到 8192，确保结构化输出有足够空间，不依赖模型方默认上限。
+    """
     return LLMRuntimeConfigDTO(
         provider="other",
         model_name=model or settings.OPENAI_MODEL,
@@ -42,6 +46,7 @@ def _build_runtime_config(
         fallback_model_name=settings.FALLBACK_MODEL,
         timeout_seconds=timeout,
         max_retries=max_retries,
+        max_tokens=8192,
     )
 
 

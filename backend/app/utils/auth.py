@@ -34,57 +34,78 @@ class AuthService:
             "is_admin": getattr(emp, "is_admin", 0) or 0,
         }
 
-    async def get_user_by_email(self, email: str):
+    async def get_user_by_email(self, email: str) -> dict | None:
+        """按邮箱取用户，统一返回 dict 形态（无缓存时也 ORM→dict 转换）。
+
+        归一化的目的：避免缓存命中/未命中两条路径返回不同类型，调用方做属性访问时
+        在缓存命中分支炸 AttributeError。
+        """
         if self.cache:
             cached = await self.cache.get_json(USER_EMAIL_KEY.format(email=email))
             if cached is not None:
                 return cached
         user = await self.user_repo.get_by_email(email)
-        if self.cache and user:
-            await self.cache.set_json(USER_EMAIL_KEY.format(email=email), self._user_to_dict(user), USER_EMAIL_TTL)
-        return user
+        if not user:
+            return None
+        user_dict = self._user_to_dict(user)
+        if self.cache:
+            await self.cache.set_json(USER_EMAIL_KEY.format(email=email), user_dict, USER_EMAIL_TTL)
+        return user_dict
 
-    async def get_user_by_id(self, user_id: int):
+    async def get_user_by_id(self, user_id: int) -> dict | None:
         if self.cache:
             cached = await self.cache.get_json(USER_KEY.format(user_id=user_id))
             if cached is not None:
                 return cached
         user = await self.user_repo.get_by_id(user_id)
-        if self.cache and user:
-            await self.cache.set_json(USER_KEY.format(user_id=user_id), self._user_to_dict(user), USER_TTL)
-        return user
+        if not user:
+            return None
+        user_dict = self._user_to_dict(user)
+        if self.cache:
+            await self.cache.set_json(USER_KEY.format(user_id=user_id), user_dict, USER_TTL)
+        return user_dict
 
-    async def get_employee_by_email(self, email: str):
+    async def get_employee_by_email(self, email: str) -> dict | None:
         if self.cache:
             cached = await self.cache.get_json(EMPLOYEE_EMAIL_KEY.format(email=email))
             if cached is not None:
                 return cached
         employee = await self.employee_repo.get_by_email(email)
-        if self.cache and employee:
-            await self.cache.set_json(EMPLOYEE_EMAIL_KEY.format(email=email), self._employee_to_dict(employee), EMPLOYEE_EMAIL_TTL)
-        return employee
+        if not employee:
+            return None
+        employee_dict = self._employee_to_dict(employee)
+        if self.cache:
+            await self.cache.set_json(EMPLOYEE_EMAIL_KEY.format(email=email), employee_dict, EMPLOYEE_EMAIL_TTL)
+        return employee_dict
 
-    async def get_employee_by_emp_no(self, emp_no: str):
+    async def get_employee_by_emp_no(self, emp_no: str) -> dict | None:
         if self.cache:
             cached = await self.cache.get_json(EMPLOYEE_EMP_NO_KEY.format(emp_no=emp_no))
             if cached is not None:
                 return cached
         employee = await self.employee_repo.get_by_emp_no(emp_no)
-        if self.cache and employee:
-            await self.cache.set_json(EMPLOYEE_EMP_NO_KEY.format(emp_no=emp_no), self._employee_to_dict(employee), EMPLOYEE_EMP_NO_TTL)
-        return employee
+        if not employee:
+            return None
+        employee_dict = self._employee_to_dict(employee)
+        if self.cache:
+            await self.cache.set_json(EMPLOYEE_EMP_NO_KEY.format(emp_no=emp_no), employee_dict, EMPLOYEE_EMP_NO_TTL)
+        return employee_dict
 
-    async def get_employee_by_id(self, employee_id: int):
+    async def get_employee_by_id(self, employee_id: int) -> dict | None:
         if self.cache:
             cached = await self.cache.get_json(EMPLOYEE_KEY.format(employee_id=employee_id))
             if cached is not None:
                 return cached
         employee = await self.employee_repo.get_by_id(employee_id)
-        if self.cache and employee:
-            await self.cache.set_json(EMPLOYEE_KEY.format(employee_id=employee_id), self._employee_to_dict(employee), EMPLOYEE_TTL)
-        return employee
+        if not employee:
+            return None
+        employee_dict = self._employee_to_dict(employee)
+        if self.cache:
+            await self.cache.set_json(EMPLOYEE_KEY.format(employee_id=employee_id), employee_dict, EMPLOYEE_TTL)
+        return employee_dict
 
-    async def authenticate_user(self, identifier: str, password: str):
+    async def authenticate_user(self, identifier: str, password: str) -> dict | None:
+        # 与 get_user_by_* 保持同一形态：统一返回 dict，endpoint 端按下标访问不再炸
         user = await self.user_repo.get_by_identifier(identifier)
         if not user:
             return None
@@ -92,9 +113,10 @@ class AuthService:
             return None
         if user.status != 1:
             raise UnauthorizedError("账号已被禁用")
-        return user
+        return self._user_to_dict(user)
 
-    async def authenticate_employee(self, identifier: str, password: str):
+    async def authenticate_employee(self, identifier: str, password: str) -> dict | None:
+        # 与 get_employee_by_* 保持同一形态：统一返回 dict，避免 ORM 下标访问报错
         employee = await self.employee_repo.get_by_identifier(identifier)
         if not employee:
             return None
@@ -102,7 +124,7 @@ class AuthService:
             return None
         if employee.status != 1:
             raise UnauthorizedError("账号已被禁用")
-        return employee
+        return self._employee_to_dict(employee)
 
     def create_tokens(self, user_id: int, user_type: str):
         access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": user_type})

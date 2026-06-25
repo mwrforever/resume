@@ -103,11 +103,12 @@ async def _arefine(content: str, runtime_config: LLMRuntimeConfigDTO) -> str:
     @return: 后处理后的标题；空字符串表示放弃
     """
     prompt = prompt_manager.render("agent/title_refine", user_content=content)
-    # 复制并强制覆盖：标题生成关闭 thinking、关闭 fallback、限制最长 64 token
+    # 复制并强制覆盖：标题生成关闭 thinking、关闭 fallback；max_tokens 给足 8192
+    # 避免 Qwen3 等思考型模型即便关 thinking 后正文仍被早期截断
     title_config = runtime_config.model_copy(update={
         "enable_thinking": False,
         "fallback_model_name": None,
-        "max_tokens": 64,
+        "max_tokens": 8192,
         "temperature": 0.3,
     })
     router = LLMModelRouter()

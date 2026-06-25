@@ -1,0 +1,58 @@
+# ============================================================================
+# 开发环境 docker compose —— 只起 MySQL + Redis，本地直跑 backend & frontend
+#
+# 用途：让本地 uvicorn / npm run dev 有可连的依赖，不替代生产 deploy/docker-compose.yml
+# 启动：docker compose -f docker-compose.dev.yml up -d
+# 停止：docker compose -f docker-compose.dev.yml down       # 保留数据卷
+#       docker compose -f docker-compose.dev.yml down -v   # 连数据一起删
+#
+# 默认密码统一 1010520mao；本地访问端口对齐 backend/.env：
+#   MySQL  127.0.0.1:3306  root / 1010520mao  库 resume
+#   Redis  127.0.0.1:6379  无 user / 1010520mao
+# ============================================================================
+
+name: resume-dev
+
+services:
+  mysql:
+    image: mysql:latest
+    container_name: resume_dev_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: 1010520mao
+      MYSQL_DATABASE: resume
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - dev_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p1010520mao"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:latest
+    container_name: resume_dev_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass 1010520mao
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - dev_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "1010520mao", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  dev_mysql_data:
+  dev_redis_data:
