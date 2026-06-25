@@ -8,7 +8,16 @@
 
 FROM node:20-alpine AS builder
 
+# 默认启用国内源，境外构建用 --build-arg CN_MIRROR=0 关掉
+ARG CN_MIRROR=1
+
 WORKDIR /build
+
+# alpine apk + npm 同时换国内源（npmmirror 即原淘宝源新域名）
+RUN if [ "$CN_MIRROR" = "1" ]; then \
+        sed -i 's|dl-cdn.alpinelinux.org|mirrors.tencentyun.com|g' /etc/apk/repositories && \
+        npm config set registry https://registry.npmmirror.com; \
+    fi
 
 # 利用层缓存：先装依赖
 COPY package.json package-lock.json ./
@@ -21,9 +30,15 @@ RUN npm run build
 # ----------------------------------------------------------------------------
 FROM nginx:latest AS runtime
 
-# 默认时区
+ARG CN_MIRROR=1
+
+# 默认时区 + 装 wget（healthcheck 用）
 ENV TZ=Asia/Shanghai
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata wget && \
+RUN if [ "$CN_MIRROR" = "1" ]; then \
+        sed -i 's|deb.debian.org|mirrors.tencentyun.com|g; s|security.debian.org|mirrors.tencentyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+        sed -i 's|deb.debian.org|mirrors.tencentyun.com|g; s|security.debian.org|mirrors.tencentyun.com|g' /etc/apt/sources.list 2>/dev/null || true; \
+    fi && \
+    apt-get update && apt-get install -y --no-install-recommends tzdata wget && \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone && \
     rm -rf /var/lib/apt/lists/*

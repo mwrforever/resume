@@ -7,9 +7,18 @@
 
 FROM python:3.12-slim AS builder
 
+# 默认启用国内源（腾讯/清华），境外构建用 --build-arg CN_MIRROR=0 关掉
+ARG CN_MIRROR=1
+
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1
+
+# 换腾讯云 debian 源（CN_MIRROR=1 时），加速 apt 装编译期依赖
+RUN if [ "$CN_MIRROR" = "1" ]; then \
+        sed -i 's|deb.debian.org|mirrors.tencentyun.com|g; s|security.debian.org|mirrors.tencentyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+        sed -i 's|deb.debian.org|mirrors.tencentyun.com|g; s|security.debian.org|mirrors.tencentyun.com|g' /etc/apt/sources.list 2>/dev/null || true; \
+    fi
 
 # 编译期依赖：cryptography/bcrypt/aiomysql 等带 C 扩展需要 gcc + 头文件
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,6 +27,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libssl-dev \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
+
+# pip 走清华源（国内可达性最稳）
+RUN if [ "$CN_MIRROR" = "1" ]; then \
+        pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
+        pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn; \
+    fi
 
 WORKDIR /build
 # 先拷 pyproject 利用层缓存
@@ -30,11 +45,19 @@ RUN pip install --prefix=/install .
 # ----------------------------------------------------------------------------
 FROM python:3.12-slim AS runtime
 
+ARG CN_MIRROR=1
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/app \
     TZ=Asia/Shanghai
+
+# runtime 期 apt 也用国内源
+RUN if [ "$CN_MIRROR" = "1" ]; then \
+        sed -i 's|deb.debian.org|mirrors.tencentyun.com|g; s|security.debian.org|mirrors.tencentyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+        sed -i 's|deb.debian.org|mirrors.tencentyun.com|g; s|security.debian.org|mirrors.tencentyun.com|g' /etc/apt/sources.list 2>/dev/null || true; \
+    fi
 
 # runtime 期依赖：libmagic 给 docling 文件类型检测、tini 做 PID 1 处理 SIGTERM
 RUN apt-get update && apt-get install -y --no-install-recommends \
