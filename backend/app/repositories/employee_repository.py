@@ -53,6 +53,7 @@ class EmployeeRepository:
         real_name: str,
         phone: str = None,
         status: int = 1,
+        is_admin: int = 0,
     ) -> SysEmployee:
         employee = SysEmployee(
             emp_no=emp_no,
@@ -61,6 +62,7 @@ class EmployeeRepository:
             real_name=real_name,
             phone=phone,
             status=status,
+            is_admin=is_admin,
         )
         self.db.add(employee)
         await self.db.commit()
@@ -203,6 +205,7 @@ class EmployeeRepository:
             "dept_id": row.dept_id or 0,
             "dept_name": row.dept_name,
             "status": employee.status,
+            "is_admin": int(getattr(employee, "is_admin", 0) or 0),
             "create_time": employee.create_time,
             "update_time": employee.update_time,
         }

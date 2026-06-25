@@ -23,10 +23,8 @@ from .eval_template_tag import EvalTemplateTag
 from .llm_model_config import LlmModelConfig
 from .agent_session import AgentSession
 from .agent_message import AgentMessage
-from .agent_memory import AgentMemory
 
 __all__ = ["Base", "SysUser", "SysEmployee", "Resume", "JobPosition",
            "JobApplication", "ResumeJobMatch", "ResumeEvalDetail", "ResumeSkillHit", "SysDept",
            "SysDeptEmployee", "SysTag", "EvalDimension", "EvalTemplate", "EvalTemplateDimension",
-           "EvalTemplateSkill", "EvalTemplateTag", "LlmModelConfig", "AgentSession", "AgentMessage",
-           "AgentMemory"]
+           "EvalTemplateSkill", "EvalTemplateTag", "LlmModelConfig", "AgentSession", "AgentMessage"]

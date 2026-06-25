@@ -14,5 +14,6 @@ def test_llm_config_service_list_configs_accepts_pagination_filters():
     assert "page" in signature.parameters
     assert "page_size" in signature.parameters
     assert "keyword" in signature.parameters
-    assert "biz_type" in signature.parameters
     assert "status" in signature.parameters
+    # biz_type 已移除（模型全局化后不再按归属过滤）
+    assert "biz_type" not in signature.parameters

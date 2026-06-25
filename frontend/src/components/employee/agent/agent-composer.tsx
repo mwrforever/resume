@@ -1,135 +1,334 @@
-import { ChangeEvent, FormEvent, KeyboardEvent, useRef } from 'react';
-import { FileUp, Send, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
+/**
+ * AgentComposer：浮卡式输入区
+ *
+ * 跨模式确认：当存在消息且切换 workflow，弹确认 → 自动新建会话。
+ * 上传反馈：uploading→success→idle 三态明显。
+ * 思考模式：开启=深紫，关闭=灰，textarea placeholder 跟随状态。
+ * 空态填充：通过 prefilledPrompt 接收 EmptyState 的提示。
+ */
 
-interface AgentComposerProps {
-  input: string;
+import { useEffect, useRef, useState } from 'react';
+import { Paperclip, Send, Square, Sparkles, X, Loader2, AlertCircle } from 'lucide-react';
+import type { WorkflowType, WorkspaceSession } from '@/types/agent';
+import { WORKFLOW_LABELS } from '@/types/agent';
+import { employeeAgentApi } from '@/api/employee/agent';
+import { AgentModelPicker } from './agent-model-picker';
+import { ResumeFileIcon } from './resume-file-icon';
+
+export interface AgentComposerProps {
+  session: WorkspaceSession;
   sending: boolean;
-  /** 规划审批待处理时禁用输入 */
-  disabled?: boolean;
-  resumeFile: File | null;
-  onInputChange: (value: string) => void;
-  onResumeFileChange: (file: File | null) => void;
-  onSubmit: (event: FormEvent) => void;
+  /** 最近一条消息的 workflow_type；用于回显当前会话已选模式（空会话回退默认值） */
+  lastWorkflow: WorkflowType;
+  /** 空态快捷问答回填：prompt 必填，workflow 可选（联动切换模式） */
+  prefill: { prompt: string; workflow?: WorkflowType } | null;
+  onPrefillConsumed: () => void;
+  onSend: (input: {
+    content: string;
+    workflow_type: WorkflowType;
+    context_refs?: Array<Record<string, unknown>>;
+  }) => void;
+  onAbort: () => void;
+  /** 切换思考模式：空会话由 store 写全局默认+会话，中途会话仅写会话 */
+  onToggleThinking: () => void;
+  /** 选择模型：空会话由 store 写全局默认+会话，中途会话仅写会话 */
+  onPickModel: (modelName: string | null) => void;
+  /** 当前会话是否为空（无消息）：用于思考按钮/模型按钮 tooltip 区分作用域 */
+  isEmptySession: boolean;
 }
 
-const ACCEPT_RESUME = '.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const WORKFLOWS: WorkflowType[] = ['interview_questions', 'resume_evaluation'];
 
-/**
- * Agent 消息输入区：支持文本与文件附件（PDF/DOCX）。
- * Enter 快捷发送，Shift + Enter 保持换行。
- */
+type UploadState =
+  | { kind: 'idle' }
+  | { kind: 'uploading'; fileName: string }
+  | { kind: 'success'; file_path: string; fileName: string }
+  | { kind: 'error'; message: string };
+
 export function AgentComposer({
-  input,
-  sending,
-  disabled = false,
-  resumeFile,
-  onInputChange,
-  onResumeFileChange,
-  onSubmit,
+  session, sending, lastWorkflow, prefill, onPrefillConsumed,
+  onSend, onAbort, onToggleThinking, onPickModel, isEmptySession,
 }: AgentComposerProps) {
-  const formRef = useRef<HTMLFormElement>(null);
+  const [content, setContent] = useState('');
+  // Bug4：按钮互斥 + interrupt 态可发送。
+  // - sending=true（流式中）：仅显示红色"暂停"按钮，隐藏"发送"。
+  // - 非 sending：仅显示"发送"按钮（含 interrupt 等待态——此时允许发送，
+  //   由 store.sendMessage 在发送前自动中断未完成的 interaction 工作流）。
+  // sendDisabled 只看流式中与空输入，不再用 hasPendingInteraction 拦截发送。
+  const sendDisabled = sending || !content.trim();
+  // 初始模式取最近一条消息的 workflow_type；空会话回退默认 interview_questions。
+  // WorkspaceInner 的 key={sessionId} 保证切会话时重挂载，useState 初值按会话回显正确模式，
+  // 不会用上一个会话的模式覆盖当前会话（多会话模式隔离）。
+  const [workflow, setWorkflow] = useState<WorkflowType>(lastWorkflow);
+  const [upload, setUpload] = useState<UploadState>({ kind: 'idle' });
+  const [focused, setFocused] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const inputLocked = sending || disabled;
-  const hasResume = Boolean(resumeFile);
-  const canSend = input.trim().length > 0 && !inputLocked;
 
-  const handleFilePick = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null;
-    onResumeFileChange(file);
-    event.target.value = '';
+  // 接收 EmptyState 的提示词（可携带 workflow，联动切换 Composer 模式）
+  useEffect(() => {
+    if (prefill !== null) {
+      setContent(prefill.prompt);
+      // 评估类问答携带 workflow_type → 切换到对应模式，保证发送时路由正确
+      if (prefill.workflow) setWorkflow(prefill.workflow);
+      onPrefillConsumed();
+      // 等下一帧再 focus 以保证内容已渲染
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+  }, [prefill, onPrefillConsumed]);
+
+  // textarea 自适应高度
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+  }, [content]);
+
+  const submit = () => {
+    // 流式中或空输入禁止发送（sendDisabled 已含两者）
+    if (sendDisabled) return;
+    const trimmed = content.trim();
+    const ctxRefs = upload.kind === 'success'
+      ? [{ type: 'resume', file_path: upload.file_path, file_name: upload.fileName }]
+      : undefined;
+    onSend({ content: trimmed, workflow_type: workflow, context_refs: ctxRefs });
+    setContent('');
+    // 发送后清除附件展示，避免脏携带到下一条消息
+    setUpload({ kind: 'idle' });
   };
 
-  /** Enter 提交表单，保留 Shift + Enter 的 textarea 原生换行行为。 */
-  const handleInputKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || !canSend) return;
-    event.preventDefault();
-    formRef.current?.requestSubmit();
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      submit();
+    }
   };
+
+  const toggleThinking = () => {
+    // 空会话（无消息）切换 = 调整全局默认（且同步当前会话）；
+    // 中途会话切换 = 仅调当前会话。区分逻辑在 store.toggleThinking 内，
+    // composer 只负责触发；状态挂在 session 上，多会话并发不会串台。
+    onToggleThinking();
+  };
+
+  const onPickFile = async (file: File) => {
+    setUpload({ kind: 'uploading', fileName: file.name });
+    try {
+      const resp = await employeeAgentApi.uploadResume(file);
+      const data = resp.data?.data ?? resp.data;
+      if (data?.file_path) {
+        setUpload({
+          kind: 'success',
+          file_path: data.file_path,
+          fileName: data.file_name ?? file.name,
+        });
+      } else {
+        setUpload({ kind: 'error', message: '上传失败：响应缺少 file_path' });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '上传失败';
+      setUpload({ kind: 'error', message: msg });
+    }
+  };
+
+  const handleWorkflowClick = (next: WorkflowType) => {
+    if (next === workflow) return;
+    // workflow 仅随本次发送的消息走，不绑定会话；直接切换模式标签即可，不强制新建会话
+    setWorkflow(next);
+  };
+
+  const placeholderText = session.enable_thinking
+    ? '深度思考模式已开启 · 输入消息…'
+    : '输入消息…';
 
   return (
-    <form ref={formRef} className="shrink-0 border-t border-slate-100 bg-white/95 px-4 py-4" onSubmit={onSubmit}>
-      {hasResume ? (
-        <ResumeAttachmentBar fileName={resumeFile?.name} onClear={() => onResumeFileChange(null)} />
-      ) : null}
-      <div className="mx-auto max-w-4xl rounded-[1.7rem] border border-slate-200 bg-white p-2 shadow-sm shadow-slate-200/60 transition-[border-color,box-shadow] duration-200 focus-within:border-sky-400 focus-within:shadow-md focus-within:shadow-sky-100">
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-2 pb-2">
-          <input ref={fileInputRef} type="file" accept={ACCEPT_RESUME} className="hidden" onChange={handleFilePick} />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            disabled={inputLocked}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <FileUp size={14} className="mr-1" aria-hidden="true" />
-            文件上传
-          </Button>
+    <div className="sticky bottom-0 bg-gradient-to-t from-[#F8FAFC] via-[#F8FAFC]/95 to-transparent pt-4 pb-6 px-4">
+      <div
+        className={`mx-auto max-w-[880px] rounded-2xl bg-white border shadow-lg
+                    transition-all duration-220 ease-[cubic-bezier(0.16,1,0.3,1)]
+                    ${focused
+                      ? 'ring-3 ring-[#0EA5E9]/20 border-[#0EA5E9] shadow-[0_1px_3px_rgba(2,6,23,0.05),0_16px_40px_-16px_rgba(3,105,161,0.22)]'
+                      : 'border-[#E2E8F0] shadow-[0_1px_2px_rgba(2,6,23,0.04),0_8px_24px_-12px_rgba(2,6,23,0.10)]'}`}
+      >
+        {/* 顶栏 */}
+        <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#E2E8F0]">
+          <div className="inline-flex rounded-full bg-[#F1F5F9] p-0.5 gap-0.5">
+            {WORKFLOWS.map(wf => (
+              <button
+                key={wf}
+                type="button"
+                onClick={() => handleWorkflowClick(wf)}
+                className={`relative px-3 h-7 rounded-full text-xs font-medium
+                            transition-all duration-150 active:scale-[0.96] ${
+                  workflow === wf
+                    ? 'bg-white text-[#020617] shadow-sm ring-1 ring-black/[0.04]'
+                    : 'text-[#64748B] hover:text-[#334155]'
+                }`}
+              >
+                {WORKFLOW_LABELS[wf]}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            {/* 模型选择：懒加载 /llm-model-options，走 store.selectModel（空会话写全局+会话） */}
+            <AgentModelPicker
+              session={session}
+              onPickModel={onPickModel}
+              isEmptySession={isEmptySession}
+            />
+            <button
+              type="button"
+              onClick={toggleThinking}
+              aria-pressed={session.enable_thinking}
+              title={
+                isEmptySession
+                  ? (session.enable_thinking ? '关闭思考模式（将设为新建会话的默认）' : '开启思考模式（将设为新建会话的默认，更慢但更深入）')
+                  : (session.enable_thinking ? '关闭当前会话的思考模式' : '开启当前会话的思考模式（更慢但更深入）')
+              }
+              className={`flex items-center gap-1.5 h-7 px-3 rounded-full text-xs font-medium
+                          transition-all duration-150 active:scale-[0.96] ${
+                session.enable_thinking
+                  ? 'bg-[#7C3AED] text-white shadow-sm shadow-purple-300/60'
+                  : 'bg-[#F1F5F9] text-[#94A3B8] hover:bg-[#E8ECF1] hover:text-[#64748B]'
+              }`}
+            >
+              <Sparkles size={12} className={session.enable_thinking ? 'fill-white' : ''} />
+              <span>{session.enable_thinking ? '深度思考·开' : '深度思考·关'}</span>
+            </button>
+          </div>
         </div>
-        <MessageInputRow
-          input={input}
-          inputLocked={inputLocked}
-          canSend={canSend}
-          onInputChange={onInputChange}
-          onInputKeyDown={handleInputKeyDown}
-        />
+
+        {/* 上传反馈 chip */}
+        {upload.kind !== 'idle' && (
+          <div className="px-4 pt-2">
+            <UploadChip state={upload} onClear={() => setUpload({ kind: 'idle' })} />
+          </div>
+        )}
+
+        {/* textarea */}
+        <div className="px-4 py-2">
+          <textarea
+            ref={textareaRef}
+            value={content}
+            onChange={e => setContent(e.target.value)}
+            onKeyDown={onKeyDown}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            rows={1}
+            placeholder={placeholderText}
+            className="w-full resize-none border-none outline-none text-sm leading-relaxed
+                       text-[#020617] placeholder:text-[#94A3B8]
+                       min-h-[48px] max-h-[160px]
+                       bg-transparent"
+          />
+        </div>
+
+        {/* 底栏 */}
+        <div className="flex items-center justify-between px-4 pb-3 pt-1">
+          <div>
+            <button type="button" onClick={() => fileInputRef.current?.click()}
+                    disabled={upload.kind === 'uploading'}
+                    className="inline-flex items-center gap-1 h-8 px-2 rounded-md text-xs
+                               text-[#64748B] hover:text-[#0369A1] hover:bg-[#F1F5F9]
+                               active:scale-[0.97]
+                               disabled:opacity-50 disabled:cursor-not-allowed
+                               transition-colors">
+              <Paperclip size={13} />
+              <span className="hidden sm:inline">附简历</span>
+            </button>
+            <input ref={fileInputRef} type="file" accept=".pdf,.docx,.doc" className="hidden"
+                   onChange={e => { const f = e.target.files?.[0]; if (f) void onPickFile(f); e.target.value = ''; }} />
+          </div>
+
+          <span className="hidden sm:block text-[11px] text-[#94A3B8]">Ctrl+Enter 发送</span>
+
+          {/* Bug4：按钮互斥。流式中仅显示红色"暂停"（调 onAbort=fetch.abort）；
+              非 sending 仅显示蓝色"发送"。interrupt 等待态也走发送分支，
+              由 store.sendMessage 在发送前自动中断未完成工作流。 */}
+          <div className="flex items-center gap-2">
+            {sending ? (
+              <button
+                type="button"
+                onClick={onAbort}
+                title="暂停流式（之后可恢复）"
+                aria-label="暂停"
+                className="h-9 px-4 rounded-lg text-xs font-semibold
+                           border border-[#DC2626] text-[#DC2626]
+                           hover:bg-[#FEE2E2] bg-white
+                           shadow-[0_2px_8px_-3px_rgba(220,38,38,0.35)]
+                           active:scale-[0.97] transition-all
+                           inline-flex items-center gap-1.5"
+              >
+                <Square size={13} className="fill-current" />
+                <span>暂停</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={submit}
+                disabled={sendDisabled}
+                className="h-9 px-5 rounded-lg text-xs font-semibold transition-all active:scale-[0.97]
+                           inline-flex items-center gap-1.5
+                           bg-gradient-to-b from-[#0EA5E9] to-[#0369A1] text-white
+                           ring-1 ring-inset ring-white/15
+                           shadow-[0_4px_12px_-4px_rgba(3,105,161,0.5)]
+                           hover:shadow-[0_6px_16px_-4px_rgba(3,105,161,0.55)]
+                           disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
+              >
+                <Send size={13} />
+                <span>发送</span>
+              </button>
+            )}
+          </div>
+        </div>
       </div>
-    </form>
+    </div>
   );
 }
 
-/** 已选简历附件提示条 */
-function ResumeAttachmentBar({
-  fileName,
+/** 上传反馈 chip — 三态视觉强对比 */
+function UploadChip({
+  state,
   onClear,
 }: {
-  fileName?: string;
+  state: UploadState;
   onClear: () => void;
 }) {
-  return (
-    <div className="mx-auto mb-2 flex max-w-4xl flex-wrap items-center gap-2">
-      <span className="inline-flex max-w-full items-center gap-2 rounded-full bg-sky-50 px-3 py-1 text-xs text-sky-800">
-        <FileUp size={14} aria-hidden="true" />
-        <span className="truncate">{fileName}</span>
-        <button type="button" className="rounded-full p-0.5 hover:bg-sky-100" aria-label="移除文件" onClick={onClear}>
+  if (state.kind === 'uploading') {
+    return (
+      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg
+                      bg-[#FEF3C7] text-[#92400E] text-xs">
+        <Loader2 size={12} className="animate-spin" />
+        <span className="truncate max-w-[280px]">上传中… {state.fileName}</span>
+      </div>
+    );
+  }
+  if (state.kind === 'success') {
+    return (
+      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg
+                      bg-[#E0F2FE] text-[#0369A1] text-xs font-medium border border-[#0EA5E9]/20">
+        <ResumeFileIcon fileName={state.fileName} size={16} />
+        <span className="truncate max-w-[260px]">已附上 · {state.fileName}</span>
+        <button type="button" onClick={onClear}
+                className="ml-1 hover:text-[#DC2626] transition-colors" title="移除附件">
           <X size={12} />
         </button>
-      </span>
-      <span className="text-xs text-slate-500">发消息时将用工具解析文件并整理为 Markdown，再进入分析</span>
-    </div>
-  );
-}
-
-/** 消息输入与发送按钮行 */
-function MessageInputRow({
-  input,
-  inputLocked,
-  canSend,
-  onInputChange,
-  onInputKeyDown,
-}: {
-  input: string;
-  inputLocked: boolean;
-  canSend: boolean;
-  onInputChange: (value: string) => void;
-  onInputKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
-}) {
-  return (
-    <div className="flex items-end gap-3 px-1 pt-1">
-      <Textarea
-        value={input}
-        onChange={(event) => onInputChange(event.target.value)}
-        onKeyDown={onInputKeyDown}
-        className="min-h-[56px] flex-1 resize-none !border-0 !bg-transparent !shadow-none focus-visible:!outline-none focus-visible:!ring-0 focus-visible:!ring-offset-0"
-        placeholder="输入任务，例如：结合该文件给出分析建议与风险点"
-        disabled={inputLocked}
-        aria-label="Agent 消息输入"
-      />
-      <Button type="submit" className="mb-1 h-11 w-11 rounded-2xl p-0" disabled={!canSend} aria-label="发送消息">
-        <Send size={17} aria-hidden="true" />
-      </Button>
-    </div>
-  );
+      </div>
+    );
+  }
+  if (state.kind === 'error') {
+    return (
+      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg
+                      bg-[#FEE2E2] text-[#DC2626] text-xs">
+        <AlertCircle size={12} />
+        <span className="truncate max-w-[300px]">{state.message}</span>
+        <button type="button" onClick={onClear}
+                className="ml-1 hover:underline" title="清除">
+          <X size={12} />
+        </button>
+      </div>
+    );
+  }
+  return null;
 }

@@ -4,6 +4,8 @@ export interface AuthTokens {
   access_token: string;
   refresh_token: string;
   user_id: string | number;
+  /** 是否管理员（仅 employee 有值；后端 TokenResponse/RefreshTokenResponse 下发） */
+  is_admin?: boolean;
 }
 
 export interface ApiEnvelope<T> {

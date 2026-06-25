@@ -71,6 +71,8 @@ function AccountDialog({ tab, mode, item, deptList, onClose, onSuccess }: Accoun
     dept_id: employee?.dept_id ?? 0,
     password: '',
     status: String(employee?.status ?? 1),
+    // 管理员标记：1=管理员，0=普通员工
+    is_admin: String(employee?.is_admin ?? 0),
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -86,7 +88,7 @@ function AccountDialog({ tab, mode, item, deptList, onClose, onSuccess }: Accoun
         if (mode === 'create') await employeeAccountManagementApi.createUser(payload);
         else if (user) await employeeAccountManagementApi.updateUser(user.id, payload);
       } else {
-        const payload: { emp_no: string; real_name: string; email: string; phone: string; dept_id: number; password?: string; status: number } = { ...employeeForm, status: Number(employeeForm.status) };
+        const payload: { emp_no: string; real_name: string; email: string; phone: string; dept_id: number; password?: string; status: number; is_admin: number } = { ...employeeForm, status: Number(employeeForm.status), is_admin: Number(employeeForm.is_admin) };
         if (mode === 'edit' && !payload.password) payload.password = undefined;
         if (mode === 'create') await employeeAccountManagementApi.createEmployee(payload);
         else if (employee) await employeeAccountManagementApi.updateEmployee(employee.id, payload);
@@ -142,6 +144,19 @@ function AccountDialog({ tab, mode, item, deptList, onClose, onSuccess }: Accoun
                 </Select>
               </div>
               <div className="space-y-1.5"><Label>密码 {mode === 'create' && <span className="text-red-500">*</span>}</Label><Input type="password" value={employeeForm.password} onChange={e => setEmployeeForm({ ...employeeForm, password: e.target.value })} placeholder={mode === 'edit' ? '不填写则不修改密码' : ''} required={mode === 'create'} /></div>
+              {/* 管理员开关：管理员可访问用户管理/员工管理。编辑自己时后端会拒绝撤销，此处不做前端禁用以保持简单 */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={employeeForm.is_admin === '1'}
+                  onClick={() => setEmployeeForm({ ...employeeForm, is_admin: employeeForm.is_admin === '1' ? '0' : '1' })}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${employeeForm.is_admin === '1' ? 'bg-[#0EA5E9]' : 'bg-[#CBD5E1]'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${employeeForm.is_admin === '1' ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </button>
+                <Label className="cursor-pointer" onClick={() => setEmployeeForm({ ...employeeForm, is_admin: employeeForm.is_admin === '1' ? '0' : '1' })}>管理员（可访问用户管理/员工管理）</Label>
+              </div>
             </>
           )}
           <div className="space-y-1.5">
@@ -428,11 +443,12 @@ export default function EmployeeAccountManagement({ tab = 'users' }: EmployeeAcc
             <th className="px-4 py-3 text-left font-medium text-[#64748B]">姓名</th><th className="px-4 py-3 text-left font-medium text-[#64748B]">邮箱</th>
             {activeTab === 'employees' && <th className="px-4 py-3 text-left font-medium text-[#64748B]">手机号</th>}
             {activeTab === 'employees' && <th className="px-4 py-3 text-left font-medium text-[#64748B]">部门</th>}
+            {activeTab === 'employees' && <th className="px-4 py-3 text-left font-medium text-[#64748B]">管理员</th>}
             <th className="px-4 py-3 text-left font-medium text-[#64748B]">状态</th><th className="px-4 py-3 text-left font-medium text-[#64748B]">创建时间</th><th className="px-4 py-3 text-right font-medium text-[#64748B]">操作</th>
           </tr></thead>
           <tbody>
-            {loading ? [...Array(4)].map((_, i) => <tr key={i} className="border-b border-[#F1F5F9]"><td colSpan={activeTab === 'users' ? 5 : 8} className="px-4 py-3"><div className="h-4 animate-pulse rounded bg-[#F1F5F9]" /></td></tr>)
-              : items.length === 0 ? <tr><td colSpan={activeTab === 'users' ? 5 : 8} className="px-4 py-16 text-center text-[#94A3B8]">暂无数据</td></tr>
+            {loading ? [...Array(4)].map((_, i) => <tr key={i} className="border-b border-[#F1F5F9]"><td colSpan={activeTab === 'users' ? 5 : 9} className="px-4 py-3"><div className="h-4 animate-pulse rounded bg-[#F1F5F9]" /></td></tr>)
+              : items.length === 0 ? <tr><td colSpan={activeTab === 'users' ? 5 : 9} className="px-4 py-16 text-center text-[#94A3B8]">暂无数据</td></tr>
               : items.map(item => {
                 const employee = item as IManagedEmployee;
                 return <tr key={item.id} className="border-b border-[#F1F5F9] transition-colors hover:bg-[#F8FAFC]">
@@ -440,6 +456,7 @@ export default function EmployeeAccountManagement({ tab = 'users' }: EmployeeAcc
                   <td className="px-4 py-3 font-medium text-[#1E293B]">{item.real_name}</td><td className="px-4 py-3 text-[#64748B]">{item.email || '-'}</td>
                   {activeTab === 'employees' && <td className="px-4 py-3 text-[#64748B]">{employee.phone || '-'}</td>}
                   {activeTab === 'employees' && <td className="px-4 py-3 text-[#64748B]">{employee.dept_name || '-'}</td>}
+                  {activeTab === 'employees' && <td className="px-4 py-3">{employee.is_admin === 1 ? <Badge className="bg-sky-100 text-sky-700 border-sky-200">管理员</Badge> : <span className="text-[#94A3B8]">-</span>}</td>}
                   <td className="px-4 py-3"><StatusBadge tab={activeTab} status={item.status} /></td><td className="px-4 py-3 text-[#64748B]">{item.create_time ? item.create_time.slice(0, 10) : '-'}</td>
                   <td className="px-4 py-3"><div className="flex items-center justify-end gap-2"><button onClick={() => setDialogState({ mode: 'edit', item })} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[#2563EB] hover:bg-blue-50 hover:underline"><Pencil size={13} />编辑</button>{activeTab === 'employees' && <button onClick={() => setDeptTarget(employee)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[#2563EB] hover:bg-blue-50 hover:underline">分配部门</button>}<button onClick={() => setDeleteTarget(item)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50 hover:underline"><Trash2 size={13} />删除</button></div></td>
                 </tr>;

@@ -1,0 +1,61 @@
+name: dimension_eval
+version: "1.0"
+description: "结合技能匹配结果对单个评估维度进行评分"
+variables:
+  - name: job_name
+    required: true
+    description: "岗位名称"
+  - name: job_description
+    required: true
+    description: "岗位描述"
+  - name: dimension
+    required: true
+    description: "当前评估维度规格"
+  - name: skill_hits
+    required: true
+    description: "已完成技能匹配结果"
+  - name: prompt_template
+    required: false
+    description: "维度自定义提示词模板"
+  - name: resume_text
+    required: true
+    description: "候选人简历全文"
+template: |-
+  # 角色
+  你是企业招聘场景下的简历维度评估专家，负责结合技能匹配结果对单个评估维度进行评分。
+
+  # 约束
+  {% include "agent/constraints.yaml" %}
+
+  # 背景
+  本次评估用于辅助招聘人员判断候选人与岗位要求的匹配情况，必须保证结论可追溯、可审计。
+
+  # 输入
+  - 岗位名称: {{ job_name }}
+  - 岗位描述: {{ job_description }}
+  - 当前评估维度: {{ dimension }}
+  - 已完成技能匹配结果: {{ skill_hits }}
+  {% if prompt_template %}
+  - 维度自定义模板: {{ prompt_template }}
+  {% endif %}
+  - 简历原文:
+  {{ resume_text }}
+
+  # 指令
+  请对当前评估维度进行评分。
+
+  ## 具体要求
+  1. 只围绕当前评估维度评分，不得评价其他维度
+  2. 必须同时参考简历原文、岗位信息、技能匹配结果{% if prompt_template %}和维度自定义模板{% endif %}
+  3. 优势必须来自简历原文或已命中的技能证据
+  4. 简历没有明确证据时必须保守评分，并在 disadvantage 中写"简历未体现..."
+  5. score 必须为 0-100 整数
+
+  # 输出格式
+  只输出严格 JSON 对象，不输出 Markdown、解释、前后缀或代码块：
+  {
+    "dimension_name": "维度名称",
+    "score": 80,
+    "advantage": "基于简历证据和技能命中的优势；无优势返回无",
+    "disadvantage": "基于岗位差距的不足；无不足返回空字符串"
+  }

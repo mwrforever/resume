@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, String, SmallInteger, Integer, DateTime
+from sqlalchemy import BigInteger, DateTime, Index, Integer, SmallInteger, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 
 class SysTag(Base):
     __tablename__ = "sys_tag"
+    # 真实查询：按 tag_type 过滤、列表按 sort_order 排序，tag_name 模糊搜索（无索引帮助）
+    __table_args__ = (
+        Index("idx_type_status_sort", "tag_type", "status", "is_deleted", "sort_order"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     tag_name: Mapped[str] = mapped_column(String(50), nullable=False, comment="标签名称")

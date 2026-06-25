@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, String, SmallInteger, DateTime
+from sqlalchemy import BigInteger, DateTime, Index, SmallInteger, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -16,6 +16,10 @@ if TYPE_CHECKING:
 
 class EvalTemplate(Base):
     __tablename__ = "eval_template"
+    # 真实查询：列表按 (is_deleted, status) 过滤 + id desc，模糊搜索靠模板名（无索引帮助）
+    __table_args__ = (
+        Index("idx_status", "is_deleted", "status"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     template_name: Mapped[str] = mapped_column(String(100), nullable=False, comment="模板名称")

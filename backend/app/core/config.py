@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     STORAGE_TYPE: str = "LOCAL"
     LOCAL_STORAGE_PATH: str = "./note"
 
+    # LangGraph Agent 工作流 checkpointer 落盘路径。
+    # 默认放在项目根目录下的 data/，docker 部署时由 compose 挂卷到独立持久化卷。
+    LANGGRAPH_SQLITE_PATH: str = str(BASE_DIR / "data" / "langgraph_checkpoints.sqlite")
+
     SMTP_HOST: str
     SMTP_PORT: int = 587
     SMTP_USER: str
@@ -61,6 +65,13 @@ class Settings(BaseSettings):
 
     CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""
+
+    # 首次部署/空库时引导用的初始管理员账号。已存在任意管理员则跳过引导。
+    # 全部为空字符串时不创建（适合不希望由 .env 注入账号的环境）。
+    INIT_ADMIN_EMAIL: str = ""
+    INIT_ADMIN_PASSWORD: SecretStr = SecretStr("")
+    INIT_ADMIN_REAL_NAME: str = "超级管理员"
+    INIT_ADMIN_EMP_NO: str = ""
 
     @property
     def secret_key(self) -> str:
@@ -81,6 +92,10 @@ class Settings(BaseSettings):
     @property
     def smtp_password(self) -> str:
         return self.SMTP_PASSWORD.get_secret_value()
+
+    @property
+    def init_admin_password(self) -> str:
+        return self.INIT_ADMIN_PASSWORD.get_secret_value()
 
     @property
     def database_url(self) -> str:

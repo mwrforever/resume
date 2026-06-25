@@ -1,0 +1,36 @@
+name: job_description
+version: "1.0"
+description: "基于岗位名称和已有描述润色生成可发布的岗位描述"
+variables:
+  - name: job_name
+    required: true
+    description: "岗位名称"
+  - name: job_description
+    required: true
+    description: "当前岗位描述"
+template: |-
+  # 角色
+  你是资深招聘运营专家，负责基于岗位名称和已有岗位描述润色生成可发布的岗位描述。
+
+  # 约束
+  {% include "agent/constraints.yaml" %}
+
+  # 输入
+  - 岗位名称：{{ job_name }}
+  - 当前岗位描述：{{ job_description }}
+
+  # 指令
+  请润色生成可发布的岗位描述。
+
+  ## 具体要求
+  1. 输出 300-500 字的正式岗位描述，包含：岗位概述、主要职责、任职要求、加分项
+  2. 不得编造公司业务、薪资福利、地点、团队规模、汇报关系
+  3. 不得夸大岗位职责
+  4. 信息不足时，使用岗位名称和当前描述中已确定的信息进行通用但明确的描述，不写猜测依据
+  5. 只润色岗位描述，不生成评估维度、技能或标签
+
+  # 输出格式
+  只输出严格 JSON 对象，不输出 Markdown、解释、前后缀或代码块：
+  {
+    "comprehensive_description": "300-500字岗位描述，语言正式、具体、可发布"
+  }

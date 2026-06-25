@@ -8,11 +8,21 @@ settings = get_settings()
 configure_logging(settings)
 
 
+# 任务模块 → 队列名映射（注册新任务模块时同步加这里，启动脚本会读取以决定 worker 消费哪些队列）。
+# 单一来源：task_routes 由本字典派生，新增任务模块只需改这一处。
+TASK_QUEUE_ROUTES: dict[str, str] = {
+    "app.workers.tasks.eval_task": "eval",
+    "app.workers.tasks.agent_task": "agent",
+}
+# 启动脚本会调用 `python -c "from app.workers.celery_app import ALL_QUEUES; print(ALL_QUEUES)"`
+ALL_QUEUES: str = ",".join(sorted(set(TASK_QUEUE_ROUTES.values())))
+
+
 celery_app = Celery(
     "resume_platform",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.workers.tasks.eval_task"]
+    include=list(TASK_QUEUE_ROUTES),
 )
 
 celery_app.conf.update(
@@ -36,9 +46,7 @@ celery_app.conf.update(
         "health_check_interval": 30,
         "visibility_timeout": 3600,
     },
-    task_routes={
-        "app.workers.tasks.eval_task.*": {"queue": "eval"}
-    },
+    task_routes={f"{module}.*": {"queue": queue} for module, queue in TASK_QUEUE_ROUTES.items()},
     # Windows 兼容设置：使用 threads 池避免 spawn 多进程的权限问题
     worker_pool="threads",
     worker_concurrency=4,

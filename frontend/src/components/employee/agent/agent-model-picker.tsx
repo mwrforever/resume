@@ -1,0 +1,151 @@
+/**
+ * AgentModelPicker：Composer 顶栏的模型选择下拉
+ *
+ * 职责：
+ * - 懒加载 /employee/llm-model-options（首次打开时拉取）
+ * - 展示当前会话已选模型，点击列表项 → PUT sessions/{id}/model 持久化
+ * - 选择成功后通过 onSessionUpdate 通知上层（同步 hook 内 session 与 layout sessions）
+ *
+ * 不做：模型管理（创建/删除）、思考开关、流式相关逻辑。
+ */
+
+import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, Loader2, Check } from 'lucide-react';
+import { employeeLlmApi } from '@/api/employee/agent';
+import type { ILlmModelOption, WorkspaceSession } from '@/types/agent';
+
+export interface AgentModelPickerProps {
+  session: WorkspaceSession;
+  /** 选择模型回调（store.selectModel：空会话写全局+会话，中途仅写会话） */
+  onPickModel: (modelName: string | null) => void;
+  /** 当前会话是否为空（无消息）：用于 tooltip 区分作用域 */
+  isEmptySession: boolean;
+}
+
+/** 来源标签：env / global / employee / dept 四类，给用户辨识模型出处 */
+const SOURCE_LABEL: Record<ILlmModelOption['source'], string> = {
+  env: '系统',
+  global: '全局',
+  employee: '个人',
+  dept: '部门',
+};
+
+export function AgentModelPicker({ session, onPickModel, isEmptySession }: AgentModelPickerProps) {
+  const [open, setOpen] = useState(false);
+  const [options, setOptions] = useState<ILlmModelOption[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // 点外部关闭浮层（保持单实例点击退出体验）
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  // 首次打开时懒加载选项；之后命中缓存
+  const ensureOptions = async () => {
+    if (options !== null || loading) return;
+    setLoading(true);
+    try {
+      // axios 响应拦截器已 unwrap 到 {code, message, data}，故 resp.data 即列表
+      const resp = await employeeLlmApi.listOptions();
+      const list = ((resp as { data?: ILlmModelOption[] }).data) ?? [];
+      setOptions(list);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next) void ensureOptions();
+  };
+
+  const onPick = (opt: ILlmModelOption) => {
+    if (opt.model_name === session.selected_model_name) {
+      setOpen(false);
+      return;
+    }
+    // 走 store action：空会话写全局默认 + 会话，中途仅写会话；不发 PUT，不落库
+    onPickModel(opt.model_name);
+    setOpen(false);
+  };
+
+  // 默认显示：未选模型时取列表里 source==='env' 的项作为占位（仅 UI 提示）
+  const currentLabel = session.selected_model_name
+    ?? options?.find(o => o.source === 'env')?.model_name
+    ?? '默认模型';
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={toggle}
+        title={isEmptySession ? '切换模型（将设为新建会话的默认）' : '切换当前会话的模型'}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={`flex items-center gap-1.5 h-7 px-3 rounded-full text-xs font-medium
+                    transition-all duration-150
+                    bg-[#F1F5F9] text-[#334155] hover:bg-[#E2E8F0]`}
+      >
+        <span className="max-w-[160px] truncate">{currentLabel}</span>
+        <ChevronDown size={12} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          className="absolute z-20 mt-1 left-1/2 -translate-x-1/2 w-[260px]
+                     rounded-lg border border-[#E2E8F0] bg-white shadow-lg
+                     max-h-[280px] overflow-y-auto"
+        >
+          {loading && (
+            <div className="px-3 py-4 text-xs text-[#64748B] flex items-center gap-2">
+              <Loader2 size={12} className="animate-spin" /> 加载模型列表…
+            </div>
+          )}
+          {!loading && options && options.length === 0 && (
+            <div className="px-3 py-4 text-xs text-[#64748B]">
+              暂无可用模型，请先到 LLM 配置中心添加。
+            </div>
+          )}
+          {!loading && options && options.map(opt => {
+            const selected = opt.model_name === session.selected_model_name;
+            return (
+              <button
+                key={`${opt.source}-${opt.config_id ?? 'env'}-${opt.model_name}`}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => void onPick(opt)}
+                className={`w-full text-left px-3 py-2 flex items-start gap-2
+                            hover:bg-[#F1F5F9] transition-colors
+                            ${selected ? 'bg-[#E0F2FE]' : ''}`}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium text-[#020617] truncate">
+                    {opt.model_name}
+                  </div>
+                  <div className="text-[11px] text-[#64748B] truncate">
+                    <span className="inline-block px-1.5 py-0.5 mr-1 rounded bg-[#F1F5F9] text-[#475569]">
+                      {SOURCE_LABEL[opt.source] ?? opt.source}
+                    </span>
+                    {opt.config_name}
+                  </div>
+                </div>
+                {selected && <Check size={14} className="text-[#0369A1] mt-0.5" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}

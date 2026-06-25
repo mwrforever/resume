@@ -11,10 +11,12 @@ from . import Base
 
 class LlmModelConfig(Base):
     __tablename__ = "llm_model_config"
+    # 模型配置已统一为全局：业务唯一性依据 (model_name, is_deleted) — 同名模型在
+    # 未删除集合中唯一；软删除写入 unix 微秒戳，使删除后允许同名复用。
+    # 真实查询：列表按 (is_deleted, status, update_time desc)；按 model_name 反查
     __table_args__ = (
-        UniqueConstraint("biz_type", "biz_id", "model_name", "is_deleted", name="uk_biz_model_deleted"),
-        Index("idx_biz", "biz_type", "biz_id", "status", "is_deleted"),
-        Index("idx_model_name", "model_name"),
+        UniqueConstraint("model_name", "is_deleted", name="uk_model_name_deleted"),
+        Index("idx_status", "is_deleted", "status"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -34,7 +36,7 @@ class LlmModelConfig(Base):
     enable_memory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment="是否启用上下文记忆")
     temperature: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.70"), comment="生成随机性")
     top_p: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.90"), comment="核采样参数")
-    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=2048, comment="最大输出Token")
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=8192, comment="最大输出Token")
     presence_penalty: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.00"), comment="话题出现惩罚")
     frequency_penalty: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, default=Decimal("0.00"), comment="频率惩罚")
     timeout_seconds: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=120, comment="请求超时时间")

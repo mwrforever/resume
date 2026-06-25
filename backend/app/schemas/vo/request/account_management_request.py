@@ -27,6 +27,8 @@ class ManagedEmployeeCreate(BaseModel):
     dept_ids: Optional[list[int]] = None
     primary_dept_id: Optional[int] = None
     status: int = 1
+    # 创建时可指定是否管理员，默认普通员工
+    is_admin: int = 0
 
 
 class ManagedEmployeeUpdate(BaseModel):
@@ -39,3 +41,5 @@ class ManagedEmployeeUpdate(BaseModel):
     dept_ids: Optional[list[int]] = None
     primary_dept_id: Optional[int] = None
     status: Optional[int] = None
+    # 更新管理员标记（0/1）
+    is_admin: Optional[int] = None

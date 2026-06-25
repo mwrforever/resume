@@ -11,6 +11,8 @@ env/
 .env
 *.env
 .env.*
+!*.example
+!*.env.example
 backend/note/
 .eggs/
 *.egg-info/
@@ -72,6 +74,9 @@ md
 # Worktrees
 .worktrees/
 worktrees/
+
+# Superpowers brainstorm (visual companion mockups)
+.superpowers/
 backend/.env
 windsurf/
 findings.md

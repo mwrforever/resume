@@ -1,0 +1,17 @@
+# 排除本地开发产物，避免污染镜像 & 加快构建
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+.env.*
+!.env.example
+note/
+tests/
+*.log
+.DS_Store

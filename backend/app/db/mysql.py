@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 import logging
 from typing import AsyncGenerator, Optional
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
@@ -13,40 +13,40 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import settings
+from app.core.security import get_password_hash
 from app.models import Base
+from app.models.sys_employee import SysEmployee
 
 logger = logging.getLogger(__name__)
 
 
-LLM_MODEL_CONFIG_SCHEMA_COLUMNS = {
-    "fallback_model_name": "ALTER TABLE llm_model_config ADD COLUMN fallback_model_name VARCHAR(100) DEFAULT NULL COMMENT '兜底模型名称' AFTER model_name",
-    "extra_body": "ALTER TABLE llm_model_config ADD COLUMN extra_body JSON DEFAULT NULL COMMENT '扩展参数' AFTER fallback_model_name",
-    "enable_thinking": "ALTER TABLE llm_model_config ADD COLUMN enable_thinking TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否开启思考模式' AFTER extra_body",
-    "enable_tools": "ALTER TABLE llm_model_config ADD COLUMN enable_tools TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用工具调用' AFTER enable_thinking",
-    "enable_prompt_cache": "ALTER TABLE llm_model_config ADD COLUMN enable_prompt_cache TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否启用LLM前缀缓存' AFTER enable_tools",
-    "enable_memory": "ALTER TABLE llm_model_config ADD COLUMN enable_memory TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用上下文记忆' AFTER enable_prompt_cache",
-    "temperature": "ALTER TABLE llm_model_config ADD COLUMN temperature DECIMAL(4, 2) NOT NULL DEFAULT 0.70 COMMENT '生成随机性' AFTER enable_memory",
-    "top_p": "ALTER TABLE llm_model_config ADD COLUMN top_p DECIMAL(4, 2) NOT NULL DEFAULT 0.90 COMMENT '核采样参数' AFTER temperature",
-    "max_tokens": "ALTER TABLE llm_model_config ADD COLUMN max_tokens INT NOT NULL DEFAULT 2048 COMMENT '最大输出Token' AFTER top_p",
-    "presence_penalty": "ALTER TABLE llm_model_config ADD COLUMN presence_penalty DECIMAL(4, 2) NOT NULL DEFAULT 0.00 COMMENT '话题出现惩罚' AFTER max_tokens",
-    "frequency_penalty": "ALTER TABLE llm_model_config ADD COLUMN frequency_penalty DECIMAL(4, 2) NOT NULL DEFAULT 0.00 COMMENT '频率惩罚' AFTER presence_penalty",
-    "timeout_seconds": "ALTER TABLE llm_model_config ADD COLUMN timeout_seconds SMALLINT NOT NULL DEFAULT 120 COMMENT '请求超时时间' AFTER frequency_penalty",
-    "max_retries": "ALTER TABLE llm_model_config ADD COLUMN max_retries SMALLINT NOT NULL DEFAULT 2 COMMENT '最大重试次数' AFTER timeout_seconds",
-    "status": "ALTER TABLE llm_model_config ADD COLUMN status SMALLINT NOT NULL DEFAULT 1 COMMENT '状态：1启用，0停用' AFTER max_retries",
-    "is_deleted": "ALTER TABLE llm_model_config ADD COLUMN is_deleted BIGINT NOT NULL DEFAULT 0 COMMENT '软删除标记：0未删除，删除时写入Unix微秒时间戳' AFTER status",
-    "last_test_at": "ALTER TABLE llm_model_config ADD COLUMN last_test_at DATETIME DEFAULT NULL COMMENT '最近测试时间' AFTER is_deleted",
-    "last_test_status": "ALTER TABLE llm_model_config ADD COLUMN last_test_status SMALLINT DEFAULT NULL COMMENT '最近测试状态' AFTER last_test_at",
-    "last_test_message": "ALTER TABLE llm_model_config ADD COLUMN last_test_message VARCHAR(500) DEFAULT NULL COMMENT '最近测试结果' AFTER last_test_status",
-}
+async def _ensure_initial_admin(conn: AsyncConnection) -> None:
+    """空库初始化：当 sys_employee 没有任何管理员时，按 .env 配置创建一个。
 
-
-async def ensure_llm_model_config_schema(conn: AsyncConnection) -> None:
-    for column_name, alter_sql in LLM_MODEL_CONFIG_SCHEMA_COLUMNS.items():
-        column_result = await conn.execute(text(f"SHOW COLUMNS FROM llm_model_config LIKE '{column_name}'"))
-        if column_result.first():
-            continue
-        logger.info("LLM模型配置表缺少字段，正在自动补齐：column=%s", column_name)
-        await conn.execute(text(alter_sql))
+    场景：首次部署 / 全新环境拉起，避免没有可用账号能进员工管理 / 模型配置等管理页。
+    已有任意 is_admin=1 的员工时跳过；不做"按邮箱回填"之类的迁移动作。
+    """
+    if not settings.INIT_ADMIN_EMAIL or not settings.init_admin_password:
+        logger.info("未配置 INIT_ADMIN_EMAIL/INIT_ADMIN_PASSWORD，跳过初始管理员引导")
+        return
+    result = await conn.execute(
+        select(SysEmployee.id).where(SysEmployee.is_admin == 1, SysEmployee.is_deleted == 0).limit(1)
+    )
+    if result.first() is not None:
+        return
+    password_hash = get_password_hash(settings.init_admin_password)
+    await conn.execute(
+        SysEmployee.__table__.insert().values(
+            emp_no=settings.INIT_ADMIN_EMP_NO or None,
+            real_name=settings.INIT_ADMIN_REAL_NAME,
+            email=settings.INIT_ADMIN_EMAIL,
+            password_hash=password_hash,
+            status=1,
+            is_admin=1,
+            is_deleted=0,
+        )
+    )
+    logger.info("已根据 .env 创建初始管理员：email=%s", settings.INIT_ADMIN_EMAIL)
 
 
 class MySQLManager:
@@ -67,10 +67,11 @@ class MySQLManager:
         return self._session_factory
 
     async def init_pool(self) -> None:
-        """
-        初始化 SQLAlchemy AsyncEngine。
+        """初始化 SQLAlchemy AsyncEngine 并自动建表 + 初始管理员引导。
 
-        这里保留 init_pool 这个方法名，方便你少改 FastAPI lifespan 里的调用。
+        ORM `metadata.create_all` 幂等：表已存在不会重建，缺失才建。所有列定义
+        以 ORM 模型为唯一来源，不维护任何 ALTER 增量；列变更应通过统一的迁移
+        工具进行（如 alembic），或在开发期直接重建库。
         """
         if self._engine is not None:
             return
@@ -108,13 +109,12 @@ class MySQLManager:
             expire_on_commit=False,
         )
         async with self._engine.begin() as conn:
+            # 由 ORM metadata 一次性建出所有表与索引；空库则同步引导初始管理员
             await conn.run_sync(Base.metadata.create_all)
-            await ensure_llm_model_config_schema(conn)
+            await _ensure_initial_admin(conn)
 
     async def close_pool(self) -> None:
-        """
-        关闭 SQLAlchemy AsyncEngine 连接池。
-        """
+        """关闭 SQLAlchemy AsyncEngine 连接池。"""
         if self._engine is None:
             return
 
@@ -124,39 +124,25 @@ class MySQLManager:
 
     @asynccontextmanager
     async def session(self) -> AsyncGenerator[AsyncSession, None]:
-        """
-        获取 ORM Session。
-
-        适合大部分业务 CRUD。
-        """
+        """获取 ORM Session，适合大部分业务 CRUD。"""
         async with self.session_factory() as session:
             yield session
 
     @asynccontextmanager
     async def transaction(self) -> AsyncGenerator[AsyncSession, None]:
-        """
-        获取带事务的 ORM Session。
-
-        成功自动 commit，异常自动 rollback。
-        """
+        """获取带事务的 ORM Session，成功自动 commit，异常自动 rollback。"""
         async with self.session_factory() as session:
             async with session.begin():
                 yield session
 
     @asynccontextmanager
     async def connection(self) -> AsyncGenerator[AsyncConnection, None]:
-        """
-        获取底层连接。
-
-        适合执行纯 SQL、健康检查、少量不走 ORM 的场景。
-        """
+        """获取底层连接，适合执行纯 SQL、健康检查、少量不走 ORM 的场景。"""
         async with self.engine.connect() as conn:
             yield conn
 
     async def health_check(self) -> bool:
-        """
-        数据库健康检查。
-        """
+        """数据库健康检查。"""
         async with self.connection() as conn:
             result = await conn.execute(text("SELECT 1"))
             return result.scalar_one() == 1

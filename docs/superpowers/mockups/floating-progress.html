@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>悬浮进度条设计示例 — 方案 A / B 对比</title>
+<style>
+  /* ============ 全局：企业级 HR SaaS 蓝色体系 ============ */
+  :root {
+    --sky-400: #0EA5E9;
+    --sky-700: #0369A1;
+    --slate-50: #F8FAFC;
+    --slate-100: #F1F5F9;
+    --slate-200: #E2E8F0;
+    --slate-400: #94A3B8;
+    --slate-500: #64748B;
+    --slate-700: #334155;
+    --ink: #020617;
+    --green-bg: #DCFCE7;
+    --green-fg: #16A34A;
+    --red-bg: #FEE2E2;
+    --red-fg: #DC2626;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--slate-100);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ============ 精小美观滚动条（全局示范） ============ */
+  .thin-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+  .thin-scroll::-webkit-scrollbar-track { background: transparent; }
+  .thin-scroll::-webkit-scrollbar-thumb {
+    background: rgba(100, 116, 139, 0.22);
+    border-radius: 999px;
+    transition: background 0.2s var(--ease);
+  }
+  .thin-scroll:hover::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.32); }
+  .thin-scroll::-webkit-scrollbar-thumb:hover { background: rgba(3, 105, 161, 0.5); }
+  .thin-scroll { scrollbar-width: thin; scrollbar-color: rgba(100,116,139,0.25) transparent; }
+
+  /* ============ 顶部方案切换 ============ */
+  .toolbar {
+    position: fixed; top: 0; left: 0; right: 0; height: 56px; z-index: 100;
+    display: flex; align-items: center; gap: 16px; padding: 0 24px;
+    background: rgba(255,255,255,0.8); backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--slate-200);
+  }
+  .toolbar h1 { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
+  .toolbar .tag { font-size: 11px; color: var(--slate-500); font-weight: 500; }
+  .switch { margin-left: auto; display: flex; gap: 4px; background: var(--slate-100); padding: 4px; border-radius: 12px; }
+  .switch button {
+    border: none; background: transparent; cursor: pointer;
+    font-size: 12.5px; font-weight: 600; color: var(--slate-500);
+    padding: 7px 16px; border-radius: 9px; transition: all 0.25s var(--ease);
+  }
+  .switch button.active { background: #fff; color: var(--sky-700); box-shadow: 0 1px 3px rgba(2,6,23,0.08); }
+
+  /* ============ 模拟工作台舞台 ============ */
+  .stage {
+    position: relative; margin-top: 56px; height: calc(100vh - 56px);
+    overflow: hidden;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #EFF6FF, transparent),
+      var(--slate-50);
+  }
+  /* 模拟会话消息（带精小滚动条） */
+  .chat {
+    position: absolute; inset: 0; padding: 32px 40px 120px;
+    overflow-y: auto;
+  }
+  .chat-inner { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  .bubble {
+    padding: 14px 18px; border-radius: 16px; font-size: 13.5px; line-height: 1.7;
+    border: 1px solid var(--slate-200); background: #fff; color: var(--slate-700);
+    box-shadow: 0 1px 2px rgba(2,6,23,0.03);
+  }
+  .bubble.me { align-self: flex-end; background: linear-gradient(135deg, var(--sky-400), var(--sky-700)); color: #fff; border: none; max-width: 70%; }
+  .bubble.ai { align-self: flex-start; max-width: 88%; }
+  .bubble .muted { color: var(--slate-400); }
+  .composer {
+    position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 40px 24px;
+    background: linear-gradient(180deg, transparent, var(--slate-50) 40%);
+  }
+  .composer-inner {
+    max-width: 720px; margin: 0 auto; display: flex; gap: 10px; align-items: center;
+    background: #fff; border: 1px solid var(--slate-200); border-radius: 16px; padding: 10px 12px 10px 18px;
+    box-shadow: 0 4px 16px -8px rgba(2,6,23,0.12);
+  }
+  .composer-inner input { flex: 1; border: none; outline: none; font-size: 13.5px; color: var(--slate-700); background: transparent; }
+  .composer-inner button {
+    width: 36px; height: 36px; border-radius: 11px; border: none; cursor: pointer;
+    background: linear-gradient(135deg, var(--sky-400), var(--sky-700)); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ============ 悬浮进度：通用胶囊与玻璃面板 ============ */
+  .glass {
+    background: rgba(255,255,255,0.78);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    border: 1px solid rgba(255,255,255,0.6);
+    box-shadow:
+      0 20px 48px -16px rgba(2,6,23,0.18),
+      inset 0 1px 0 rgba(255,255,255,0.7);
+  }
+
+  /* ---- 迷你进度环 ---- */
+  .ring-wrap { position: relative; flex-shrink: 0; }
+  .ring-num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; color: var(--sky-700); font-family: ui-monospace, "SFMono-Regular", monospace; }
+
+  /* ---- 节点图标四态 ---- */
+  .node-ico { width: 28px; height: 28px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; position: relative; z-index: 2; }
+  .node-ico.pending { background: #fff; border: 2px solid var(--slate-200); }
+  .node-ico.success { background: var(--green-bg); color: var(--green-fg); }
+  .node-ico.failed { background: var(--red-bg); color: var(--red-fg); }
+  .node-ico.running { background: linear-gradient(135deg, var(--sky-400), var(--sky-700)); color: #fff; animation: icon-pulse 1.8s var(--ease) infinite; }
+  .node-ico svg { width: 14px; height: 14px; }
+  .spinner { width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes icon-pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(14,165,233,0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(14,165,233,0); }
+  }
+
+  /* ---- 波浪文字（保留现有动画） ---- */
+  .wave span { display: inline-block; animation: wave 1.6s ease-in-out infinite; }
+  @keyframes wave { 0%,60%,100% { transform: translateY(0); opacity: .65; } 30% { transform: translateY(-3px); opacity: 1; } }
+
+  /* ---- 流光连接线（保留现有动画） ---- */
+  .flow-line { position: absolute; left: 21px; top: 30px; bottom: -6px; width: 2px; border-radius: 2px; background: var(--slate-200); }
+  .flow-line.done { background: linear-gradient(180deg, var(--sky-400), var(--sky-700)); overflow: hidden; }
+  .flow-line.done::after {
+    content: ''; position: absolute; left: -1px; right: -1px; height: 8px;
+    background: linear-gradient(180deg, transparent, #7dd3fc, transparent);
+    animation: flow-dot 2.4s linear infinite;
+  }
+  @keyframes flow-dot { 0% { top: -8px; } 100% { top: 100%; } }
+
+  /* 步骤行 */
+  .step-row { position: relative; display: grid; grid-template-columns: 28px 1fr; gap: 0 10px; padding: 6px 8px; border-radius: 10px; }
+  .step-row.running { background: linear-gradient(90deg, rgba(14,165,233,0.06), rgba(14,165,233,0.02)); }
+  .step-title { font-size: 13px; font-weight: 500; line-height: 1.3; padding-top: 4px; }
+  .step-title.pending { color: var(--slate-400); }
+  .step-title.normal { color: var(--slate-700); }
+  .step-title.failed { color: var(--red-fg); }
+  .step-detail { font-size: 11px; color: var(--sky-700); margin-top: 2px; font-family: ui-monospace, monospace; }
+
+  /* =====================================================
+     方案 A：悬浮岛（Dynamic Island）—— 右上角
+     ===================================================== */
+  .island-host { position: absolute; top: 20px; right: 24px; z-index: 60; display: flex; flex-direction: column; align-items: flex-end; }
+  .island-pill {
+    display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 14px 0 8px;
+    border-radius: 999px; cursor: pointer; user-select: none;
+    transition: transform 0.3s var(--ease);
+  }
+  .island-pill:active { transform: scale(0.98); }
+  .island-pill .cur-title { font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+  .island-pill .cur-sub { font-size: 10px; color: var(--slate-500); font-family: ui-monospace, monospace; }
+  .island-chev { color: var(--slate-400); transition: transform 0.35s var(--ease); }
+  .island-host[data-open="true"] .island-chev { transform: rotate(180deg); }
+
+  .island-panel {
+    margin-top: 10px; width: 288px; border-radius: 20px; overflow: hidden;
+    transform-origin: top right;
+    transition: opacity 0.3s var(--ease), transform 0.35s var(--ease);
+  }
+  .island-host[data-open="false"] .island-panel { opacity: 0; transform: scale(0.94) translateY(-8px); pointer-events: none; }
+  .island-host[data-open="true"] .island-panel { opacity: 1; transform: scale(1) translateY(0); }
+  .panel-head { padding: 12px 14px; border-bottom: 1px solid rgba(226,232,240,0.7); display: flex; align-items: center; gap: 10px; }
+  .panel-head .label { font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--slate-500); }
+  .panel-head .count { margin-left: auto; font-size: 11px; color: var(--slate-500); font-family: ui-monospace, monospace; }
+  .panel-head .count b { color: var(--sky-700); font-size: 14px; }
+  .panel-list { padding: 8px; max-height: 296px; overflow-y: auto; } /* 单视窗内：约 5~6 行后滚动 */
+  .more-btn {
+    width: 100%; margin-top: 4px; padding: 8px; border: none; background: transparent; cursor: pointer;
+    font-size: 11.5px; font-weight: 600; color: var(--sky-700); border-radius: 9px;
+    transition: background 0.2s var(--ease);
+  }
+  .more-btn:hover { background: rgba(14,165,233,0.08); }
+
+  /* =====================================================
+     方案 B：右缘悬浮卡 —— 贴右侧边缘垂直居中
+     ===================================================== */
+  .edge-host { position: absolute; top: 50%; right: 0; transform: translateY(-50%); z-index: 60; display: flex; align-items: center; }
+  .edge-rail {
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+    padding: 14px 10px; border-radius: 16px 0 0 16px; cursor: pointer;
+    transition: transform 0.3s var(--ease);
+  }
+  .edge-rail:active { transform: scale(0.97); }
+  .edge-dots { display: flex; flex-direction: column; gap: 5px; align-items: center; }
+  .edge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--slate-200); transition: all 0.3s var(--ease); }
+  .edge-dot.done { background: linear-gradient(135deg, var(--sky-400), var(--sky-700)); }
+  .edge-dot.running { background: var(--sky-400); transform: scale(1.5); animation: icon-pulse 1.8s infinite; }
+  .edge-panel {
+    position: absolute; right: 64px; top: 50%; transform: translateY(-50%);
+    width: 300px; border-radius: 20px; overflow: hidden; transform-origin: right center;
+    transition: opacity 0.3s var(--ease), transform 0.35s var(--ease);
+  }
+  .edge-host[data-open="false"] .edge-panel { opacity: 0; transform: translateY(-50%) scale(0.94) translateX(12px); pointer-events: none; }
+  .edge-host[data-open="true"] .edge-panel { opacity: 1; transform: translateY(-50%) scale(1) translateX(0); }
+
+  .hidden { display: none !important; }
+  .hint { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); font-size: 11px; color: var(--slate-400); }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <h1>悬浮进度条设计示例</h1>
+  <span class="tag">点击胶囊可展开 / 收起 · 演示已修复的节点顺序与计数</span>
+  <div class="switch">
+    <button id="btn-a" class="active" onclick="setScheme('a')">方案 A · 悬浮岛</button>
+    <button id="btn-b" onclick="setScheme('b')">方案 B · 右缘悬浮卡</button>
+  </div>
+</div>
+
+<div class="stage">
+  <!-- 模拟会话区（带精小滚动条 thin-scroll） -->
+  <div class="chat thin-scroll">
+    <div class="chat-inner">
+      <div class="bubble me">请基于这份后端工程师简历，生成一套面试题库。</div>
+      <div class="bubble ai">已读取简历，正在分析可考察的能力维度。<span class="muted">（流程进度见右侧悬浮卡）</span></div>
+      <div class="bubble ai">我建议从「分布式系统设计、异步编程、数据库优化」三个维度出题，是否确认？</div>
+      <div class="bubble me">确认，按这三个维度出题。</div>
+      <div class="bubble ai">正在规划出题结构，将为每个维度分配难度梯度……</div>
+      <div class="bubble ai">这是一段较长的占位文本，用于演示主会话区在内容溢出时的滚动条样式——精小、半透明、悬停加深，且不抢视觉。继续滚动可见悬浮进度条始终固定在视窗内，不随会话滚动。继续……继续……继续……继续……继续……继续……继续……继续……继续……继续……</div>
+    </div>
+  </div>
+
+  <!-- ============ 方案 A：悬浮岛 ============ -->
+  <div id="scheme-a" class="island-host" data-open="false">
+    <div class="island-pill glass" onclick="toggle('a')">
+      <span class="ring-wrap">
+        <svg width="32" height="32" viewBox="0 0 32 32">
+          <circle cx="16" cy="16" r="13" fill="none" stroke="#E2E8F0" stroke-width="3"/>
+          <circle cx="16" cy="16" r="13" fill="none" stroke="#0369A1" stroke-width="3" stroke-linecap="round"
+            stroke-dasharray="81.7" stroke-dashoffset="46" transform="rotate(-90 16 16)"
+            style="transition: stroke-dashoffset .6s cubic-bezier(.16,1,.3,1)"/>
+        </svg>
+        <span class="ring-num">4/8</span>
+      </span>
+      <span>
+        <div class="cur-title wave" id="a-cur"></div>
+        <div class="cur-sub">进行中 · 面试题生成</div>
+      </span>
+      <span class="island-chev">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+      </span>
+    </div>
+
+    <div class="island-panel glass">
+      <div class="panel-head">
+        <span class="label">流程进度</span>
+        <span class="count"><b>4</b> / 8 步</span>
+      </div>
+      <div class="panel-list thin-scroll" id="a-list"></div>
+    </div>
+  </div>
+
+  <!-- ============ 方案 B：右缘悬浮卡 ============ -->
+  <div id="scheme-b" class="edge-host hidden" data-open="false">
+    <div class="edge-rail glass" onclick="toggle('b')">
+      <span class="ring-wrap">
+        <svg width="34" height="34" viewBox="0 0 34 34">
+          <circle cx="17" cy="17" r="14" fill="none" stroke="#E2E8F0" stroke-width="3"/>
+          <circle cx="17" cy="17" r="14" fill="none" stroke="#0369A1" stroke-width="3" stroke-linecap="round"
+            stroke-dasharray="87.9" stroke-dashoffset="49" transform="rotate(-90 17 17)"/>
+        </svg>
+        <span class="ring-num">4/8</span>
+      </span>
+      <span class="edge-dots" id="b-dots"></span>
+    </div>
+    <div class="edge-panel glass">
+      <div class="panel-head">
+        <span class="label">流程进度</span>
+        <span class="count"><b>4</b> / 8 步</span>
+      </div>
+      <div class="panel-list thin-scroll" id="b-list"></div>
+    </div>
+  </div>
+
+  <div class="hint">↑ 顶部切换方案 · 点击胶囊展开节点详情</div>
+
+  <!-- 模拟输入框 -->
+  <div class="composer">
+    <div class="composer-inner">
+      <input placeholder="继续与 Agent 对话…" />
+      <button><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 模拟"已修复"后的正确节点序列：状态与模板顺序严格一致，计数 = 非 pending 数
+  const STEPS = [
+    { title: '读取简历', status: 'success' },
+    { title: '分析维度', status: 'success' },
+    { title: '选择维度', status: 'success' },
+    { title: '规划出题', status: 'running', detail: '正在分配难度梯度…' },
+    { title: '确认计划', status: 'pending' },
+    { title: '生成题目', status: 'pending' },
+    { title: '汇总整理', status: 'pending' },
+    { title: '输出题库', status: 'pending' },
+  ];
+  const DEFAULT_VISIBLE = 5; // 默认只展示 5 个节点
+
+  const ICONS = {
+    success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>',
+    failed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+    running: '<span class="spinner"></span>',
+    pending: '',
+  };
+
+  function waveText(text) {
+    return [...text].map((c, i) =>
+      `<span style="animation-delay:${i * 0.06}s">${c}</span>`).join('');
+  }
+
+  function renderList(elId, expanded) {
+    const list = expanded ? STEPS : STEPS.slice(0, DEFAULT_VISIBLE);
+    const rows = list.map((s, i) => {
+      const isLast = i === STEPS.length - 1;
+      const line = !isLast ? `<span class="flow-line ${s.status === 'success' ? 'done' : ''}"></span>` : '';
+      const titleCls = s.status === 'pending' ? 'pending' : s.status === 'failed' ? 'failed' : 'normal';
+      const title = s.status === 'running'
+        ? `<span class="wave">${waveText(s.title)}</span>`
+        : `<span class="${titleCls}">${s.title}</span>`;
+      const detail = (s.status === 'running' && s.detail) ? `<div class="step-detail">${s.detail}</div>` : '';
+      return `<div class="step-row ${s.status === 'running' ? 'running' : ''}">
+        ${line}
+        <span class="node-ico ${s.status}">${ICONS[s.status]}</span>
+        <span><div class="step-title">${title}</div>${detail}</span>
+      </div>`;
+    }).join('');
+    const moreBtn = (!expanded && STEPS.length > DEFAULT_VISIBLE)
+      ? `<button class="more-btn" onclick="expandList('${elId}')">加载更多（还有 ${STEPS.length - DEFAULT_VISIBLE} 步）↓</button>`
+      : '';
+    document.getElementById(elId).innerHTML = rows + moreBtn;
+  }
+  window.expandList = (elId) => renderList(elId, true);
+
+  // 当前活跃节点标题（最后一个非 pending）填入胶囊
+  const active = [...STEPS].reverse().find(s => s.status !== 'pending') || STEPS[0];
+  document.getElementById('a-cur').innerHTML = waveText(active.title);
+
+  // 方案 B 竖向小圆点
+  document.getElementById('b-dots').innerHTML = STEPS.map(s =>
+    `<span class="edge-dot ${s.status === 'success' ? 'done' : s.status === 'running' ? 'running' : ''}"></span>`).join('');
+
+  renderList('a-list', false);
+  renderList('b-list', false);
+
+  function toggle(scheme) {
+    const host = document.getElementById('scheme-' + scheme);
+    const open = host.getAttribute('data-open') === 'true';
+    host.setAttribute('data-open', String(!open));
+    if (open) renderList(scheme + '-list', false); // 收起时复位为默认 5 个
+  }
+
+  function setScheme(scheme) {
+    document.getElementById('btn-a').classList.toggle('active', scheme === 'a');
+    document.getElementById('btn-b').classList.toggle('active', scheme === 'b');
+    document.getElementById('scheme-a').classList.toggle('hidden', scheme !== 'a');
+    document.getElementById('scheme-b').classList.toggle('hidden', scheme !== 'b');
+  }
+</script>
+</body>
+</html>

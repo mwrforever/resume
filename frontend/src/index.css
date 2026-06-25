@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Source+Sans+3:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -21,6 +21,9 @@
   --border: #cbd5e1;
   --ring: #0284c7;
   --radius: 0.875rem;
+  /* Agent 工作台字体栈（落地供内联 font-[...] 引用） */
+  --font-agent: 'Plus Jakarta Sans', -apple-system, 'PingFang SC', system-ui, sans-serif;
+  --font-mono-agent: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
 @layer base {
@@ -51,3 +54,175 @@
 .docx-content th { background: #f8fafc; font-weight: 600; }
 .docx-content strong { font-weight: 700; }
 .docx-content em { font-style: italic; }
+
+/* ===== Agent 工作台动效 ===== */
+/* WaveText：字符波浪跳动（running 态步骤提示） */
+@keyframes wave {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2px); }
+}
+/* WaveText：品牌蓝光泽逐字流动 */
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+/* 新 block / 卡片入场：fade + 上移 8px */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* ReasoningSection 展开：内容从透明 + 上移 6px 渐入（无滚轮的"涌现"感） */
+@keyframes reasoningReveal {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* ReasoningSection 顶部渐隐遮罩（营造内容从下方"滚动涌现"的视觉，无真实滚动条） */
+.reasoning-veil::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 14px;
+  background: linear-gradient(to bottom, rgba(248,250,252,1), rgba(248,250,252,0));
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ===== Agent 工作台动效增强（全面重设计） ===== */
+/* 卡片入场：fade + 上移 10px + 微缩放，比 fadeSlideUp 更顺滑有物理感 */
+@keyframes cardEnter {
+  from { opacity: 0; transform: translateY(10px) scale(0.992); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* Block 增量入场：用于流式期间新 block 出现时的轻量过渡（不带缩放，避免父卡轻微抖动） */
+@keyframes blockEnter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* 呼吸点：实时状态点的柔和缩放呼吸（替代生硬 pulse） */
+@keyframes pulseSoft {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.86); }
+}
+/* 状态点闪烁：用于"在线/运行"指示点 */
+@keyframes dotBlink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+/* 背景晕缓慢流动：工作台顶层极淡品牌蓝晕的有机运动 */
+@keyframes gradientShift {
+  0%, 100% { background-position: 0% 0%; }
+  50%      { background-position: 100% 100%; }
+}
+
+/* ===== Tinted 阴影工具类（带底色调，替代生硬黑色投影） ===== */
+.agent-shadow-card {
+  box-shadow:
+    0 1px 2px rgba(2, 6, 23, 0.04),
+    0 4px 14px -8px rgba(2, 6, 23, 0.08);
+}
+.agent-shadow-raised {
+  box-shadow:
+    0 1px 3px rgba(2, 6, 23, 0.05),
+    0 12px 32px -12px rgba(3, 105, 161, 0.14);
+}
+
+/* ===== 全局滚动条美化 =====
+   规则：
+   - 默认 thumb 半透明 slate（不抢眼）
+   - thumb 自身 hover 进一步加深为 sky（与品牌色统一）
+   - track 永远透明
+   - .thin-scroll 工具类：极致瘦身（6px、容器 hover 才显形），用于阅读型容器 */
+
+/* WebKit / Blink */
+*::-webkit-scrollbar       { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.18);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(3, 105, 161, 0.4);
+  background-clip: padding-box;
+}
+
+/* Firefox */
+* { scrollbar-width: thin; scrollbar-color: rgba(100, 116, 139, 0.25) transparent; }
+
+/* 工具类：极致瘦身（仅在阅读型容器需要时叠加） */
+.thin-scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.thin-scroll:hover { scrollbar-color: rgba(100, 116, 139, 0.32) transparent; }
+.thin-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.thin-scroll:hover::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.32); }
+.thin-scroll:hover::-webkit-scrollbar-thumb:hover { background: rgba(3, 105, 161, 0.5); }
+
+/* ===== Agent 侧栏专用：极简品牌色滚动条 + 上下渐隐 mask =====
+   规则：
+   - 静态 thumb 完全透明，列表静止时滚动条彻底"消失"
+   - 容器 hover 时 thumb 浮现为 sky 半透明品牌色（与底部 CTA 同色系）
+   - 极细 4px 宽度，不喧宾夺主
+   - 列表上下 8px mask 渐隐：内容溢出时不再硬切，呼应"渐变 pill active"美感
+   仅作用于 .sidebar-scroll 容器，不污染全局滚动条规则 */
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+          mask-image: linear-gradient(180deg, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+}
+.sidebar-scroll:hover { scrollbar-color: rgba(14, 165, 233, 0.28) transparent; }
+.sidebar-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+.sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  transition: background 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sidebar-scroll:hover::-webkit-scrollbar-thumb { background: rgba(14, 165, 233, 0.28); }
+.sidebar-scroll:hover::-webkit-scrollbar-thumb:hover { background: rgba(14, 165, 233, 0.55); }
+
+/* ===== 流式 rail 呼吸光（Agent 消息流 A 方案专用） ===== */
+@keyframes railGlow {
+  0%, 100% { box-shadow: -3px 0 12px -4px rgba(14, 165, 233, 0.35); }
+  50%      { box-shadow: -3px 0 16px -3px rgba(14, 165, 233, 0.55); }
+}
+
+/* ===== B1 ProgressTracker 光波效果 =====
+   说明：
+   - .progress-icon-pulse：running 步骤图标的呼吸光圈（品牌蓝扩散后收拢）
+   - .progress-flow-dot::after：已完成连接线上的流光点（从顶向下沿线下落，需父元素 position 定位） */
+.progress-icon-pulse {
+  box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.5);
+  animation: pt-icon-pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes pt-icon-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.5); }
+  70%  { box-shadow: 0 0 0 9px rgba(14, 165, 233, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0); }
+}
+
+/* 已完成连接线流光点（沿线下落） */
+.progress-flow-dot::after {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #7DD3FC;
+  box-shadow: 0 0 8px 2px rgba(125, 211, 252, 0.7);
+  animation: pt-flow-dot 2.4s cubic-bezier(0.2, 0, 0, 1) infinite;
+  pointer-events: none;
+}
+@keyframes pt-flow-dot {
+  0%   { top: -2px; opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}

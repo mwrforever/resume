@@ -33,6 +33,8 @@ class ManagedEmployeeItem(BaseModel):
     dept_name: Optional[str] = None
     depts: list[ManagedEmployeeDeptItem] = []
     status: int
+    # 是否管理员：员工管理页展示与授权用
+    is_admin: int = 0
     create_time: Optional[datetime] = None
     update_time: Optional[datetime] = None
 

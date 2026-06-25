@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, SmallInteger, DateTime, String
+from sqlalchemy import BigInteger, DateTime, Index, SmallInteger, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from . import Base
@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 
 class ResumeSkillHit(Base):
     __tablename__ = "resume_skill_hit"
+    # 真实查询：按 match_id 列出 / 删除技能命中记录
+    __table_args__ = (
+        Index("idx_match", "match_id"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     match_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="关联匹配记录ID")

@@ -3,7 +3,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.utils.auth import AuthService
+from app.utils.auth import AuthService, is_employee_admin
 from app.deps import get_current_user
 from app.deps import get_db
 from app.deps import get_cache
@@ -99,7 +99,9 @@ async def login(
         access_token=access_token,
         refresh_token=refresh_token,
         user_type="employee",
-        user_id=employee.id
+        user_id=employee.id,
+        # 管理员标记随登录下发，前端据此隐藏/展示管理类菜单
+        is_admin=is_employee_admin(employee),
     ))
 
 
@@ -108,27 +110,37 @@ async def refresh_token(
     req: RefreshTokenRequest,
     service: AuthService = Depends(get_auth_service)
 ) -> ApiResponse[RefreshTokenResponse]:
+    # 单独捕获 decode_token 的 ValueError，避免吞掉业务异常
     try:
         payload = decode_token(req.refresh_token)
-        if payload.get("type") != "refresh":
-            raise HTTPException(status_code=401, detail="无效的refresh token")
-
-        user_id = int(payload["sub"])
-        user_type = payload.get("user_type", "employee")
-
-        employee = await service.get_employee_by_id(user_id)
-        if not employee or employee.status != 1:
-            raise HTTPException(status_code=401, detail="员工已禁用")
-
-        new_access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": user_type})
-        new_refresh_token = create_refresh_token({"sub": str(user_id), "type": "refresh", "user_type": user_type})
-
-        return ApiResponse(data=RefreshTokenResponse(
-            access_token=new_access_token,
-            refresh_token=new_refresh_token
-        ))
     except ValueError:
         raise HTTPException(status_code=401, detail="无效的token")
+    # 以下逻辑中抛出的 HTTPException 由 FastAPI 统一处理，无需额外 try/except
+    if payload.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="无效的refresh token")
+
+    # 校验 token 归属：员工端接口只接受 user_type=employee 的 refresh token
+    if payload.get("user_type") != "employee":
+        raise HTTPException(status_code=401, detail="非员工类型的token")
+
+    user_id = int(payload["sub"])
+    user_type = payload.get("user_type", "employee")
+
+    employee = await service.get_employee_by_id(user_id)
+    if not employee or employee.status != 1:
+        raise HTTPException(status_code=401, detail="员工已禁用")
+
+    new_access_token = create_access_token({"sub": str(user_id), "type": "access", "user_type": user_type})
+    new_refresh_token = create_refresh_token({"sub": str(user_id), "type": "refresh", "user_type": user_type})
+
+    return ApiResponse(data=RefreshTokenResponse(
+        access_token=new_access_token,
+        refresh_token=new_refresh_token,
+        user_type=user_type,
+        user_id=user_id,
+        # 刷新时同步下发最新管理员标记（管理员身份可在员工管理页动态变更）
+        is_admin=is_employee_admin(employee),
+    ))
 
 
 # ── employee management endpoints ──
@@ -187,7 +199,7 @@ async def update_employee(
     current_user: dict = Depends(get_current_user),
 ) -> ApiResponse[ManagedEmployeeItem]:
     await service.ensure_admin(current_user)
-    return ApiResponse(message="修改成功", data=await service.update_employee(employee_id, body))
+    return ApiResponse(message="修改成功", data=await service.update_employee(employee_id, body, int(current_user["sub"])))
 
 
 @employee_manage_router.delete("/employees/{employee_id}", response_model=ApiResponse)

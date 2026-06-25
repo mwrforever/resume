@@ -1,21 +1,29 @@
+"""
+Agent 端点请求体 schema（精简版本）。
+
+保留 LLM 配置和精简后的 Agent 请求模型。
+删除 AgentActionExecute（action 框架已废弃）。
+"""
+
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
-
+from pydantic import BaseModel, ConfigDict, Field
 
 MAX_LLM_TIMEOUT_SECONDS = 120
 MAX_LLM_MAX_RETRIES = 2
+AgentWorkflowType = Literal["interview_questions", "resume_evaluation"]
 
 
-class AgentRuntimeOptions(BaseModel):
-    """单次 Agent 消息请求的运行时选项，仅影响当前请求行为，不持久化。"""
-
-    enable_thinking: bool | None = None
-
+# ====== LLM 配置 ======
 
 class LlmConfigCreate(BaseModel):
-    biz_type: Literal["employee", "dept"]
-    biz_id: int
+    """创建 LLM 模型配置（全局可见）。
+
+    业务上模型配置已统一为全局：所有员工均可见，仅管理员可增删改。
+    biz_type/biz_id 字段保留以兼容历史数据，新建一律写 ('global', 0)。
+    """
+    biz_type: Literal["global"] = "global"
+    biz_id: int = 0
     config_name: str = Field(min_length=1, max_length=50)
     protocol: Literal["openai"] = "openai"
     base_url: str = Field(min_length=1, max_length=500)
@@ -29,7 +37,7 @@ class LlmConfigCreate(BaseModel):
     enable_memory: bool = True
     temperature: float = Field(default=0.7, ge=0, le=2)
     top_p: float = Field(default=0.9, ge=0, le=1)
-    max_tokens: int = Field(default=2048, ge=1, le=32000)
+    max_tokens: int = Field(default=8192, ge=1, le=32000)
     presence_penalty: float = Field(default=0, ge=-2, le=2)
     frequency_penalty: float = Field(default=0, ge=-2, le=2)
     timeout_seconds: int = Field(default=120, ge=1, le=MAX_LLM_TIMEOUT_SECONDS)
@@ -38,6 +46,7 @@ class LlmConfigCreate(BaseModel):
 
 
 class LlmConfigUpdate(BaseModel):
+    """更新 LLM 模型配置。"""
     config_name: str | None = Field(default=None, min_length=1, max_length=50)
     base_url: str | None = Field(default=None, min_length=1, max_length=500)
     api_key: str | None = Field(default=None, min_length=1)
@@ -58,42 +67,50 @@ class LlmConfigUpdate(BaseModel):
     status: int | None = Field(default=None, ge=0, le=1)
 
 
+# ====== Agent 会话/消息 ======
+
 class AgentSessionCreate(BaseModel):
+    """创建 Agent 会话。"""
     title: str = Field(default="新会话", min_length=1, max_length=100)
     selected_model_name: str | None = Field(default=None, max_length=100)
 
 
 class AgentSessionUpdate(BaseModel):
+    """更新 Agent 会话（重命名）。"""
     title: str = Field(min_length=1, max_length=100)
 
 
-class AgentModelSelect(BaseModel):
+class AgentSessionModelSelect(BaseModel):
+    """选择 Agent 会话使用的模型。"""
+    model_config = ConfigDict(extra="forbid")
+    model_name: str | None = Field(default=None, max_length=100)
+
+
+class AgentRuntimeOptions(BaseModel):
+    """单次消息的运行时覆盖（思考开关 + 模型名）。"""
+    model_config = ConfigDict(extra="forbid")
+    enable_thinking: bool | None = None
     model_name: str | None = Field(default=None, max_length=100)
 
 
 class AgentMessageCreate(BaseModel):
-    content: str = Field(min_length=1, max_length=20000)
+    """用户输入文本，触发一次 workflow run。"""
+    content: str = Field(min_length=1, max_length=8000)
+    workflow_type: AgentWorkflowType = "interview_questions"
     context_refs: list[dict[str, Any]] = Field(default_factory=list)
     runtime_options: AgentRuntimeOptions | None = None
 
 
-class AgentFormSubmit(BaseModel):
-    """前端表单卡提交载体，由 `form.requested` 事件触发渲染后回传。"""
-
-    request_id: str = Field(min_length=1, max_length=80)
+class AgentInteractionSubmit(BaseModel):
+    """提交 interaction 卡片的用户填写。"""
     values: dict[str, Any] = Field(default_factory=dict)
+    # 显式指定 resume 所属的 graph；后端不再从历史消息推断路由（内容不当下文原则）
+    workflow_type: AgentWorkflowType = "interview_questions"
+    # 思考模式为发送时动态参数（与首条消息一致），续接 run 沿用同次会话的开关状态
+    runtime_options: AgentRuntimeOptions | None = None
 
 
-class AgentActionExecute(BaseModel):
-    """Agent 写操作执行请求体（用户在 ActionCard 上确认后回传）。
+# ====== 向后兼容别名（旧字段名映射，阶段 7 后可删除） ======
 
-    所有字段由 SSE 中的 `action.requested` 事件携带，用户确认后原样回传。
-    """
-
-    action_id: str = Field(min_length=1, max_length=80)
-    capability_key: str = Field(min_length=1, max_length=80)
-    action_name: str = Field(min_length=1, max_length=100)
-    target_type: str | None = Field(default=None, max_length=50)
-    target_id: int | None = None
-    input_payload: dict[str, Any] = Field(default_factory=dict)
-    preview_payload: dict[str, Any] = Field(default_factory=dict)
+AgentModelSelect = AgentSessionModelSelect
+AgentFormSubmit = AgentInteractionSubmit
