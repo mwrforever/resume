@@ -7,32 +7,39 @@
 ## 一、部署架构
 
 ```
-            ┌──────────────────────────────┐
-   80 / 443 │            Nginx             │  ← 容器：frontend
- (来访入口)  │  - 静态资源（dist）           │
-            │  - /api → backend:8000        │
-            │  - /preview /files → backend  │
-            └──────────────┬───────────────┘
-                           │
-                ┌──────────┴──────────┐
-                │                     │
-       ┌────────▼─────────┐    ┌──────▼─────────┐
-       │ FastAPI / uvicorn │    │ Celery worker  │
-       │ 容器: backend     │    │ 容器: celery   │
-       │ Port 8000 (内网)  │    │ 队列: eval,    │
-       │                  │    │       agent    │
-       └────────┬─────────┘    └──────┬─────────┘
-                │                     │
-       ┌────────┴─────────┐    ┌──────┴─────────┐
-       │      MySQL       │    │     Redis      │
-       │   容器: mysql     │    │  容器: redis   │
-       │ Volume: mysql_data│    │ Volume: redis_data │
-       └──────────────────┘    └────────────────┘
+              ┌──────────────────────────────────┐
+   80 / 443   │            Caddy                 │  ← 容器：caddy
+ (来访入口)    │  - TLS 终结（LE 自动签发/续期）   │
+              │  - HTTP→HTTPS 跳转 + HSTS         │
+              │  - 反代到 frontend:80             │
+              └────────────────┬─────────────────┘
+                               │ docker 内网
+              ┌────────────────▼─────────────────┐
+              │            Nginx                 │  ← 容器：frontend
+              │  - 静态资源（dist）               │
+              │  - /api → backend:8000            │
+              └────────────────┬─────────────────┘
+                               │
+                    ┌──────────┴──────────┐
+                    │                     │
+           ┌────────▼─────────┐    ┌──────▼─────────┐
+           │ FastAPI / uvicorn │    │ Celery worker  │
+           │ 容器: backend     │    │ 容器: celery   │
+           │ Port 8000 (内网)  │    │ 队列: eval,    │
+           │                  │    │       agent    │
+           └────────┬─────────┘    └──────┬─────────┘
+                    │                     │
+           ┌────────┴─────────┐    ┌──────┴─────────┐
+           │      MySQL       │    │     Redis      │
+           │   容器: mysql     │    │  容器: redis   │
+           │ Volume: mysql_data│    │ Volume: redis_data │
+           └──────────────────┘    └────────────────┘
 ```
 
 **关键约束**
 
-- 基础镜像统一用官方 `latest` 标签（mysql/redis/nginx），跟随上游滚动。**生产固化版本**时把 `docker-compose.yml` 中三处 `:latest` 改成具体 tag（如 `mysql:8.4`、`redis:7.4`、`nginx:1.27`），并写入运维变更记录。
+- 基础镜像统一用官方 `latest` 标签（mysql/redis/nginx/caddy），跟随上游滚动。**生产固化版本**时把 `docker-compose.yml` 中四处 `:latest` 改成具体 tag（如 `mysql:8.4`、`redis:7.4`、`nginx:1.27`、`caddy:2.8`），并写入运维变更记录。
+- **TLS 终结由 Caddy 完成**：Let's Encrypt 自动申请 + 自动续期（默认证书剩 30 天时续）。`caddy_data` 卷里存账号私钥和证书，**千万不要清空**，否则会反复触发 LE 速率限制。
 - LangGraph checkpointer 使用 **AsyncSqliteSaver** 落盘到 `langgraph_data` 卷（容器内 `/app/data/langgraph_checkpoints.sqlite`）。容器重启 / 升级后 Agent 中断态可继续 resume。
   - backend 容器仍只跑 **1 个 uvicorn worker**：SQLite 多进程并发写会上锁。
   - 不能水平扩多副本：单文件 SQLite 不支持多容器并发写。
@@ -45,8 +52,8 @@
 
 1. **系统**：Linux x86_64（Ubuntu 22.04 / CentOS 8+ 已验证）；至少 4C8G、磁盘 ≥ 60G。
 2. **Docker**：`docker >= 24.0`、`docker compose plugin >= 2.20`（`docker compose version` 能跑即可）。
-3. **端口**：服务器对外放通 80（或 443，需要自行加 TLS 反代/或在 nginx 里加证书）。
-4. **域名（可选）**：把域名 A 记录指向服务器；本指南默认走 IP/80。
+3. **域名**：必填。把域名 A 记录指向服务器公网 IP，**等 DNS 全球生效**（`dig +short <域名>` 能返回该 IP）后再启动，否则 Caddy 申请证书会失败。
+4. **端口**：服务器安全组 / 防火墙放通 **80（ACME 挑战必走）** 和 **443**。
 5. **代码**：把仓库 clone 到 `/opt/resume`（路径可改，下文以此为例）。
 
 ---
@@ -103,12 +110,21 @@ docker compose --env-file .env.production ps
 #   resume_backend  healthy
 #   resume_celery   healthy（首次可能 starting，60s 后变 healthy）
 #   resume_frontend healthy
+#   resume_caddy    healthy（首次签证可能 starting，30~60s 后变 healthy）
 
-# 2. 接口能通
-curl -fsS http://<服务器IP>/api/v1/docs >/dev/null && echo "backend ok"
-curl -fsS http://<服务器IP>/healthz && echo
+# 2. 证书签发（首次启动后看一次 caddy 日志，确认证书已签出）
+docker compose --env-file .env.production logs caddy | grep -iE "certificate|obtain"
+# 期望看到类似：certificate obtained successfully
 
-# 3. 浏览器访问 http://<服务器IP>/  用 INIT_ADMIN_EMAIL/PASSWORD 登录
+# 3. HTTPS 接口能通
+curl -fsS https://<WEB_DOMAIN>/api/v1/docs >/dev/null && echo "backend ok"
+curl -fsS https://<WEB_DOMAIN>/healthz && echo
+
+# 4. HTTP → HTTPS 自动跳转
+curl -sI http://<WEB_DOMAIN>/ | grep -iE "^(HTTP|location)"
+# 期望：301 + Location: https://...
+
+# 5. 浏览器访问 https://<WEB_DOMAIN>/  用 INIT_ADMIN_EMAIL/PASSWORD 登录
 ```
 
 ### 3.5 上线后立刻做的事
@@ -119,26 +135,60 @@ curl -fsS http://<服务器IP>/healthz && echo
 
 ---
 
-## 四、HTTPS（可选）
+## 四、TLS / HTTPS
 
-最省事的方案：在 nginx 层加证书。两条路：
+本方案用 **Caddy** 做 TLS 终结，零运维：自动从 Let's Encrypt 申请证书，每 30 天剩余有效期自动续期，HTTP→HTTPS 跳转 + HSTS 默认开启。
 
-**方案 A：用现有 frontend 容器加证书**
+### 4.1 工作机制
+
+1. 启动时 Caddy 根据 `WEB_DOMAIN` 向 Let's Encrypt 发起 ACME HTTP-01 挑战（占用 80 端口）
+2. LE 回访 `http://<WEB_DOMAIN>/.well-known/acme-challenge/...` 验证域名归属
+3. 通过后签发证书并存到 `caddy_data` 卷
+4. 之后所有 443 流量由 Caddy 解密，反代到内网 `frontend:80`
+5. 证书到期前 30 天自动续期，无需任何操作
+
+### 4.2 启用条件 checklist
+
+- [ ] `.env.production` 中 `WEB_DOMAIN` 填了真实域名（不是 IP！LE 不签发 IP 证书）
+- [ ] `ACME_EMAIL` 填了能收信的邮箱
+- [ ] 域名 DNS A 记录已指向服务器公网 IP，且 `dig +short <WEB_DOMAIN>` 能返回
+- [ ] 服务器 80 和 443 端口对公网开放（云厂商安全组 + 系统防火墙）
+- [ ] 服务器时间正确（NTP 同步）—— 时间漂移会导致证书校验失败
+
+### 4.3 证书相关运维
 
 ```bash
-# 1. 把证书放到宿主机
-mkdir -p /opt/resume/deploy/certs
-cp fullchain.pem /opt/resume/deploy/certs/
-cp privkey.pem   /opt/resume/deploy/certs/
+# 看证书状态 & 续期日志
+docker compose --env-file .env.production logs --tail=200 caddy | grep -iE "cert|renew"
 
-# 2. 修改 frontend/nginx/default.conf 加 listen 443 ssl + ssl_certificate 指令
-# 3. 在 docker-compose.yml 的 frontend 服务挂卷：
-#      - ./certs:/etc/nginx/certs:ro
-#    并把 ports 暴露 443:443
-# 4. docker compose up -d --build frontend
+# 进 caddy 容器查看证书文件
+docker compose --env-file .env.production exec caddy \
+  ls -la /data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/
+
+# 强制重载 Caddyfile（改完配置不停容器）
+docker compose --env-file .env.production exec caddy caddy reload --config /etc/caddy/Caddyfile
+
+# 手动触发续期（一般不用，Caddy 会自动做）
+docker compose --env-file .env.production exec caddy \
+  caddy reload --force --config /etc/caddy/Caddyfile
 ```
 
-**方案 B（推荐）**：前面再加一层 Caddy/Traefik/云 LB 处理 TLS，frontend 容器只听 80。简单、自动续期。
+### 4.4 故障排查
+
+| 现象 | 排查 |
+|---|---|
+| Caddy 启动卡 `obtaining certificate` | 80 端口没放通 / DNS 没生效 / WEB_DOMAIN 指向不是本机 |
+| `too many failed authorizations` | 触发 LE 速率限制（每周 50 次失败上限）。修域名 / 防火墙后，等 1 小时再试，或临时切到 staging（见 Caddyfile 注释里的 `acme_ca`）|
+| 证书有效但浏览器 ERR_CERT | `caddy_data` 卷被清过了，重启会触发 LE 速率限制；恢复备份或等限制窗口 |
+| HSTS 锁死想回 HTTP 调试 | 浏览器 `chrome://net-internals/#hsts` 删条目；生产环境 HSTS 一旦下发不可撤回，重新换域名 |
+
+### 4.5 替换方案
+
+如果你前置已有 SLB / Cloudflare 做 TLS：
+
+1. 注释掉 `docker-compose.yml` 中的整个 `caddy` 服务
+2. 把 `frontend` 服务的 `expose: ["80"]` 改回 `ports: ["80:80"]`
+3. 在 SLB / CDN 上指向服务器 80
 
 ---
 
@@ -311,6 +361,8 @@ docker compose --env-file .env.production up -d --build backend celery frontend
 - [ ] `INIT_ADMIN_PASSWORD` 上线后立刻改
 - [ ] `docker-compose.yml` 中 mysql / redis 的 `ports` 行已注释或限定 `127.0.0.1`
 - [ ] 服务器安全组只放 80/443，不放 3306/6379/8000
-- [ ] 已配置 HTTPS（方案 A 或 B）
+- [ ] `WEB_DOMAIN` / `ACME_EMAIL` 已填，且 DNS 已解析、80/443 可达
+- [ ] 首次启动后已确认证书签发成功（看 caddy 日志）
+- [ ] `caddy_data` 卷已纳入备份策略（避免删卷触发 LE 速率限制）
 - [ ] 已加 mysql 定时备份 crontab
 - [ ] `.env.production` 不在 git 里（默认已被 `.gitignore` 忽略）
