@@ -182,7 +182,7 @@ function AiSuggestDialog({ onClose, onApply }: AiSuggestDialogProps) {
         setError('已中断 AI 生成');
         return;
       }
-      setError('AI 生成失败，请重试');
+      setError(err?.response?.data?.message || 'AI 生成失败，请重试');
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null;

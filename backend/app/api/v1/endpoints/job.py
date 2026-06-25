@@ -1,4 +1,3 @@
-import asyncio
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -94,7 +93,7 @@ async def ai_suggest(
     req: AiSuggestRequest,
 ):
     """根据岗位名称和已有描述，AI润色生成更详细的岗位描述（不落库）"""
-    result = await asyncio.to_thread(_chain.suggest, req.name, req.description or "")
+    result = await _chain.suggest(req.name, req.description or "")
 
     return ApiResponse(data=AiSuggestResponse(
         comprehensive_description=result.get("comprehensive_description", ""),

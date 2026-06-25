@@ -44,7 +44,17 @@ def test_deepseek_thinking_injects_no_provider_key():
     assert eb["stream_options"] == {"include_usage": True}
 
 
-def test_thinking_disabled_no_extra_body():
-    """关闭思考：不注入任何思考参数。"""
+def test_thinking_disabled_qwen_explicitly_off():
+    """关闭思考时，qwen/other 显式下发 enable_thinking=False。
+
+    DashScope OpenAI 兼容模式下，Qwen3 系列服务端默认按思考模式响应，
+    会让正文进入 reasoning_content 字段、content 为空。必须显式关闭。
+    """
     kw = OpenAICompatibleGateway()._chat_kwargs(_config("qwen", False))
+    assert kw["extra_body"] == {"enable_thinking": False}
+
+
+def test_thinking_disabled_deepseek_no_extra_body():
+    """关闭思考时，DeepSeek 不需要 enable_thinking 开关，extra_body 应缺省。"""
+    kw = OpenAICompatibleGateway()._chat_kwargs(_config("deepseek", False))
     assert "extra_body" not in kw
