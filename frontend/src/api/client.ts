@@ -39,6 +39,14 @@ function handleRefreshFailure() {
   useAuthStore.getState().logout();
 }
 
+/**
+ * 判断请求是否为登录/注册接口
+ * 这些接口返回 401 表示账号或密码错误，而非 token 过期，不应触发 refresh 流程，
+ * 否则登录失败会误触发 logout 整页跳转，导致错误提示一闪而过、员工登录退回用户登录。
+ */
+const isAuthEndpoint = (url?: string) =>
+  !!url && /^\/(?:user|employee)\/auth\/(?:login|register)$/.test(url);
+
 // Request interceptor
 client.interceptors.request.use(
   (config) => {
@@ -59,7 +67,7 @@ client.interceptors.response.use(
   },
   async (error) => {
     const originalRequest = error.config;
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint(originalRequest.url)) {
       originalRequest._retry = true;
       const tokens = await doRefresh();
       if (tokens) {
