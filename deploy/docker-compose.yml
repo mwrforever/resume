@@ -217,6 +217,9 @@ services:
       MINIO_DOMAIN: ${S3_DOMAIN}
       # 控制台对外地址（登录后重定向用）；为空则控制台仅内网/SSH 隧道访问
       MINIO_BROWSER_REDIRECT_URL: ${MINIO_CONSOLE_URL:-}
+      # 公网 S3 API 完整地址：控制台生成的分享/预签名链接会以它为基准（否则按服务器自报地址
+      # http://127.0.0.1:9000 生成，公网不可用，只能靠控制台代理兜底）；为空则不设置
+      MINIO_SERVER_URL: ${MINIO_API_URL:-}
     # 单机单盘模式；--console-address 把 Console 端口固定到 9001（默认随机，端口映射必须固定）
     command: server /data --console-address ":9001"
     volumes:
