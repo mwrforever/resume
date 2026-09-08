@@ -152,20 +152,20 @@ server {
 }
 
 # ============================================================================
-# 第二个 443 server 块：S3 对象存储公网 API（独立子域 s3.<域名>）
-#   用途：让其它项目用 S3 SDK / mc（带 v4 签名）从公网直接读写 MinIO，
-#         与上面主站的 /file（匿名公开读）互补。
+# 第二个 443 server 块：S3 对象存储公网 API（virtual-hosted，每桶一个子域）
+#   形态：<桶名>.s3.<域名> 直达对应桶（复刻阿里云 OSS「桶.域名」风格）；裸 s3.<域名> 走 path-style
+#   依赖：*.s3.<域名> DNS 泛解析 + *.s3.<域名> 通配证书 + MinIO 侧 MINIO_DOMAIN 环境变量
 #   要点（对照参考方案逐条说明见 md/minio/s3-subdomain-guide.md）：
-#     - proxy_pass 不带路径后缀：请求路径原样转发到 MinIO，签名不被破坏
-#     - Host 透传客户端原始值（$http_host）：签名校验的服务端视角与客户端一致
-#     - 本块需要 s3.<域名> 自己的证书（nginx -t 会校验证书文件存在，必须先签发）
+#     - proxy_pass 不带路径后缀：路径原样转发，签名不被破坏
+#     - Host 透传客户端原始值（$http_host）：MinIO 靠它解析桶名，签名校验视角也与客户端一致
+#     - 本块需要通配证书（nginx -t 会校验证书文件存在，必须先放置）
 #     - nginx 在容器内，上游必须走服务名 minio:9000（宿主 127.0.0.1 不可达）
 # ============================================================================
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
     http2 on;
-    server_name ${S3_DOMAIN};
+    server_name *.${S3_DOMAIN} ${S3_DOMAIN};
 
     ssl_certificate     /etc/letsencrypt/live/${S3_DOMAIN}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${S3_DOMAIN}/privkey.pem;
