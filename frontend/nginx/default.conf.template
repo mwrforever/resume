@@ -2,7 +2,8 @@
 # 前端 nginx 站点配置（HTTPS）
 #   - 80  : ACME http-01 挑战放行（/.well-known/acme-challenge/）+ 其它一律 301 到 https
 #   - 443 : TLS 终结 + 静态资源 + /api 反代 FastAPI（支持 SSE）+ /file 反代 MinIO + SPA fallback
-#           第二个 server 块：s3.<域名> 独立子域完整透传 S3 API（含 v4 签名，公网读写）
+#           第二个 server 块：s3.<域名> 通配子域反代 MinIO S3 API（virtual-hosted，每桶一子域）
+#           第三个 server 块：console.<域名> 反代 MinIO Web 控制台（9001）
 #   - 容器内通过 docker compose 服务名 backend / minio 解析上游地址
 #
 # 证书：宿主机 /etc/letsencrypt（由 certbot 在宿主机生成）→ 挂载到容器 /etc/letsencrypt:ro
@@ -24,7 +25,7 @@ upstream resume_minio {
 server {
     listen 80;
     listen [::]:80;
-    server_name ${WEB_DOMAIN} ${S3_DOMAIN};
+    server_name ${WEB_DOMAIN} ${S3_DOMAIN} ${MINIO_CONSOLE_DOMAIN};
 
     # certbot --webroot 路径，宿主机也挂同一卷，签证/续期时写入
     location /.well-known/acme-challenge/ {
@@ -203,6 +204,53 @@ server {
 
         # 超时放宽，避免大文件读写被切断
         proxy_connect_timeout 60s;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+
+# ============================================================================
+# 第三个 443 server 块：MinIO Web 控制台（独立子域 console.<域名>）
+#   形态：浏览器访问 https://console.<域名> 打开 MinIO 管理台（上游是 minio 容器的 9001 Console）
+#   依赖：console.<域名> A 记录 + 单域名 LE 证书（HTTP-01 签发，走现有 webroot cron 自动续期，
+#         不需要通配/DNS-01；签发步骤见 md/minio/console-subdomain-guide.md）
+#   要点：
+#     - 9001 仍只绑宿主回环，公网入口收敛到本块 443/TLS，不新增防火墙端口
+#     - 控制台依赖 WebSocket（实时日志/终端），必须透传 Upgrade/Connection
+#     - MINIO_BROWSER_REDIRECT_URL 由 compose 注入，保证登录后重定向到 console.<域名>
+#     - 不用主站路径 /minio/console：控制台自身 API 走 /api/，会与主站 FastAPI 的 /api/ 反代冲突
+# ============================================================================
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${MINIO_CONSOLE_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${MINIO_CONSOLE_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${MINIO_CONSOLE_DOMAIN}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    # 控制台上传文件等请求体可能较大，放开限制
+    client_max_body_size 1g;
+
+    location / {
+        # 同容器网络内直达 MinIO Console，路径不重写
+        proxy_pass http://minio:9001;
+        proxy_http_version 1.1;
+        # WebSocket 透传：控制台实时日志/终端依赖，缺了部分页面打不开
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
     }

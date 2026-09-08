@@ -6,7 +6,7 @@
 #     backend     — FastAPI（uvicorn，--proxy-headers）
 #     celery      — 共用 backend 镜像，消费 eval/agent 队列
 #     frontend    — nginx 静态托管 + /api 反代 + HTTPS 终结（监听 80/443）
-#     minio       — 对象存储（其它项目共用；/file 匿名读 + <桶名>.s3.<域名> 每桶子域公网 S3 API）
+#     minio       — 对象存储（其它项目共用；/file 匿名读 + <桶名>.s3.<域名> 每桶子域公网 S3 API + console.<域名> 控制台）
 #
 #   网络：默认 bridge 网络 resume_net，服务间通过服务名互联
 #   持久化：mysql_data / redis_data / resume_storage / langgraph_data / backend_logs / minio_data
@@ -178,9 +178,11 @@ services:
       WEB_DOMAIN: ${WEB_DOMAIN}
       # S3 公网 API 独立子域：对应模板第二个 443 server 块（证书签发见 md/minio/s3-subdomain-guide.md）
       S3_DOMAIN: ${S3_DOMAIN}
+      # MinIO Web 控制台子域：对应模板第三个 443 server 块（证书签发见 md/minio/console-subdomain-guide.md）
+      MINIO_CONSOLE_DOMAIN: ${MINIO_CONSOLE_DOMAIN}
       # 只允许下列变量被替换，避免 nginx 配置里的 $host / $remote_addr 被误替
       NGINX_ENVSUBST_TEMPLATE_SUFFIX: ".template"
-      NGINX_ENVSUBST_FILTER: "WEB_DOMAIN|S3_DOMAIN"
+      NGINX_ENVSUBST_FILTER: "WEB_DOMAIN|S3_DOMAIN|MINIO_CONSOLE_DOMAIN"
     volumes:
       # 证书目录（由宿主机 certbot 写入；容器只读）
       - ./letsencrypt:/etc/letsencrypt:ro
@@ -213,6 +215,8 @@ services:
       # 开启 virtual-hosted（每桶一个子域：<桶名>.s3.<域名> 直达对应桶，复刻阿里云 OSS 风格）
       # 值为 S3_DOMAIN（不带通配符）；为空则保持 path-style，仅内网/ /file 使用
       MINIO_DOMAIN: ${S3_DOMAIN}
+      # 控制台对外地址（登录后重定向用）；为空则控制台仅内网/SSH 隧道访问
+      MINIO_BROWSER_REDIRECT_URL: ${MINIO_CONSOLE_URL:-}
     # 单机单盘模式；--console-address 把 Console 端口固定到 9001（默认随机，端口映射必须固定）
     command: server /data --console-address ":9001"
     volumes:
