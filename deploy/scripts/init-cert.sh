@@ -7,7 +7,7 @@
 #   STAGING=1 bash scripts/init-cert.sh      # 用 staging 环境试一遍（不计入 LE 限频）
 #
 # 前置：
-#   1. .env.production 里 WEB_DOMAIN / ACME_EMAIL 已填实际值
+#   1. .env.production 里 WEB_DOMAIN / ACME_EMAIL 已填实际值（S3_DOMAIN 选填，填了则一并签发）
 #   2. 域名 DNS A 记录已指向本机公网 IP（dig +short $WEB_DOMAIN 能查到）
 #   3. 服务器 80 端口已对公网放通
 #   4. frontend 容器还未启动（80 端口必须给 certbot 让出来）
@@ -25,7 +25,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
 fi
 
 # shellcheck disable=SC2046
-export $(grep -E '^(WEB_DOMAIN|ACME_EMAIL)=' "$ENV_FILE" | xargs)
+export $(grep -E '^(WEB_DOMAIN|ACME_EMAIL|S3_DOMAIN)=' "$ENV_FILE" | xargs)
 
 : "${WEB_DOMAIN:?WEB_DOMAIN 未配置}"
 : "${ACME_EMAIL:?ACME_EMAIL 未配置}"
@@ -58,5 +58,23 @@ docker run --rm \
     $STAGING_ARG
 
 echo "[init-cert] 证书已签发：./letsencrypt/live/$WEB_DOMAIN/"
+
+# 若配置了 S3_DOMAIN（公网 S3 API 子域），单独再签一张证书（与主域名分开，续期互不影响）
+if [[ -n "${S3_DOMAIN:-}" ]]; then
+  echo "[init-cert] 追加签发 S3 子域证书: $S3_DOMAIN"
+  docker run --rm \
+    -p 80:80 \
+    -v "$(pwd)/letsencrypt:/etc/letsencrypt" \
+    -v "$(pwd)/certbot-webroot:/var/www/certbot" \
+    certbot/certbot:latest certonly \
+      --standalone \
+      --non-interactive \
+      --agree-tos \
+      --email "$ACME_EMAIL" \
+      -d "$S3_DOMAIN" \
+      $STAGING_ARG
+  echo "[init-cert] 证书已签发：./letsencrypt/live/$S3_DOMAIN/"
+fi
+
 echo "[init-cert] 启动整套服务："
 echo "    docker compose --env-file $ENV_FILE up -d --build"

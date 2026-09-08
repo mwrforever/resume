@@ -1,8 +1,9 @@
 # ============================================================================
 # 前端 nginx 站点配置（HTTPS）
 #   - 80  : ACME http-01 挑战放行（/.well-known/acme-challenge/）+ 其它一律 301 到 https
-#   - 443 : TLS 终结 + 静态资源 + /api 反代 FastAPI（支持 SSE）+ SPA fallback
-#   - 容器内通过 docker compose 服务名 backend 解析后端地址
+#   - 443 : TLS 终结 + 静态资源 + /api 反代 FastAPI（支持 SSE）+ /file 反代 MinIO + SPA fallback
+#           第二个 server 块：s3.<域名> 独立子域完整透传 S3 API（含 v4 签名，公网读写）
+#   - 容器内通过 docker compose 服务名 backend / minio 解析上游地址
 #
 # 证书：宿主机 /etc/letsencrypt（由 certbot 在宿主机生成）→ 挂载到容器 /etc/letsencrypt:ro
 # 域名：构建/编排层通过 envsubst 替换 ${WEB_DOMAIN}，启动时由 nginx-entrypoint 注入
@@ -13,11 +14,17 @@ upstream resume_backend {
     keepalive 32;
 }
 
-# ---- HTTP：跳 HTTPS，ACME 挑战除外 ----
+# MinIO 对象存储 S3 API（仅匿名公开读经 nginx /file 走这里；签名流量直连 127.0.0.1:9000）
+upstream resume_minio {
+    server minio:9000;
+    keepalive 32;
+}
+
+# ---- HTTP：跳 HTTPS，ACME 挑战除外（两个域名共用同一 80 入口做挑战放行） ----
 server {
     listen 80;
     listen [::]:80;
-    server_name ${WEB_DOMAIN};
+    server_name ${WEB_DOMAIN} ${S3_DOMAIN};
 
     # certbot --webroot 路径，宿主机也挂同一卷，签证/续期时写入
     location /.well-known/acme-challenge/ {
@@ -106,6 +113,28 @@ server {
         client_max_body_size 50m;
     }
 
+    # MinIO 公开下载代理：https://<域名>/file/<bucket>/<object> → minio:9000/<bucket>/<object>
+    # ^~ 静态前缀匹配：优先级高于下方静态资源正则，避免 /file/xxx.jpg 被 try_files 截胡返回 404
+    # 仅用于匿名公开读；S3 签名请求走 127.0.0.1:9000，勿经此路径（/file 前缀重写会破坏 v4 签名）
+    location ^~ /file/ {
+        # proxy_pass 带尾部 / ：去掉 /file 前缀后转发
+        proxy_pass http://resume_minio/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+
+        # 大文件下载不落盘缓冲；超时放宽，避免大对象传输被掐断
+        proxy_buffering off;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        # 预留经此路径上传的可能，放开 server 级 50m 限制
+        client_max_body_size 1024m;
+    }
+
     # nginx 自身存活探针
     location = /healthz {
         access_log off;
@@ -119,5 +148,62 @@ server {
         proxy_pass http://resume_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+
+# ============================================================================
+# 第二个 443 server 块：S3 对象存储公网 API（独立子域 s3.<域名>）
+#   用途：让其它项目用 S3 SDK / mc（带 v4 签名）从公网直接读写 MinIO，
+#         与上面主站的 /file（匿名公开读）互补。
+#   要点（对照参考方案逐条说明见 md/minio/s3-subdomain-guide.md）：
+#     - proxy_pass 不带路径后缀：请求路径原样转发到 MinIO，签名不被破坏
+#     - Host 透传客户端原始值（$http_host）：签名校验的服务端视角与客户端一致
+#     - 本块需要 s3.<域名> 自己的证书（nginx -t 会校验证书文件存在，必须先签发）
+#     - nginx 在容器内，上游必须走服务名 minio:9000（宿主 127.0.0.1 不可达）
+# ============================================================================
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${S3_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${S3_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${S3_DOMAIN}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    # 允许带下划线的 x-amz-meta_* 等请求头透传（nginx 默认丢弃，会导致鉴权/元数据异常）
+    underscores_in_headers on;
+
+    # S3 上传不限制大小（对象上限取决于磁盘余量）；此块外的 server 级 50m 不生效
+    client_max_body_size 0;
+
+    location / {
+        proxy_pass http://resume_minio;
+
+        # 透传客户端原始 Host（含非默认端口场景），签名校验必须与客户端签名时一致
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 大文件（分片）上传：关请求缓冲，流式转发，防撑爆 nginx 内存/中断传输
+        proxy_request_buffering off;
+        proxy_buffering off;
+        chunked_transfer_encoding off;
+
+        # HTTP/1.1 + 空 Connection 头：支持 keep-alive 与分块传输
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        # 超时放宽，避免大文件读写被切断
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
     }
 }

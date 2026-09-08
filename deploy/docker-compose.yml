@@ -6,9 +6,10 @@
 #     backend     — FastAPI（uvicorn，--proxy-headers）
 #     celery      — 共用 backend 镜像，消费 eval/agent 队列
 #     frontend    — nginx 静态托管 + /api 反代 + HTTPS 终结（监听 80/443）
+#     minio       — 对象存储（其它项目共用；nginx /file/ 匿名读 + s3.<域名> 独立子域公网 S3 API）
 #
 #   网络：默认 bridge 网络 resume_net，服务间通过服务名互联
-#   持久化：mysql_data / redis_data / resume_storage / langgraph_data / backend_logs
+#   持久化：mysql_data / redis_data / resume_storage / langgraph_data / backend_logs / minio_data
 #           宿主机 ./letsencrypt（证书）与 ./certbot-webroot（ACME 挑战）
 #   启动顺序：mysql/redis healthy → backend → celery & frontend
 #
@@ -173,11 +174,13 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      # nginx:latest 入口脚本会用 envsubst 把 ${WEB_DOMAIN} 替换到 default.conf
+      # nginx:latest 入口脚本会用 envsubst 把模板里的 ${变量} 替换到 default.conf
       WEB_DOMAIN: ${WEB_DOMAIN}
+      # S3 公网 API 独立子域：对应模板第二个 443 server 块（证书签发见 md/minio/s3-subdomain-guide.md）
+      S3_DOMAIN: ${S3_DOMAIN}
       # 只允许下列变量被替换，避免 nginx 配置里的 $host / $remote_addr 被误替
       NGINX_ENVSUBST_TEMPLATE_SUFFIX: ".template"
-      NGINX_ENVSUBST_FILTER: "WEB_DOMAIN"
+      NGINX_ENVSUBST_FILTER: "WEB_DOMAIN|S3_DOMAIN"
     volumes:
       # 证书目录（由宿主机 certbot 写入；容器只读）
       - ./letsencrypt:/etc/letsencrypt:ro
@@ -192,6 +195,38 @@ services:
       start_period: 30s
     networks: [resume_net]
 
+  # ------------------------------ MinIO 对象存储（供其它项目共用） ------------------------------
+  # 访问路径设计（详见 md/minio/ 操作文档）：
+  #   S3 API   — 容器内 http://minio:9000（nginx 将 https://<域名>/file/ 反代到这里做匿名公开读）
+  #              宿主机 127.0.0.1:9000（同机其它项目的 SDK/mc 走这个，含签名，不经 /file）
+  #   Console  — 宿主机 127.0.0.1:9001，仅限 SSH 隧道访问，不对公网开放
+  minio:
+    image: pgsty/minio:latest
+    container_name: resume_minio
+    restart: unless-stopped
+    # 内存上限：防元数据/缓存随对象数量增长吃爆宿主内存；对象规模上来后再调
+    mem_limit: 512m
+    environment:
+      # root 凭证从 .env.production 注入（既是控制台账号也是管理用 AccessKey，生产必须强密码）
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    # 单机单盘模式；--console-address 把 Console 端口固定到 9001（默认随机，端口映射必须固定）
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      # 仅绑宿主机回环：S3 API 与 Console 都不直接暴露公网，公网下载统一收敛到 nginx /file（443/TLS）
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      # mc 为镜像自带 CLI，ready 会真正等部署可读写，比纯进程探活更可靠
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [resume_net]
+
 # ============================================================================
 volumes:
   mysql_data:
@@ -199,6 +234,7 @@ volumes:
   resume_storage:    # 简历原文件 & note/
   langgraph_data:    # LangGraph SqliteSaver checkpoints
   backend_logs:
+  minio_data:        # MinIO 对象数据（其它项目共用存储）
 
 networks:
   resume_net:
